@@ -1061,7 +1061,7 @@ class TestResultPublication(unittest.TestCase):
         self.assertEqual(len(tool.al_voronoi_geo_storage), 2)
         self.assertTrue(tool.al_heights_valid)
         self.assertEqual(tool._al_generation, 1)
-        tool.apply_autolevel.assert_not_called()
+        tool.apply_autolevel.assert_called_once_with(target_obj=target)
 
     def test_apply_refuses_a_removed_target(self):
         tool, target = self._tool()

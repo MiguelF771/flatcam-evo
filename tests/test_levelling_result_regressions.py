@@ -26,6 +26,8 @@ def result_tool(units='MM'):
     })
     tool.build_al_table_sig.reset_mock()
     tool.show_probing_geo_sig.reset_mock()
+    # the setup import applies the map (import now applies); tests count only their own applies
+    tool.apply_autolevel.reset_mock()
     return tool, fake
 
 

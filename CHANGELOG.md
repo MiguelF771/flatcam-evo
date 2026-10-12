@@ -27,6 +27,13 @@ Levelling Tool:
 - a refused Probe click no longer discards a running probe or a valid height map
 - a mode change clears all probe data; a target change releases the manual point handlers
 - removed the unused send_grbl_command() and send_grbl_block()
+- the handshake keeps a partly received line, so an alarm split across 2 reads still blocks Home
+- Reset clears the old received data before it sends the reset byte; if the receive buffer cannot be cleared, Home stays blocked
+- an imported height map (Import Height Map and the import of points) now makes the _levelled CNCJob
+- the LinuxCNC probing G-code has its notes as comments, not as plain text
+- the Avoid Step must be greater than zero; the hole avoidance loop has a limit and can no longer freeze the GUI
+- a controller change makes the probing G-code again for the new controller
+- added controller regression tests and end-to-end workflow tests for GRBL, MACH3, MACH4 and LinuxCNC
 
 levelling_interp:
 

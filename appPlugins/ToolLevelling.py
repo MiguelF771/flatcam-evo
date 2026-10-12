@@ -107,6 +107,9 @@ if '_' not in builtins.__dict__:
 
 log = logging.getLogger('base')
 
+# maximum number of steps per direction when moving a probe point away from an Excellon hole
+MAX_AVOID_TRIES = 10000
+
 
 def _iter_polygons(geometry):
     """
@@ -874,6 +877,10 @@ class ToolLevelling(CNCjob, AppTool):
         avoid_step = self.ui.avoid_exc_holes_size_entry.get_value()
         radius = self.ui.probe_tip_dia_entry.get_value() / 2
 
+        if check_overlap and avoid_step <= 0:
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _("The Avoid Step must be greater than zero."))
+            return
+
         xmin, ymin, xmax, ymax = self.solid_geo.bounds
 
         width = abs(xmax - xmin)
@@ -918,7 +925,8 @@ class ToolLevelling(CNCjob, AppTool):
 
                 for increment in increments:
                     break_for_loop = False
-                    while True:
+                    # finite limit: a blocked direction keeps the point out instead of looping forever
+                    for _try in range(MAX_AVOID_TRIES):
                         # check if the point is within the box
                         formatted_point = (
                             formatted_point[0] + increment[0],
@@ -1803,7 +1811,8 @@ class ToolLevelling(CNCjob, AppTool):
             self.al_heights_valid = True
         self.build_al_table_sig.emit()
         self.show_probing_geo_sig.emit(True, True)
-        if kind == 'probe':
+        # probe and both import kinds reach this point only with a complete, valid height map
+        if kind in ('probe', 'import', 'import_points'):
             self.apply_autolevel(target_obj=result['context'].target_obj)
 
     def on_show_al_table(self, state):
@@ -1864,14 +1873,15 @@ class ToolLevelling(CNCjob, AppTool):
     def on_controller_change(self):
         self.on_controller_change_alter_ui()
 
-        # if the is empty then there is a chance that we've added probe points but the GRBL controller was selected
-        # therefore no Probing GCode was generated (it is different for GRBL on how it gets it's Probing GCode
+        # the cached Probing GCode belongs to the previous controller: drop it and build it again for the new one
+        # (GRBL gets it's Probing GCode differently, so for GRBL it stays empty)
+        self.probing_gcode_text = ''
         target_obj = self.app.collection.get_by_name(self.ui.object_combo.get_value())
-        if (not self.probing_gcode_text or self.probing_gcode_text == '') and target_obj is not None:
+        if target_obj is not None:
             # generate Probing GCode
             al_method = self.ui.al_method_radio.get_value()
             storage = self.al_voronoi_geo_storage if al_method == 'v' else self.al_bilinear_geo_storage
-            self.probing_gcode_text = self.probing_gcode(storage=storage)
+            self.probing_gcode_text = self.probing_gcode(storage=storage) or ''
 
     def on_controller_change_alter_ui(self):
         if self.ui.al_controller_combo.get_value() == 'GRBL':
@@ -2688,13 +2698,15 @@ class ToolLevelling(CNCjob, AppTool):
             port = self.grbl_ser_port
             self._grbl_rx_buffer = b''
             self._grbl_rx_port = port
+            receive_cleared = False
             if port is not None:
                 try:
                     port.reset_input_buffer()
+                    receive_cleared = True
                 except (serial.SerialException, OSError) as err:
                     self.app.log.error("ToolLevelling.on_grbl_reset() -> %s" % str(err))
             written = self._grbl_write_realtime_locked(b'\x18')
-            self._grbl_reset_pending = written
+            self._grbl_reset_pending = written and receive_cleared
             # The byte request is not proof of reset, even when the machine looked Idle.
             self._grbl_recovery = 'needs_reset'
             if not written:
@@ -2702,6 +2714,10 @@ class ToolLevelling(CNCjob, AppTool):
 
         if not written:
             self.app.inform.emit('[ERROR_NOTCL] %s' % _("Not connected to a GRBL controller."))
+            return
+        if not receive_cleared:
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _(
+                "Could not clear the GRBL receive buffer. Reset was sent, but Home is blocked. Press Reset again."))
             return
         self.app.inform.emit("%s" % _("GRBL software reset was sent."))
         if self._grbl_recovery is not None:
@@ -2807,9 +2823,9 @@ class ToolLevelling(CNCjob, AppTool):
         p_gcode += header + '\n'
         # supplementary message for LinuxCNC
         if controller == 'LinuxCNC':
-            p_gcode += "The file with the stored probing points can be found\n" \
-                       "in the configuration folder for LinuxCNC.\n" \
-                       "The name of the file is: a_probing_points_file.txt.\n"
+            p_gcode += "(The file with the stored probing points can be found)\n" \
+                       "(in the configuration folder for LinuxCNC.)\n" \
+                       "(The name of the file is: a_probing_points_file.txt.)\n"
         # units
         p_gcode += 'G21\n' if self.units == 'MM' else 'G20\n'
         # reference mode = absolute
@@ -3632,7 +3648,7 @@ class LevelUI:
 
         self.avoid_exc_holes_size_entry = FCDoubleSpinner()
         self.avoid_exc_holes_size_entry.set_precision(self.decimals)
-        self.avoid_exc_holes_size_entry.set_range(0.0000, 99999.0000)
+        self.avoid_exc_holes_size_entry.set_range(0.0001, 99999.0000)
 
         tool_grid.addWidget(self.avoid_exc_holes_size_label, 6, 0)
         tool_grid.addWidget(self.avoid_exc_holes_size_entry, 6, 1, 1, 1)

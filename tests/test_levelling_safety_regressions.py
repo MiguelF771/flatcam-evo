@@ -939,3 +939,31 @@ def test_double_reset_is_confirmed_by_the_latest_banner():
     run_reset_home(tool)
     assert '$H' in fake.commands()
     assert tool._grbl_recovery is None
+
+
+@pytest.mark.parametrize('error', [serial.SerialException, OSError])
+@pytest.mark.parametrize('fresh_banner', [False, True])
+def test_failed_receive_purge_sends_reset_but_blocks_home(error, fresh_banner):
+    fake = ResetConfirmationGrbl(reset_lines=[ResetConfirmationGrbl.BANNER] if fresh_banner else [])
+    tool = make_audit_tool()
+    tool.grbl_ser_port = fake
+    tool._grbl_connected = True
+    tool._grbl_rx_port = fake
+    fake.rx.append(ResetConfirmationGrbl.BANNER)
+    with patch.object(fake, 'reset_input_buffer', side_effect=error('purge failed')):
+        tool.on_grbl_reset()
+    assert '\x18' in fake.commands()
+    assert not tool._grbl_reset_pending
+    assert tool._grbl_recovery == 'needs_reset'
+    assert any(c.args[0].startswith('[ERROR_NOTCL] ') and 'receive buffer' in c.args[0]
+               for c in tool.app.inform.emit.call_args_list)
+    tool.on_grbl_homing()
+    tool.app.worker_task.emit.assert_not_called()
+    assert '$H' not in fake.commands()
+
+    # A successful retry establishes a new boundary and permits normal recovery.
+    fake.reset_lines = [ResetConfirmationGrbl.BANNER]
+    tool.on_grbl_reset()
+    run_reset_home(tool)
+    assert '$H' in fake.commands()
+    assert tool._grbl_recovery is None
