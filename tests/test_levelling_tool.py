@@ -517,6 +517,9 @@ class TestToolUiState(unittest.TestCase):
         tool.on_avoid_exc_holes = MagicMock()
         tool.mouse_events_connected = False
         tool.probing_shapes = None
+        tool._al_target_name = None
+        tool._al_target_obj = None
+        tool._al_generation = 0
 
         with patch('appPlugins.ToolLevelling.LevelUI', return_value=MagicMock()), \
                 patch('appPlugins.ToolLevelling.ShapeCollection'):
@@ -609,6 +612,10 @@ class TestLevellingTargetSelection(unittest.TestCase):
             is_segmented_gcode=False,
             obj_options={'type': 'Excellon'},
         )
+        tool.probing_shapes = None
+        tool._al_target_name = None
+        tool._al_target_obj = None
+        tool._al_generation = 0
         tool.on_object_changed()
         tool.ui.al_frame.setDisabled.assert_called_once_with(True)
 

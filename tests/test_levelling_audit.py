@@ -233,6 +233,9 @@ def run_set_tool_ui(storage, heights_valid, loaded_obj=None, plot_points=False, 
     tool.on_avoid_exc_holes = MagicMock()
     tool.mouse_events_connected = False
     tool.probing_shapes = None
+    tool._al_target_name = None
+    tool._al_target_obj = None
+    tool._al_generation = 0
     if owner is not None:
         tool._al_target_name, tool._al_target_obj = owner
     ui = MagicMock()
@@ -1472,6 +1475,103 @@ class TestProbingShapes(unittest.TestCase):
         storage = {1: {'point': Point(0.0, 0.0), 'geo': None, 'height': 0.2}}
         tool = run_set_tool_ui(storage, heights_valid=True, plot_points=False)
         tool.show_probing_geo.assert_not_called()
+
+
+class TestTargetOwnership(unittest.TestCase):
+    @staticmethod
+    def target(name='job_a', **options):
+        opts = {'type': 'Geometry', 'name': name}
+        opts.update(options)
+        return SimpleNamespace(kind='cncjob', is_segmented_gcode=True, obj_options=opts)
+
+    def _tool(self, owner_name, owner_obj, new_name, new_obj):
+        storage = {1: {'point': Point(0.0, 0.0), 'geo': None, 'height': 0.3}}
+        tool = make_audit_tool(storage=storage, heights_valid=True)
+        tool.al_bilinear_geo_storage = [(0.0, 0.0, 0.0)]
+        tool.probing_gcode_text = 'OLD'
+        tool._al_target_name = owner_name
+        tool._al_target_obj = owner_obj
+        tool.ui.object_combo.currentText.return_value = new_name
+        tool.app.collection.get_by_name.return_value = new_obj
+        tool._new_probing_shapes = MagicMock()
+        tool._update_mode_radio_ui = MagicMock()
+        tool.on_method_radio = MagicMock()
+        tool.show_probing_geo = MagicMock()
+        return tool
+
+    def test_other_object_clears_probe_data(self):
+        a = self.target('job_a')
+        tool = self._tool('job_a', a, 'job_b', self.target('job_b'))
+        tool.on_object_changed()
+        self.assertEqual(tool.al_voronoi_geo_storage, {})
+        self.assertEqual(tool.al_bilinear_geo_storage, [])
+        self.assertFalse(tool.al_heights_valid)
+        self.assertEqual(tool.probing_gcode_text, '')
+        self.assertIsNone(tool._al_target_name)
+        self.assertEqual(tool._al_generation, 1)
+
+    def test_replaced_object_with_same_name_clears(self):
+        tool = self._tool('job_a', self.target('job_a'), 'job_a', self.target('job_a'))
+        tool.on_object_changed()
+        self.assertEqual(tool.al_voronoi_geo_storage, {})
+
+    def test_same_object_keeps_and_replots(self):
+        a = self.target('job_a')
+        tool = self._tool('job_a', a, 'job_a', a)
+        tool.ui.plot_probing_pts_cb.get_value.return_value = True
+        tool.on_object_changed()
+        self.assertEqual(len(tool.al_voronoi_geo_storage), 1)
+        self.assertTrue(tool.al_heights_valid)
+        tool.show_probing_geo.assert_called_once_with(state=True, reset=True)
+
+    def test_radios_follow_the_new_object(self):
+        tool = self._tool('job_a', self.target('job_a'), 'job_b',
+                          self.target('job_b', tools_al_mode='manual', tools_al_method='b'))
+        tool.on_object_changed()
+        tool.ui.al_mode_radio.set_value.assert_called_with('manual')
+        tool._update_mode_radio_ui.assert_called_with(val='manual')
+        tool.on_method_radio.assert_called_with(val='b')
+
+    def test_old_project_object_without_al_options(self):
+        tool = self._tool('job_a', self.target('job_a'), 'job_b', self.target('job_b'))
+        tool.on_object_changed()
+        tool.ui.al_mode_radio.set_value.assert_called_with('grid')
+        tool.on_method_radio.assert_called_with(val='v')
+
+    def test_reopen_on_another_object_clears(self):
+        storage = {1: {'point': Point(0.0, 0.0), 'geo': None, 'height': 0.3}}
+        with patch.object(ToolLevelling, '_update_mode_radio_ui'), \
+                patch.object(ToolLevelling, 'on_method_radio'), \
+                patch.object(ToolLevelling, 'on_controller_change'):
+            tool = run_set_tool_ui(storage, heights_valid=True, loaded_obj=self.target('job_b'),
+                                   owner=('job_a', self.target('job_a')))
+        self.assertEqual(tool.al_voronoi_geo_storage, {})
+        self.assertFalse(tool.al_heights_valid)
+
+    def test_reopen_on_the_same_object_keeps(self):
+        a = self.target('job_a')
+        storage = {1: {'point': Point(0.0, 0.0), 'geo': None, 'height': 0.3}}
+        with patch.object(ToolLevelling, '_update_mode_radio_ui'), \
+                patch.object(ToolLevelling, 'on_method_radio'), \
+                patch.object(ToolLevelling, 'on_controller_change'):
+            tool = run_set_tool_ui(storage, heights_valid=True, loaded_obj=a, owner=('job_a', a))
+        self.assertTrue(tool.al_heights_valid)
+
+    def test_set_tool_ui_accepts_object_without_al_options(self):
+        with patch.object(ToolLevelling, '_update_mode_radio_ui') as mode_ui, \
+                patch.object(ToolLevelling, 'on_method_radio') as method_radio, \
+                patch.object(ToolLevelling, 'on_controller_change'):
+            run_set_tool_ui({}, heights_valid=False, loaded_obj=self.target('job_a'))
+        mode_ui.assert_called_once_with(val='grid')
+        method_radio.assert_called_once_with(val='v')
+
+    def test_mode_radio_change_bumps_generation(self):
+        tool = make_audit_tool(storage={1: {'point': Point(0, 0), 'geo': None, 'height': 0.0}})
+        tool.probing_shapes = MagicMock()
+        tool.build_al_table = MagicMock()
+        tool._update_mode_radio_ui = MagicMock()
+        tool.on_mode_radio('grid')
+        self.assertEqual(tool._al_generation, 1)
 
 
 if __name__ == '__main__':

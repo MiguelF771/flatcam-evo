@@ -425,6 +425,11 @@ class ToolLevelling(CNCjob, AppTool):
             pass
 
         loaded_obj = self.app.collection.get_by_name(self.ui.object_combo.get_value())
+        # kept probe data belongs to its owner object; drop it if the tool opens on another object
+        if self.al_voronoi_geo_storage and getattr(self, '_al_target_name', None) is not None and (
+                self.ui.object_combo.get_value() != self._al_target_name or
+                loaded_obj is not getattr(self, '_al_target_obj', None)):
+            self._clear_probe_data()
         if loaded_obj and loaded_obj.kind == 'cncjob':
             name = loaded_obj.obj_options['name']
         else:
@@ -509,12 +514,12 @@ class ToolLevelling(CNCjob, AppTool):
             # block signals so set_value() cannot trigger the signal-connected
             # on_mode_radio() handler, which would clear a retained height map
             self.ui.al_mode_radio.blockSignals(True)
-            self.ui.al_mode_radio.set_value(loaded_obj.obj_options['tools_al_mode'])
+            self.ui.al_mode_radio.set_value(loaded_obj.obj_options.get('tools_al_mode', 'grid'))
             self.ui.al_mode_radio.blockSignals(False)
             self.on_controller_change()
 
-            self._update_mode_radio_ui(val=loaded_obj.obj_options['tools_al_mode'])
-            self.on_method_radio(val=loaded_obj.obj_options['tools_al_method'])
+            self._update_mode_radio_ui(val=loaded_obj.obj_options.get('tools_al_mode', 'grid'))
+            self.on_method_radio(val=loaded_obj.obj_options.get('tools_al_method', 'v'))
         else:
             self.ui.al_frame.setDisabled(True)
 
@@ -569,14 +574,47 @@ class ToolLevelling(CNCjob, AppTool):
             self.app.inform.emit('[ERROR_NOTCL] %s: %s' % (_("Could not retrieve object"), str(obj_name)))
             return
 
-        if self._is_supported_al_target(target_obj):
+        # probe points, heights and probing G-code belong to 1 object (name and
+        # identity); forget them when the user selects a different object
+        if obj_name != getattr(self, '_al_target_name', None) or \
+                target_obj is not getattr(self, '_al_target_obj', None):
+            self._clear_probe_data()
 
+        if self._is_supported_al_target(target_obj):
             self.ui.al_frame.setDisabled(False)
 
             # Shapes container for the Voronoi cells in Autolevelling
             self._new_probing_shapes(obj_name)
+
+            mode = target_obj.obj_options.get('tools_al_mode', 'grid')
+            method = target_obj.obj_options.get('tools_al_method', 'v')
+            # block signals so set_value() cannot trigger on_mode_radio()
+            self.ui.al_mode_radio.blockSignals(True)
+            self.ui.al_mode_radio.set_value(mode)
+            self.ui.al_mode_radio.blockSignals(False)
+            self._update_mode_radio_ui(val=mode)
+            self.on_method_radio(val=method)
+
+            # the new container is empty: draw the kept points again
+            if self.al_voronoi_geo_storage:
+                self._on_show_probing_geo_sig(True, True)
         else:
             self.ui.al_frame.setDisabled(True)
+
+    def _clear_probe_data(self):
+        """Forget the probe points, the heights, the bilinear grid, the probing G-code and the owner."""
+        self.al_voronoi_geo_storage.clear()
+        self.al_bilinear_geo_storage = []
+        self.al_heights_valid = False
+        self.probing_gcode_text = ''
+        self.solid_geo = None
+        self._al_target_name = None
+        self._al_target_obj = None
+        self._al_bump_generation()
+        self.ui.al_probe_points_table.setRowCount(0)
+        shapes = getattr(self, 'probing_shapes', None)
+        if shapes is not None:
+            shapes.clear(update=True)
 
     @staticmethod
     def _is_supported_al_target(target_obj):
@@ -1690,6 +1728,7 @@ class ToolLevelling(CNCjob, AppTool):
         # reset the al dict
         self.al_voronoi_geo_storage.clear()
         self.al_heights_valid = False
+        self._al_bump_generation()
 
         # reset Voronoi Shapes
         self.probing_shapes.clear(update=True)
