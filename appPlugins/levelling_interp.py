@@ -838,8 +838,9 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     output is right when the controller runs it. But the controller can
     skip it, so after it every modal setting that it changed (distance
     mode, plane, arc distance mode, feed mode, motion mode) is unknown
-    (None), each axis whose programmed value it changes is unknown, and
-    if it changes the Z or its text the Z offset in effect
+    (None), each axis whose programmed value or known status it changes
+    is unknown, it never clears an unknown motion mode, and if it changes
+    the Z, its text or the applied offset the Z offset in effect
     (`state['applied']`) is unknown (None). Start-dependent moves (arcs,
     G91 moves) are then not compensated until absolute words set the
     position again; an absolute compensated G1 or an absolute Z word sets
@@ -859,15 +860,22 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
 
     modes_before = {key: state[key] for key in _BLOCK_DELETE_MODAL_KEYS}
     axes_before = {axis: state[axis] for axis in ('X', 'Y', 'Z')}
+    known_before = set(state['known'])
+    applied_before = state['applied']
+    g_unknown_before = state['g_unknown']
     out = _level_line(line, state, offset_fn, decimals)
     for key, value in modes_before.items():
         if state[key] != value:
             state[key] = None
             if key == 'G':
                 state['g_unknown'] = True
-    # an axis is uncertain only if the line changes its programmed value
-    _lose_axes(state, [axis for axis, value in axes_before.items() if state[axis] != value])
-    if out != line or state['Z'] != axes_before['Z']:
+    # a skipped line can not clear an unknown motion mode
+    state['g_unknown'] = state['g_unknown'] or g_unknown_before
+    # an axis is uncertain if the line changes its programmed value, or makes it
+    # known with the same value (only the run line would set it)
+    _lose_axes(state, [axis for axis, value in axes_before.items()
+                       if state[axis] != value or (axis in state['known']) != (axis in known_before)])
+    if out != line or state['Z'] != axes_before['Z'] or state['applied'] != applied_before:
         # the machine Z of a run line and of a skipped line can differ
         state['applied'] = None
     return out

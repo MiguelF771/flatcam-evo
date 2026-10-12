@@ -873,6 +873,26 @@ class TestBlockDelete(unittest.TestCase):
         self.assertEqual(out[1], 'G91 G1 X1 Y0')
         self.assertEqual(state['relative'], 1)
 
+    def test_relative_move_after_optional_same_z_rapid_is_not_compensated(self):
+        def saddle(x, y):
+            return 0.01 * x * y
+        state, _ = prime(10, 10, -1, saddle)
+        out = run(state, saddle, '/G0 Z-1', 'G91 G1 X1 Y0')
+        self.assertEqual(out[0], '/G0 Z-1')
+        self.assertEqual(out[1], 'G91 G1 X1 Y0')
+        self.assertIsNone(state['applied'])
+        self.assertEqual(state['relative'], 1)
+
+    def test_optional_word_with_the_same_value_does_not_make_the_axis_known(self):
+        # X keeps its 0.0 default, but only the optional line would set it
+        def tilt(x, y):
+            return 0.01 * x * y + 0.02 * x
+        state = new_levelling_state()
+        out = run(state, tilt, 'G90 G0 Y5 Z5', 'G1 Z-1', '/G0 X0', 'G91 G1 X1')
+        self.assertNotIn('X', state['known'])
+        self.assertEqual(out[-1], 'G91 G1 X1')
+        self.assertEqual(state['relative'], 1)
+
     def test_optional_mode_change_makes_the_mode_unknown(self):
         state, _ = prime(10, 0, -1, plane)
         out = run(state, plane, '/G91', 'G1 X1 Y1', 'G90 G1 X2 Y2 Z-1', 'G1 X3 Y3')
@@ -924,6 +944,11 @@ class TestUnknownMovesAreCounted(unittest.TestCase):
 
     def test_g1_after_g53_is_counted(self):
         state, _ = self.counted('G53 G0 Z-5', 'G1 X3 Y3')
+        self.assertEqual(state['unknown'], 1)
+
+    def test_optional_cancel_does_not_clear_the_unknown_mode(self):
+        state, out = self.counted('/G2', '/G80', 'X3 Y3')
+        self.assertEqual(out[-1], 'X3 Y3')
         self.assertEqual(state['unknown'], 1)
 
     def test_rapid_is_not_counted(self):
