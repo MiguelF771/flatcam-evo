@@ -148,15 +148,16 @@ class _GrblProbeAbort(Exception):
 class _AlContext:
     """
     What a probing or import result belongs to: the generation of the probe
-    points, the owner object (name and identity) and the units. The GUI slot
-    publishes a result only if all of them are still the same.
+    points/replacement attempt, the owner object (name and identity) and the
+    data units. Matching tolerance is captured before scheduling the worker.
     """
 
-    def __init__(self, generation, target_name, target_obj, units):
+    def __init__(self, generation, target_name, target_obj, units, tolerance):
         self.generation = generation
         self.target_name = target_name
         self.target_obj = target_obj
         self.units = units
+        self.tolerance = tolerance
 
 
 class _GrblOperation:
@@ -173,6 +174,9 @@ class _GrblOperation:
         self.name = name
         self.motion = motion
         self.cancel = threading.Event()
+        self.failed = False
+        self.safety_generation = 0
+        self.port = None
 
 
 class ToolLevelling(CNCjob, AppTool):
@@ -234,10 +238,19 @@ class ToolLevelling(CNCjob, AppTool):
         self._grbl_recovery = None
         # True if a disconnect waits for the running operation to stop
         self._grbl_close_pending = False
+        self._grbl_connected = False
+        self._grbl_connect_attempt = None
+        self._grbl_safety_generation = 0
+        self._grbl_rx_port = None
+        self._grbl_rx_buffer = b''
+        self._grbl_reply_pending = False
+        self._grbl_reset_pending = False
 
-        # changes each time the probe points change; a result of an older
-        # generation is discarded
+        # changes each time the probe points change or a replacement attempt
+        # starts; a result of an older generation is discarded
         self._al_generation = 0
+        # coordinate/height units of the point set; None when no data exists
+        self._al_data_units = None
         # the object that the probe points belong to (name and the object itself)
         self._al_target_name = None
         self._al_target_obj = None
@@ -625,7 +638,9 @@ class ToolLevelling(CNCjob, AppTool):
 
     def _clear_probe_data(self):
         """Forget the probe points, the heights, the bilinear grid, the probing G-code and the owner."""
+        self._release_manual_mouse_events()
         self.al_voronoi_geo_storage.clear()
+        self._al_data_units = None
         self.al_bilinear_geo_storage = []
         self.al_heights_valid = False
         self.probing_gcode_text = ''
@@ -799,6 +814,7 @@ class ToolLevelling(CNCjob, AppTool):
                             pass
 
     def on_add_al_probepoints(self):
+        self._release_manual_mouse_events()
         # create the solid_geo
 
         loaded_obj = self.app.collection.get_by_name(self.ui.object_combo.get_value())
@@ -828,6 +844,7 @@ class ToolLevelling(CNCjob, AppTool):
         # the new points belong to this object
         self._al_target_name = self.ui.object_combo.get_value()
         self._al_target_obj = loaded_obj
+        self._al_data_units = self.app.app_units.upper()
         self._al_bump_generation()
 
         if self.ui.al_mode_radio.get_value() == 'grid':
@@ -1383,6 +1400,9 @@ class ToolLevelling(CNCjob, AppTool):
 
     # To be called after clicking on the plot.
     def on_mouse_click_release(self, event):
+        if not self.mouse_events_connected:
+            return
+
         if self.app.use_3d_engine:
             event_pos = event.pos
             right_button = 2
@@ -1399,6 +1419,8 @@ class ToolLevelling(CNCjob, AppTool):
 
         # do paint single only for left mouse clicks
         if event.button == 1:
+            if self.solid_geo is None:
+                return
             check_for_exc_hole = self.ui.avoid_exc_holes_cb.get_value()
 
             pos = self.app.plotcanvas.translate_coords(event_pos)
@@ -1520,7 +1542,7 @@ class ToolLevelling(CNCjob, AppTool):
         """
         return 10 ** -self.app.decimals * 10
 
-    def _al_match_tolerance(self, points_xy):
+    def _al_match_tolerance(self, points_xy, units=None):
         """
         Tolerance used to match a GRBL probe result back to the storage
         point it was probed for (_al_check_probe_reply()).
@@ -1536,36 +1558,22 @@ class ToolLevelling(CNCjob, AppTool):
 
         :param points_xy: iterable of (x, y) tuples - the stored probe
             point coordinates.
-        :return: tolerance (float), in the units of `self.units`.
+        :param units: captured data units; None preserves the direct-call default.
+        :return: tolerance (float), in the requested units.
         """
-        cap = 0.5 if self.units == 'MM' else 0.02
+        cap = 0.5 if (self.units if units is None else units) == 'MM' else 0.02
         return match_tolerance(points_xy, cap)
 
     def autolevell_gcode_line(self, gcode_line, state):
         return level_gcode_line(gcode_line, state, self._al_offset_fn, self._al_decimals)
 
-    def _al_prepare_interp(self, target_obj, al_method):
-        """
-        Validate `target_obj` / the height map and set up the per-call
-        interpolation state (`self._al_points`, `self._al_grid`,
-        `self._al_offset_fn`, `self._al_decimals`) used by
-        autolevell_gcode_line(). Emits the app-level error/warning
-        messages on failure or on grid fallback.
-
-        Shared setup used by autolevell_gcode() to level each of a
-        CNCJob object's tools' G-code, with a shared modal state across
-        tools.
-
-        :param target_obj:  the CNCJobObject to be height-compensated.
-        :param al_method:   'v' (Voronoi/nearest-point) or 'b' (bilinear).
-        :return:            True on success, False on error (message already emitted).
-        :rtype:             bool
-        """
+    def _al_capture_apply_input(self, target_obj, units=None):
+        """Validate the source/map and freeze points, units and grid tolerance."""
         if target_obj is None or target_obj.is_segmented_gcode is not True:
             self.app.inform.emit(
                 '[ERROR_NOTCL] %s' % _("The CNCJob object must be made from segmented G-code.")
             )
-            return False
+            return None
 
         # level_gcode_line() only understands standard G-code motion; Roland,
         # HPGL and laser preprocessors emit a completely different dialect
@@ -1590,7 +1598,7 @@ class ToolLevelling(CNCjob, AppTool):
                 '[ERROR_NOTCL] %s: %s.' %
                 (_("Autolevelling is not supported for this preprocessor"), bad_pp_name)
             )
-            return False
+            return None
 
         storage = self.al_voronoi_geo_storage
         if not storage or not self.al_heights_valid:
@@ -1598,19 +1606,39 @@ class ToolLevelling(CNCjob, AppTool):
                 '[ERROR_NOTCL] %s' %
                 _("No height map. Probe the points or import a height map first.")
             )
-            return False
+            return None
 
-        if str(target_obj.units).upper() != self.units:
+        units = self._al_data_units if units is None else units
+        if units not in ('MM', 'IN') or str(target_obj.units).upper() != units:
+            self.app.inform.emit(
+                '[ERROR_NOTCL] %s' % _("The units of the CNCJob object and of the height map do not match.")
+            )
+            return None
+
+        points = tuple((v['point'].x, v['point'].y, v['height']) for v in storage.values())
+        if any(value is None or not math.isfinite(value) for point in points for value in point):
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _("The height map contains invalid values."))
+            return None
+        return points, units, self._al_grid_tolerance()
+
+    def _al_prepare_interp(self, target_obj, al_method, snapshot=None):
+        """Set up per-call interpolation from validated immutable input.
+
+        Direct callers capture the current map; scheduled apply passes the
+        GUI-thread snapshot without reading mutable map storage or tool units.
+        """
+        if snapshot is None:
+            snapshot = self._al_capture_apply_input(target_obj)
+        if snapshot is None:
+            return False
+        points, units, tol = snapshot
+        if str(target_obj.units).upper() != units:
             self.app.inform.emit(
                 '[ERROR_NOTCL] %s' % _("The units of the CNCJob object and of the height map do not match.")
             )
             return False
-
-        points = [(v['point'].x, v['point'].y, v['height']) for v in storage.values()]
         self._al_points = points
         self._al_decimals = target_obj.coords_decimals
-
-        tol = self._al_grid_tolerance()
 
         if al_method == 'b':
             self._al_grid = build_bilinear_grid(points, tol)
@@ -1627,7 +1655,7 @@ class ToolLevelling(CNCjob, AppTool):
 
         return True
 
-    def autolevell_gcode(self, target_obj, al_method):
+    def autolevell_gcode(self, target_obj, al_method, snapshot=None):
         """
         Apply the probed height map (self.al_voronoi_geo_storage) to each
         of a CNCJob object's per-tool G-code texts
@@ -1646,11 +1674,12 @@ class ToolLevelling(CNCjob, AppTool):
         :param target_obj:  the CNCJobObject whose tools' G-code is to be
                              height-compensated. Not modified.
         :param al_method:   'v' (Voronoi/nearest-point) or 'b' (bilinear).
+        :param snapshot:    optional validated (points, units, grid tolerance).
         :return:             {tooluid: levelled G-code text} for every tool
                               in target_obj.tools, or None on error.
         :rtype:              dict | None
         """
-        if not self._al_prepare_interp(target_obj, al_method):
+        if not self._al_prepare_interp(target_obj, al_method, snapshot=snapshot):
             return None
 
         state = new_levelling_state()
@@ -1687,16 +1716,29 @@ class ToolLevelling(CNCjob, AppTool):
         return nearest_offset(self._al_points, x, y)
 
     def _al_bump_generation(self):
-        """Mark that the probe points changed; results of older operations are discarded."""
+        """Retire older results when points change or a replacement attempt starts."""
         self._al_generation = getattr(self, '_al_generation', 0) + 1
 
-    def _al_capture_context(self):
-        """:return: an _AlContext for the probe points and the owner object of now."""
+    def _al_capture_context(self, replacement=False):
+        """Capture data identity/tolerance; a replacement retires prior results first.
+
+        :return: an _AlContext, or None if a replacement would reinterpret old points.
+        """
+        units = self._al_data_units if self.al_voronoi_geo_storage else self.app.app_units.upper()
+        if replacement:
+            self._al_bump_generation()
+            self.al_heights_valid = False
+            if units != self.app.app_units.upper():
+                self.app.inform.emit('[ERROR_NOTCL] %s' % _(
+                    "The units of the probe points and of the project do not match. Add probe points again."))
+                return None
+        points = [(value['point'].x, value['point'].y) for value in self.al_voronoi_geo_storage.values()]
         return _AlContext(
             generation=getattr(self, '_al_generation', 0),
             target_name=getattr(self, '_al_target_name', None),
             target_obj=getattr(self, '_al_target_obj', None),
-            units=self.app.app_units.upper()
+            units=units,
+            tolerance=self._al_match_tolerance(points, units=units)
         )
 
     def _al_context_current(self, ctx):
@@ -1709,6 +1751,8 @@ class ToolLevelling(CNCjob, AppTool):
             return False
         if ctx.target_obj is not None and self.app.collection.get_by_name(ctx.target_name) is not ctx.target_obj:
             return False
+        if self.al_voronoi_geo_storage and ctx.units != self._al_data_units:
+            return False
         return ctx.units == self.app.app_units.upper()
 
     def _on_al_result_ready(self, result):
@@ -1720,34 +1764,41 @@ class ToolLevelling(CNCjob, AppTool):
             'failed'), 'context' (an _AlContext), and 'heights' ({key: z}) or
             'points' ([(x, y, z), ...]).
         """
-        if not self._al_context_current(result['context']):
-            self.app.inform.emit('[WARNING_NOTCL] %s' % _(
-                "The probe points, the target object or the units changed while the "
-                "operation ran. The result was discarded."))
-            return
-
-        kind = result['kind']
-        storage = self.al_voronoi_geo_storage
-        if kind == 'failed':
-            self.al_heights_valid = False
-            return
-
-        if kind == 'import_points':
-            storage.clear()
-            for idx, (x, y, z) in enumerate(result['points'], start=1):
-                storage[idx] = {'point': Point((x, y)), 'geo': None, 'height': z}
-            self._al_bump_generation()
-        else:
-            heights = result['heights']
-            if set(heights) != set(storage):
-                self.al_heights_valid = False
-                self.app.inform.emit('[ERROR_NOTCL] %s' % _(
-                    "Some probe points did not receive a height value. The result was discarded."))
+        with self._grbl_op_lock:
+            if not self._al_context_current(result['context']):
+                self.app.inform.emit('[WARNING_NOTCL] %s' % _(
+                    "The probe points, the target object or the units changed while the "
+                    "operation ran. The result was discarded."))
                 return
-            for key, z in heights.items():
-                storage[key]['height'] = z
+            op = result.get('operation')
+            if (op is not None and op.cancel.is_set()) or (
+                    'safety_generation' in result and
+                    result['safety_generation'] != self._grbl_safety_generation):
+                return
 
-        self.al_heights_valid = True
+            kind = result['kind']
+            storage = self.al_voronoi_geo_storage
+            if kind == 'failed':
+                self.al_heights_valid = False
+                return
+
+            if kind == 'import_points':
+                storage.clear()
+                for idx, (x, y, z) in enumerate(result['points'], start=1):
+                    storage[idx] = {'point': Point((x, y)), 'geo': None, 'height': z}
+                self._al_data_units = result['context'].units
+                self._al_bump_generation()
+            else:
+                heights = result['heights']
+                if set(heights) != set(storage):
+                    self.al_heights_valid = False
+                    self.app.inform.emit('[ERROR_NOTCL] %s' % _(
+                        "Some probe points did not receive a height value. The result was discarded."))
+                    return
+                for key, z in heights.items():
+                    storage[key]['height'] = z
+
+            self.al_heights_valid = True
         self.build_al_table_sig.emit()
         self.show_probing_geo_sig.emit(True, True)
         if kind == 'probe':
@@ -1757,16 +1808,7 @@ class ToolLevelling(CNCjob, AppTool):
         self.ui.al_probe_points_table.show() if state else self.ui.al_probe_points_table.hide()
 
     def on_mode_radio(self, val):
-        # reset al table
-        self.ui.al_probe_points_table.setRowCount(0)
-
-        # reset the al dict
-        self.al_voronoi_geo_storage.clear()
-        self.al_heights_valid = False
-        self._al_bump_generation()
-
-        # reset Voronoi Shapes
-        self.probing_shapes.clear(update=True)
+        self._clear_probe_data()
 
         # build AL table
         self.build_al_table()
@@ -1867,7 +1909,7 @@ class ToolLevelling(CNCjob, AppTool):
             return
 
         # the Connect button toggles: a click while a port is open closes it
-        if self._grbl_port_ready():
+        if self.grbl_ser_port is not None:
             self._grbl_disconnect()
             return
 
@@ -1881,69 +1923,103 @@ class ToolLevelling(CNCjob, AppTool):
             self.app.inform.emit('[ERROR_NOTCL] %s' % _("Select a valid baudrate."))
             return
 
+        attempt = object()
+        with self._grbl_op_lock:
+            self._grbl_connected = False
+            self._grbl_connect_attempt = attempt
+        self._grbl_set_ui_connected(False)
         try:
-            self.grbl_ser_port = serial.serial_for_url(port_name, baudrate,
+            port = serial.serial_for_url(port_name, baudrate,
                                                        bytesize=serial.EIGHTBITS,
                                                        parity=serial.PARITY_NONE,
                                                        stopbits=serial.STOPBITS_ONE,
                                                        timeout=0.1,
+                                                       write_timeout=1.0,
                                                        xonxoff=False,
                                                        rtscts=False)
+            with self._grbl_op_lock:
+                if self._grbl_connect_attempt is not attempt:
+                    port.close()
+                    return
+                self.grbl_ser_port = port
+                self._grbl_rx_port = port
+                self._grbl_rx_buffer = b''
+                self._grbl_reply_pending = False
 
             # Toggle DTR to reset the controller loaded with GRBL (Arduino, ESP32, etc.)
             try:
-                self.grbl_ser_port.dtr = False
+                port.dtr = False
             except IOError:
                 pass
 
-            self.grbl_ser_port.reset_input_buffer()
+            port.reset_input_buffer()
 
             try:
-                self.grbl_ser_port.dtr = True
+                port.dtr = True
             except IOError:
                 pass
 
             # wake up GRBL; a timer reads the answer 1 s later, so the GUI does not stop
-            self.grbl_ser_port.write("\r\n\r\n".encode('utf-8'))
+            port.write("\r\n\r\n".encode('utf-8'))
         except (serial.SerialException, OSError, ValueError) as err:
             self.app.log.error("ToolLevelling.on_grbl_connect() -> %s" % str(err))
-            self._grbl_close_port()
+            self._grbl_close_port(attempt=attempt)
             self.app.inform.emit("[ERROR_NOTCL] %s: %s" % (_("Could not connect to port"), port_name))
             return
 
-        QtCore.QTimer.singleShot(1000, lambda: self._grbl_connect_finish(port_name))
+        QtCore.QTimer.singleShot(1000, lambda: self._grbl_connect_finish(port_name, port, attempt))
 
-    def _grbl_connect_finish(self, port_name):
+    def _grbl_connect_finish(self, port_name, port, attempt):
         """
         Read the GRBL answer to the wake-up lines. Mark the port as connected
         if GRBL answered, else close the port.
         """
-        port = self.grbl_ser_port
-        if port is None or not getattr(port, 'is_open', False):
-            return
+        with self._grbl_op_lock:
+            if self.grbl_ser_port is not port or self._grbl_connect_attempt is not attempt:
+                return
+            if port is None or not getattr(port, 'is_open', False):
+                return
+            safety_generation = self._grbl_safety_generation
 
+        error = None
         try:
             answer = port.readlines()
-            port.reset_input_buffer()
         except (serial.SerialException, OSError) as err:
-            self.app.log.error("ToolLevelling._grbl_connect_finish() -> %s" % str(err))
+            error = err
             answer = []
 
-        for line in answer:
-            text = line.decode('utf-8', errors='replace').lower()
-            if 'ok' in text or 'grbl' in text:
-                with self._grbl_op_lock:
-                    # the DTR toggle reset GRBL; the machine position is still unknown
-                    if self._grbl_recovery == 'needs_reset':
-                        self._grbl_recovery = 'needs_home'
+        with self._grbl_op_lock:
+            if self.grbl_ser_port is not port or self._grbl_connect_attempt is not attempt:
+                return
+            if error is not None:
+                self.app.log.error("ToolLevelling._grbl_connect_finish() -> %s" % str(error))
+            buffered = self._grbl_rx_buffer if self._grbl_rx_port is port else b''
+            lines = [text.strip() for text in (buffered + b''.join(answer)).decode(
+                'utf-8', errors='replace').splitlines()]
+            alarm = any(text.lower().startswith('alarm:') or parse_grbl_status_state(text) == 'Alarm'
+                        for text in lines)
+            banner = any(text.lower().startswith('grbl ') for text in lines)
+            self._grbl_failure_locked(None, 'handshake', '\n'.join(lines))
+            if alarm and self._grbl_rx_port is port:
+                self._grbl_rx_buffer = b''  # this alarm was classified and recovery remains latched
+            if banner or any(text.lower() == 'ok' for text in lines):
+                # Only a startup banner confirms reset; DTR and ok do not.
+                if (banner and not alarm and self._grbl_recovery == 'needs_reset'
+                        and safety_generation == self._grbl_safety_generation):
+                    self._grbl_recovery = 'needs_home'
+                    self._grbl_reset_pending = False
+                    self._grbl_reply_pending = False
+                    self._grbl_rx_port = port
+                    self._grbl_rx_buffer = b''
+                self._grbl_connected = True
                 self._grbl_set_ui_connected(True)
                 self.app.inform.emit("%s: %s" % (_("Port connected"), port_name))
                 if self._grbl_recovery is not None:
                     self.app.inform.emit('[WARNING_NOTCL] %s' % self._grbl_recovery_text())
                 return
 
-        self._grbl_close_port()
-        self.app.inform.emit("[ERROR_NOTCL] %s: %s" % (_("Could not connect to GRBL on port"), port_name))
+        if self._grbl_close_port(port=port, attempt=attempt):
+            self.app.inform.emit("[ERROR_NOTCL] %s: %s" % (_("Could not connect to GRBL on port"), port_name))
 
     def _grbl_set_ui_connected(self, connected):
         """Show the connection state on the Connect button and on the tabs."""
@@ -1966,18 +2042,28 @@ class ToolLevelling(CNCjob, AppTool):
             # the UI can be already deleted when the application ends
             pass
 
-    def _grbl_close_port(self):
+    def _grbl_close_port(self, port=None, attempt=None):
         """Close the serial port now. Safe in a worker thread (the UI changes through a signal)."""
         with self._grbl_op_lock:
+            if attempt is not None and (self._grbl_connect_attempt is not attempt or (
+                    port is not None and self.grbl_ser_port is not port)):
+                return False
             port = self.grbl_ser_port
             self.grbl_ser_port = None
+            self._grbl_connected = False
+            self._grbl_connect_attempt = None
             self._grbl_close_pending = False
+            if port is not None:
+                self._grbl_rx_port = None
+                self._grbl_rx_buffer = b''
+                self._grbl_reply_pending = False
         if port is not None:
             try:
                 port.close()
             except (serial.SerialException, OSError) as err:
                 self.app.log.debug("ToolLevelling._grbl_close_port() -> %s" % str(err))
         self.grbl_port_closed_sig.emit()
+        return True
 
     def _grbl_disconnect(self):
         """
@@ -1985,6 +2071,8 @@ class ToolLevelling(CNCjob, AppTool):
         can move the machine) and close the port when the operation releases it.
         """
         with self._grbl_op_lock:
+            self._grbl_safety_generation += 1
+            self._grbl_reset_pending = False
             op = self._grbl_op
             if op is not None:
                 op.cancel.set()
@@ -2003,11 +2091,14 @@ class ToolLevelling(CNCjob, AppTool):
     def _grbl_force_close(self):
         """Close the port now, also during an operation (the application ends)."""
         with self._grbl_op_lock:
+            self._grbl_safety_generation += 1
+            self._grbl_reset_pending = False
             op = self._grbl_op
             if op is not None:
                 op.cancel.set()
                 if op.motion:
                     self._grbl_write_realtime_locked(b'!')
+                    self._grbl_recovery = 'needs_reset'
         self._grbl_close_port()
 
     def on_grbl_add_baudrate(self):
@@ -2021,9 +2112,9 @@ class ToolLevelling(CNCjob, AppTool):
         self.ui.baudrates_list_combo.removeItem(current_idx)
 
     def _grbl_port_ready(self):
-        """:return: True if a serial port is open."""
+        """:return: True only after an open port has completed the GRBL handshake."""
         port = getattr(self, 'grbl_ser_port', None)
-        return port is not None and bool(getattr(port, 'is_open', False))
+        return self._grbl_connected and port is not None and bool(getattr(port, 'is_open', False))
 
     def _grbl_recovery_text(self):
         if self._grbl_recovery == 'needs_reset':
@@ -2050,10 +2141,13 @@ class ToolLevelling(CNCjob, AppTool):
                     _("GRBL is busy"), self._grbl_op.name, _("Wait, or press Stop.")))
                 return None
             if motion and self._grbl_recovery is not None and not (
-                    allow_in_recovery and self._grbl_recovery == 'needs_home'):
+                    allow_in_recovery and (self._grbl_recovery == 'needs_home' or (
+                        name == 'home' and self._grbl_recovery == 'needs_reset' and self._grbl_reset_pending))):
                 self.app.inform.emit('[ERROR_NOTCL] %s' % self._grbl_recovery_text())
                 return None
             op = _GrblOperation(name, motion)
+            op.safety_generation = self._grbl_safety_generation
+            op.port = self.grbl_ser_port
             self._grbl_op = op
             return op
 
@@ -2080,8 +2174,12 @@ class ToolLevelling(CNCjob, AppTool):
 
         def worker_task():
             try:
-                fn(op)
+                result = fn(op)
+                if motion and not allow_in_recovery and result is not False:
+                    self._grbl_wait_idle(op)
             except (serial.SerialException, OSError) as err:
+                with self._grbl_op_lock:
+                    self._grbl_failure_locked(op, 'port_error')
                 self.app.log.error("ToolLevelling._grbl_start_op(%s) -> %s" % (name, str(err)))
                 self.app.inform.emit('[ERROR_NOTCL] %s: %s' % (_("The serial port failed"), str(err)))
             finally:
@@ -2089,6 +2187,94 @@ class ToolLevelling(CNCjob, AppTool):
 
         self.app.worker_task.emit({'fcn': worker_task, 'params': []})
         return True
+
+    def _grbl_active_locked(self, op, port=None):
+        """The caller holds the operation lock; a cancelled reply is never success."""
+        if self._grbl_op is op and not op.cancel.is_set() and (
+                not self._grbl_port_ready() or self.grbl_ser_port is not op.port):
+            self._grbl_failure_locked(op, 'port_error')
+        return (self._grbl_op is op and not op.cancel.is_set() and not op.failed
+                and self._grbl_port_ready() and (port is None or self.grbl_ser_port is port))
+
+    def _grbl_failure_locked(self, op, status, text=''):
+        """Latch alarm/uncertain motion before attempting hold. Caller holds the lock."""
+        alarm = any(line.lower().startswith('alarm:') or parse_grbl_status_state(line) == 'Alarm'
+                    for line in (text or '').splitlines())
+        uncertain = status in ('timeout', 'port_error', 'probe_invalid')
+        if op is not None and (self._grbl_op is not op or op.cancel.is_set() or op.failed):
+            return
+        if alarm or status == 'probe_failed' or (uncertain and (op is None or op.motion)):
+            self._grbl_recovery = 'needs_reset'
+            self._grbl_reset_pending = False
+            self._grbl_safety_generation += 1
+            if op is not None:
+                op.failed = True
+            if uncertain and not alarm:
+                if op is None or self.grbl_ser_port is op.port:
+                    self._grbl_write_realtime_locked(b'!')
+                else:
+                    # Never send the old operation's hold to a replacement controller.
+                    try:
+                        op.port.write(b'!')
+                    except (serial.SerialException, OSError) as err:
+                        self.app.log.error("ToolLevelling._grbl_failure_locked() -> %s" % str(err))
+
+    def _grbl_prepare_locked(self, op, port):
+        """Classify buffered async data before writing; old ok is not a new acknowledgement."""
+        if self._grbl_rx_port is not port:
+            self._grbl_rx_port = port
+            self._grbl_rx_buffer = b''
+            self._grbl_reply_pending = False
+        try:
+            waiting = port.in_waiting
+            if waiting:
+                self._grbl_rx_buffer += port.read(waiting)
+        except (serial.SerialException, OSError) as err:
+            self.app.log.error("ToolLevelling._grbl_prepare_locked() -> %s" % str(err))
+            self._grbl_failure_locked(op, 'port_error')
+            return '', 'port_error'
+        lines = self._grbl_rx_buffer.split(b'\n')
+        self._grbl_rx_buffer = lines.pop()
+        text = '\n'.join(line.decode('utf-8', errors='replace').strip() for line in lines)
+        self._grbl_failure_locked(op, 'error', text)
+        if op.failed:
+            return text, 'error'
+        if any(line.strip().lower() == 'ok' or line.strip().lower().startswith('error:')
+               for line in text.splitlines()):
+            self._grbl_reply_pending = False
+        if op.motion and any(line.strip().startswith('[PRB:') for line in text.splitlines()):
+            self._grbl_failure_locked(op, 'probe_invalid')
+            return text, 'error'
+        if self._grbl_rx_buffer:
+            # A partial stale acknowledgement cannot be associated with the next command.
+            self._grbl_failure_locked(op, 'probe_invalid')
+            return text, 'error'
+        if self._grbl_reply_pending:
+            self._grbl_failure_locked(op, 'timeout')
+            return text, 'timeout'
+        return '', None
+
+    def _grbl_wait_idle(self, op, timeout=120.0):
+        """Keep motion ownership while Run/Jog is reported; acceptance is not completion."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._grbl_op_lock:
+                if not self._grbl_active_locked(op):
+                    return False
+            state = parse_grbl_status_state(self._grbl_query_status(op, timeout=min(2.0, max(
+                0.0, deadline - time.monotonic()))))
+            with self._grbl_op_lock:
+                if not self._grbl_active_locked(op):
+                    return False
+                if state == 'Idle':
+                    return True
+                if state not in ('Run', 'Jog'):
+                    self._grbl_failure_locked(op, 'probe_invalid')
+                    return False
+            time.sleep(0.05)
+        with self._grbl_op_lock:
+            self._grbl_failure_locked(op, 'timeout')
+        return False
 
     def _grbl_write_realtime_locked(self, data):
         """
@@ -2111,9 +2297,9 @@ class ToolLevelling(CNCjob, AppTool):
         Send 1 line to GRBL for the operation `op`, and read the reply until
         'ok', 'error:N' or 'ALARM:N', the time limit, a stop of `op`, or a port error.
 
-        The stop request is checked before any I/O, under the same lock that
-        on_grbl_stop() uses, so no command is written after a stop. The input
-        buffer is flushed before the write, so old data is not read as this reply.
+        Cancellation and operation identity are checked before writes and after
+        reads under the Stop lock. Buffered asynchronous alarms are classified,
+        and residual acknowledgements are consumed before the next write.
         The read uses the port that was written to, never a replacement port.
 
         :return: (text, status). text: the decoded reply lines joined by '\\n'.
@@ -2121,85 +2307,121 @@ class ToolLevelling(CNCjob, AppTool):
         """
         cmd = command.strip()
         with self._grbl_op_lock:
-            if op.cancel.is_set() or self._grbl_op is not op or not self._grbl_port_ready():
+            if not self._grbl_active_locked(op) or self._grbl_reset_pending:
                 return '', 'cancelled'
             port = self.grbl_ser_port
+            text, status = self._grbl_prepare_locked(op, port)
+            if status is not None:
+                return text, status
             try:
-                port.reset_input_buffer()
+                self._grbl_reply_pending = True
                 port.write((cmd + '\n').encode('utf-8'))
             except (serial.SerialException, OSError) as err:
                 self.app.log.error("ToolLevelling._grbl_transact() -> %s" % str(err))
+                self._grbl_failure_locked(op, 'port_error')
                 return '', 'port_error'
 
         if echo:
             self.app.inform_shell[str, bool].emit(cmd, False)
 
         decoded_lines = []
-        buffer = b''
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if op.cancel.is_set():
-                return '\n'.join(decoded_lines), 'cancelled'
+            with self._grbl_op_lock:
+                if not self._grbl_active_locked(op, port):
+                    return '\n'.join(decoded_lines), 'cancelled'
             try:
-                chunk = port.readline()
+                chunk = b'' if b'\n' in self._grbl_rx_buffer else port.readline()
             except (serial.SerialException, OSError) as err:
                 self.app.log.error("ToolLevelling._grbl_transact() -> %s" % str(err))
+                with self._grbl_op_lock:
+                    self._grbl_failure_locked(op, 'port_error')
                 return '\n'.join(decoded_lines), 'port_error'
-            if not chunk:
-                continue
+            with self._grbl_op_lock:
+                if not self._grbl_active_locked(op, port):
+                    return '\n'.join(decoded_lines), 'cancelled'
+                self._grbl_rx_buffer += chunk
+                complete = self._grbl_rx_buffer.rsplit(b'\n', 1)[0] if b'\n' in self._grbl_rx_buffer else b''
+                self._grbl_failure_locked(op, 'error', complete.decode('utf-8', errors='replace'))
+                if op.failed:
+                    self._grbl_rx_buffer = self._grbl_rx_buffer.rsplit(b'\n', 1)[-1]
+                    return '\n'.join(decoded_lines + [complete.decode('utf-8', errors='replace').strip()]), 'error'
+                while b'\n' in self._grbl_rx_buffer:
+                    raw_line, self._grbl_rx_buffer = self._grbl_rx_buffer.split(b'\n', 1)
+                    decoded_line = raw_line.decode('utf-8', errors='replace').strip()
+                    if not decoded_line:
+                        continue
+                    decoded_lines.append(decoded_line)
+                    if echo:
+                        self.app.inform_shell.emit('\t\t\t: ' + decoded_line.upper())
+                    lowered = decoded_line.lower()
+                    if lowered == 'ok':
+                        self._grbl_reply_pending = False
+                        text, status = self._grbl_prepare_locked(op, port)
+                        if status is not None:
+                            return '\n'.join(decoded_lines + [text]), status
+                        return '\n'.join(decoded_lines), 'ok'
+                    if lowered.startswith('error:'):
+                        self._grbl_reply_pending = False
+                        return '\n'.join(decoded_lines), 'error'
 
-            # readline() with the port timeout can return a partial line;
-            # keep the bytes until the '\n' arrives
-            buffer += chunk
-            while b'\n' in buffer:
-                raw_line, buffer = buffer.split(b'\n', 1)
-                decoded_line = raw_line.decode('utf-8', errors='replace').strip()
-                if not decoded_line:
-                    continue
-                decoded_lines.append(decoded_line)
-                if echo:
-                    self.app.inform_shell.emit('\t\t\t: ' + decoded_line.upper())
-
-                lowered = decoded_line.lower()
-                if lowered == 'ok':
-                    return '\n'.join(decoded_lines), 'ok'
-                if lowered.startswith('error:') or lowered.startswith('alarm:'):
-                    return '\n'.join(decoded_lines), 'error'
-
+        with self._grbl_op_lock:
+            if not self._grbl_active_locked(op, port):
+                return '\n'.join(decoded_lines), 'cancelled'
+            self._grbl_failure_locked(op, 'timeout')
         return '\n'.join(decoded_lines), 'timeout'
 
     def _grbl_query_status(self, op, timeout=2.0):
-        """
-        Send the real-time status request '?' for the operation `op`.
-
-        :return: the status report line, for example '<Idle|MPos:...|FS:0,0>', or None.
-        """
+        """Request a fresh status report, preserving async alarm and cancellation evidence."""
         with self._grbl_op_lock:
-            if op.cancel.is_set() or self._grbl_op is not op or not self._grbl_port_ready():
+            if not self._grbl_active_locked(op) or self._grbl_reset_pending:
                 return None
             port = self.grbl_ser_port
+            text, status = self._grbl_prepare_locked(op, port)
+            if status is not None:
+                return None
             try:
-                port.reset_input_buffer()
                 port.write(b'?')
             except (serial.SerialException, OSError) as err:
                 self.app.log.error("ToolLevelling._grbl_query_status() -> %s" % str(err))
+                self._grbl_failure_locked(op, 'port_error')
                 return None
 
-        buffer = b''
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if op.cancel.is_set():
-                return None
+            with self._grbl_op_lock:
+                if not self._grbl_active_locked(op, port):
+                    return None
             try:
-                chunk = port.readline()
+                chunk = b'' if b'\n' in self._grbl_rx_buffer else port.readline()
             except (serial.SerialException, OSError):
+                with self._grbl_op_lock:
+                    self._grbl_failure_locked(op, 'port_error')
                 return None
-            buffer += chunk or b''
-            while b'\n' in buffer:
-                raw_line, buffer = buffer.split(b'\n', 1)
-                line = raw_line.decode('utf-8', errors='replace').strip()
-                if line.startswith('<'):
-                    return line
+            with self._grbl_op_lock:
+                if not self._grbl_active_locked(op, port):
+                    return None
+                self._grbl_rx_buffer += chunk or b''
+                complete = self._grbl_rx_buffer.rsplit(b'\n', 1)[0] if b'\n' in self._grbl_rx_buffer else b''
+                text = complete.decode('utf-8', errors='replace')
+                self._grbl_failure_locked(op, 'error', text)
+                while b'\n' in self._grbl_rx_buffer:
+                    raw_line, self._grbl_rx_buffer = self._grbl_rx_buffer.split(b'\n', 1)
+                    line = raw_line.decode('utf-8', errors='replace').strip()
+                    if line.startswith('<'):
+                        state = parse_grbl_status_state(line)
+                        if state is None:
+                            self._grbl_failure_locked(op, 'probe_invalid')
+                            return None
+                        text, status = self._grbl_prepare_locked(op, port)
+                        if status is not None and state != 'Alarm':
+                            return None
+                        return line
+                if op.failed:
+                    return None
+        with self._grbl_op_lock:
+            if self._grbl_active_locked(op, port):
+                self._grbl_failure_locked(op, 'timeout')
         return None
 
     def on_grbl_send_command(self):
@@ -2208,7 +2430,7 @@ class ToolLevelling(CNCjob, AppTool):
             return
 
         def task(op):
-            self._grbl_transact(op, cmd, timeout=30.0)
+            return self._grbl_transact(op, cmd, timeout=30.0)[1] == 'ok'
 
         # show the Shell Dock
         self.app.ui.shell_dock.show()
@@ -2233,48 +2455,32 @@ class ToolLevelling(CNCjob, AppTool):
         :return:        the text returned by the GRBL controller after each command
         :rtype:         str
         """
-        cmd = command.strip()
-        if echo:
-            self.app.inform_shell[str, bool].emit(cmd, False)
-
-        # Send Gcode command to GRBL
-        snd = cmd + '\n'
-        self.grbl_ser_port.write(snd.encode('utf-8'))
-        grbl_out = self.grbl_ser_port.readlines()
-        if not grbl_out:
-            self.app.inform_shell[str, bool].emit('\t\t\t: No answer\n', False)
+        op = self._grbl_reserve('command', motion=True)
+        if op is None:
             return ''
-
-        decoded_lines = []
-        for line in grbl_out:
-            decoded_line = line.decode('utf-8', errors='replace').strip()
-            decoded_lines.append(decoded_line)
-            if echo:
-                try:
-                    self.app.inform_shell.emit('\t\t\t: ' + decoded_line.upper())
-                except Exception as e:
-                    self.app.log.error("CNCJobObject.send_grbl_command() --> %s" % str(e))
-
-        return '\n'.join(decoded_lines)
+        try:
+            text, status = self._grbl_transact(op, command, timeout=30.0, echo=echo)
+            if status == 'ok':
+                self._grbl_wait_idle(op)
+            return text
+        finally:
+            self._grbl_release(op)
 
     def send_grbl_block(self, command, echo=True):
-        stripped_cmd = command.strip()
-
-        for grbl_line in stripped_cmd.split('\n'):
-            if echo:
-                self.app.inform_shell[str, bool].emit(grbl_line, False)
-
-            # Send Gcode block to GRBL
-            snd = grbl_line + '\n'
-            self.grbl_ser_port.write(snd.encode('utf-8'))
-            grbl_out = self.grbl_ser_port.readlines()
-
-            for line in grbl_out:
-                if echo:
-                    try:
-                        self.app.inform_shell.emit(' : ' + line.decode('utf-8').strip().upper())
-                    except Exception as e:
-                        self.app.log.error("CNCJobObject.send_grbl_block() --> %s" % str(e))
+        op = self._grbl_reserve('block', motion=True)
+        if op is None:
+            return
+        try:
+            for grbl_line in command.strip().split('\n'):
+                if not grbl_line.strip():
+                    continue
+                text, status = self._grbl_transact(op, grbl_line, timeout=30.0, echo=echo)
+                if status != 'ok':
+                    self._grbl_wait_idle(op)
+                    return
+            self._grbl_wait_idle(op)
+        finally:
+            self._grbl_release(op)
 
     def on_grbl_get_parameter(self, param):
         try:
@@ -2327,12 +2533,14 @@ class ToolLevelling(CNCjob, AppTool):
             return
 
         def task(op):
-            for cmd in commands:
+            for idx, cmd in enumerate(commands):
                 text, status = self._grbl_transact(op, cmd, timeout=10.0, echo=False)
                 if status != 'ok':
                     self.app.inform.emit('[ERROR_NOTCL] %s: %s -> %s' % (
                         _("Jog failed"), cmd, grbl_reply_error(text) or status))
-                    return
+                    return False
+                if idx < len(commands) - 1 and not self._grbl_wait_idle(op):
+                    return False
 
         self._grbl_start_op('jog', task, motion=True)
 
@@ -2362,33 +2570,91 @@ class ToolLevelling(CNCjob, AppTool):
         # the position is not trusted during recovery
         self._grbl_start_op('zero', task, motion=True)
 
+    def _grbl_confirm_reset(self, op, timeout=10.0):
+        """The home worker ignores old replies until this reset epoch's startup banner."""
+        port = op.port
+        with self._grbl_op_lock:
+            if not self._grbl_active_locked(op, port) or op.safety_generation != self._grbl_safety_generation:
+                return False
+            if self._grbl_rx_port is not port:
+                self._grbl_rx_port = port
+                self._grbl_rx_buffer = b''
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._grbl_op_lock:
+                if (not self._grbl_active_locked(op, port) or not self._grbl_reset_pending
+                        or op.safety_generation != self._grbl_safety_generation):
+                    return False
+            try:
+                chunk = b'' if b'\n' in self._grbl_rx_buffer else port.readline()
+            except (serial.SerialException, OSError) as err:
+                self.app.log.error("ToolLevelling._grbl_confirm_reset() -> %s" % str(err))
+                with self._grbl_op_lock:
+                    self._grbl_failure_locked(op, 'port_error')
+                return False
+            with self._grbl_op_lock:
+                if (not self._grbl_active_locked(op, port) or not self._grbl_reset_pending
+                        or op.safety_generation != self._grbl_safety_generation):
+                    return False
+                self._grbl_rx_buffer += chunk or b''
+                complete = self._grbl_rx_buffer.rsplit(b'\n', 1)[0] if b'\n' in self._grbl_rx_buffer else b''
+                self._grbl_failure_locked(op, 'error', complete.decode('utf-8', errors='replace'))
+                if op.failed:
+                    self._grbl_rx_buffer = self._grbl_rx_buffer.rsplit(b'\n', 1)[-1]
+                    return False
+                while b'\n' in self._grbl_rx_buffer:
+                    raw_line, self._grbl_rx_buffer = self._grbl_rx_buffer.split(b'\n', 1)
+                    line = raw_line.decode('utf-8', errors='replace').strip()
+                    if line.lower().startswith('grbl '):
+                        # Only the same uncancelled reset epoch can retire old reply evidence.
+                        self._grbl_reply_pending = False
+                        self._grbl_reset_pending = False
+                        self._grbl_recovery = 'needs_home'
+                        text, status = self._grbl_prepare_locked(op, port)
+                        return status is None
+                    # Pre-banner ok/error/other lines belong to the previous controller epoch.
+
+        with self._grbl_op_lock:
+            if self._grbl_active_locked(op, port) and op.safety_generation == self._grbl_safety_generation:
+                self._grbl_failure_locked(op, 'timeout')
+        return False
+
     def on_grbl_homing(self):
         def task(op):
+            with self._grbl_op_lock:
+                pending = self._grbl_reset_pending
+            if pending and not self._grbl_confirm_reset(op):
+                self.app.inform.emit('[ERROR_NOTCL] %s' % _("GRBL reset was not confirmed. Press Reset, then Home."))
+                return False
             # a home cycle can take a long time; GRBL answers 'ok' at the end
             text, status = self._grbl_transact(op, '$H', timeout=120.0)
-            if status == 'ok':
+            if status == 'ok' and self._grbl_wait_idle(op):
                 with self._grbl_op_lock:
+                    if not self._grbl_active_locked(op) or op.safety_generation != self._grbl_safety_generation:
+                        return False
                     self._grbl_recovery = None
-                self.app.inform.emit('[success] %s' % _("Home cycle finished."))
+                    self.app.inform.emit('[success] %s' % _("Home cycle finished."))
                 return
             if 'alarm' in (text or '').lower() or status in ('timeout', 'port_error'):
                 with self._grbl_op_lock:
-                    self._grbl_recovery = 'needs_reset'
+                    self._grbl_failure_locked(op, status, text)
             self.app.inform.emit('[ERROR_NOTCL] %s: %s' % (_("Home cycle failed"), text or status))
 
-        # the home cycle is the only motion allowed in the 'needs_home' recovery state
+        # A pending-reset home reservation only reads confirmation before permitting $H.
         if self._grbl_start_op('home', task, motion=True, allow_in_recovery=True):
             self.app.inform.emit("%s" % _("GRBL is doing a home cycle."))
 
     def on_grbl_stop(self):
         """Stop the running operation at once: feed hold, and the machine needs recovery."""
         with self._grbl_op_lock:
+            self._grbl_safety_generation += 1
+            self._grbl_reset_pending = False
             op = self._grbl_op
             if op is not None:
                 op.cancel.set()
             written = self._grbl_write_realtime_locked(b'!')
-            if written:
-                self._grbl_recovery = 'needs_reset'
+            self._grbl_recovery = 'needs_reset'
 
         if not written:
             self.app.inform.emit('[ERROR_NOTCL] %s' % _("Not connected to a GRBL controller."))
@@ -2398,13 +2664,16 @@ class ToolLevelling(CNCjob, AppTool):
 
     def on_grbl_reset(self):
         with self._grbl_op_lock:
+            self._grbl_safety_generation += 1
             op = self._grbl_op
             if op is not None:
                 op.cancel.set()
             written = self._grbl_write_realtime_locked(b'\x18')
-            # a reset during motion, or during recovery, loses the machine position
-            if written and ((op is not None and op.motion) or self._grbl_recovery is not None):
-                self._grbl_recovery = 'needs_home'
+            self._grbl_reset_pending = written
+            # The byte request is not proof of reset, even when the machine looked Idle.
+            self._grbl_recovery = 'needs_reset'
+            if not written:
+                self._grbl_write_realtime_locked(b'!')
 
         if not written:
             self.app.inform.emit('[ERROR_NOTCL] %s' % _("Not connected to a GRBL controller."))
@@ -2686,7 +2955,9 @@ class ToolLevelling(CNCjob, AppTool):
                 self._clear_probe_data()
                 self._al_target_name = current_name
                 self._al_target_obj = current_obj
-            context = self._al_capture_context()
+            context = self._al_capture_context(replacement=True)
+            if context is None:
+                return
             points = {key: (v['point'].x, v['point'].y) for key, v in self.al_voronoi_geo_storage.items()}
             self.app.worker_task.emit({'fcn': self.import_height_map, 'params': [filename, context, points]})
 
@@ -2696,14 +2967,13 @@ class ToolLevelling(CNCjob, AppTool):
         through al_result_ready_sig, as a whole; nothing is written here.
 
         :param filename: path of the height map file.
-        :param context:  _AlContext captured by the caller; None means 'now'.
+        :param context:  _AlContext captured by the caller; None starts a replacement attempt.
         :param points:   {key: (x, y)} of the probe points captured by the caller; None means 'now'.
         """
-        # self.units is only ever (re)set in set_ui(); refresh it here so that
-        # _al_match_tolerance() uses the app's current units
-        self.units = self.app.app_units.upper()
         if context is None:
-            context = self._al_capture_context()
+            context = self._al_capture_context(replacement=True)
+            if context is None:
+                return
         if points is None:
             points = {key: (v['point'].x, v['point'].y) for key, v in self.al_voronoi_geo_storage.items()}
         failed = {'kind': 'failed', 'context': context}
@@ -2739,7 +3009,7 @@ class ToolLevelling(CNCjob, AppTool):
             self.al_result_ready_sig.emit({'kind': 'import_points', 'context': context, 'points': rows})
             return
 
-        tol = self._al_match_tolerance(list(points.values()))
+        tol = context.tolerance
         heights = {}
         unmatched_rows = 0
         for x, y, z in rows:
@@ -2802,19 +3072,18 @@ class ToolLevelling(CNCjob, AppTool):
             self.app.inform.emit('[ERROR_NOTCL] %s' % _("There are no probe points. Add probe points first."))
             return
 
+        context = self._al_capture_context(replacement=True)
+        if context is None:
+            return
+
         op = self._grbl_reserve('probe', motion=True)
         if op is None:
             return
 
-        self.units = self.app.app_units.upper()
-        context = self._al_capture_context()
         points = {key: (value['point'].x, value['point'].y) for key, value in self.al_voronoi_geo_storage.items()}
-        tol = self._al_match_tolerance(list(points.values()))
-        units_cmd = 'G20' if self.units == 'IN' else 'G21'
+        tol = context.tolerance
+        units_cmd = 'G20' if context.units == 'IN' else 'G21'
         probe_timeout = probe_timeout_s(travel_z, depth, probe_fr)
-
-        # a new probing pass replaces the map: the old heights are not valid from now on
-        self.al_heights_valid = False
 
         # show the Shell Dock
         self.app.ui.shell_dock.show()
@@ -2841,6 +3110,7 @@ class ToolLevelling(CNCjob, AppTool):
         """
         modes_ok = False
         staged = {}
+        evidence = {'context': context, 'operation': op, 'safety_generation': op.safety_generation}
 
         def step(command, timeout=10.0):
             text, status = self._grbl_transact(op, command, timeout=timeout)
@@ -2856,7 +3126,7 @@ class ToolLevelling(CNCjob, AppTool):
             report_setting = parse_grbl_setting(step('$$'), 13)
             if report_setting is None:
                 raise _GrblProbeAbort('$$', '', 'unknown_units')
-            scale = grbl_report_scale(self.units, report_setting == 1.0)
+            scale = grbl_report_scale(context.units, report_setting == 1.0)
 
             step(units_cmd)
             step('G90')
@@ -2881,19 +3151,23 @@ class ToolLevelling(CNCjob, AppTool):
                 staged[key] = self._al_check_probe_reply(probe_cmd, text, key, points, tol, offset, scale)
 
             step('G0 Z{0:.4f}'.format(travel_z))
+            step('G4 P0', timeout=120.0)
+            with self._grbl_op_lock:
+                if not self._grbl_active_locked(op) or self._grbl_safety_generation != op.safety_generation:
+                    raise _GrblProbeAbort('G4 P0', '', 'cancelled')
         except _GrblProbeAbort as abort:
             self._grbl_handle_abort(op, abort, travel_z, modes_ok)
-            self.al_result_ready_sig.emit({'kind': 'failed', 'context': context})
+            self.al_result_ready_sig.emit(dict(evidence, kind='failed'))
             return False
         except ValueError as err:
             # the $G or $# reply could not be read; the modes are confirmed, so lift Z
             self.app.inform.emit('[ERROR_NOTCL] %s: %s' % (_("Could not read the GRBL work offset"), str(err)))
             self._grbl_retract(op, travel_z)
-            self.al_result_ready_sig.emit({'kind': 'failed', 'context': context})
+            self.al_result_ready_sig.emit(dict(evidence, kind='failed'))
             return False
 
         self.app.inform.emit('%s' % _("Finished probing. Doing the autolevelling."))
-        self.al_result_ready_sig.emit({'kind': 'probe', 'context': context, 'heights': staged})
+        self.al_result_ready_sig.emit(dict(evidence, kind='probe', heights=staged))
         return True
 
     def _al_check_probe_reply(self, command, text, expected_key, points, tol, offset, scale):
@@ -2901,14 +3175,24 @@ class ToolLevelling(CNCjob, AppTool):
         Check the reply of 1 G38.2 move.
 
         :return: the height (app units) for expected_key.
-        :raises _GrblProbeAbort: 'probe_failed' if the probe did not touch or the
-            record is not finite; 'probe_invalid' if there is not exactly 1 record,
+        :raises _GrblProbeAbort: 'probe_failed' if a finite record proves no contact;
+            'probe_invalid' if the record is malformed/nonfinite or not unique,
             or if the record is not at the commanded point.
         """
         try:
             results = parse_grbl_probe_output(text)
         except ValueError:
-            raise _GrblProbeAbort(command, text, 'probe_failed')
+            # Validate the numeric record separately from its contact flag. A bad
+            # number is uncertainty, not evidence that GRBL entered Alarm.
+            records = [line.strip() for line in text.splitlines() if line.strip().startswith('[PRB:')]
+            if len(records) == 1 and records[0].endswith(':0]'):
+                try:
+                    valid = parse_grbl_probe_output(records[0][:-3] + ':1]')
+                except ValueError:
+                    valid = []
+                if len(valid) == 1:
+                    raise _GrblProbeAbort(command, text, 'probe_failed')
+            raise _GrblProbeAbort(command, text, 'probe_invalid')
         if len(results) != 1:
             raise _GrblProbeAbort(command, text, 'probe_invalid')
 
@@ -2924,18 +3208,19 @@ class ToolLevelling(CNCjob, AppTool):
     def _grbl_hold_for_recovery(self):
         """Feed hold now; the machine needs a reset and a home cycle."""
         with self._grbl_op_lock:
-            self._grbl_write_realtime_locked(b'!')
-            self._grbl_recovery = 'needs_reset'
+            self._grbl_failure_locked(self._grbl_op, 'probe_invalid')
 
     def _grbl_retract(self, op, travel_z):
         """
         Lift Z to travel_z. Call it only after the units and G90 are confirmed.
 
-        :return: True if GRBL accepted the move.
+        :return: True only after the accepted move physically completed.
         """
         text, status = self._grbl_transact(op, 'G0 Z{0:.4f}'.format(travel_z), timeout=30.0)
         if status == 'ok':
-            return True
+            text, status = self._grbl_transact(op, 'G4 P0', timeout=120.0)
+            if status == 'ok':
+                return True
         if status == 'cancelled':
             return False
         self._grbl_hold_for_recovery()
@@ -2971,7 +3256,7 @@ class ToolLevelling(CNCjob, AppTool):
         if status == 'probe_failed' or 'alarm' in (abort.text or '').lower():
             # GRBL is in alarm: it accepts no motion until a reset
             with self._grbl_op_lock:
-                self._grbl_recovery = 'needs_reset'
+                self._grbl_failure_locked(op, status, abort.text)
             self.app.inform.emit('[ERROR_NOTCL] %s: %s. %s' % (
                 _("The probe did not touch the surface or GRBL is in alarm"), abort.command,
                 self._grbl_recovery_text()))
@@ -3046,15 +3331,6 @@ class ToolLevelling(CNCjob, AppTool):
             )
             return
 
-        # self.units is only ever (re)set in set_ui(); refresh it here so the
-        # units check in _al_prepare_interp() compares against the app's
-        # *current* units rather than whatever was active when this tool was
-        # last opened. This matters because AppObject.new_object() converts
-        # the new object's units to the app's units right after obj_init()
-        # runs (and CNCJobObject.convert_units() does not scale G-code), so a
-        # stale self.units here could silently pass a mismatched height map.
-        self.units = self.app.app_units.upper()
-
         if target_obj is None:
             target_obj = self.app.collection.get_by_name(self.ui.object_combo.get_value())
         elif self.app.collection.get_by_name(target_obj.obj_options['name']) is not target_obj:
@@ -3068,18 +3344,39 @@ class ToolLevelling(CNCjob, AppTool):
             )
             return
 
+        ctx = self._al_capture_context()
+        snapshot = self._al_capture_apply_input(target_obj, units=ctx.units)
+        if snapshot is None:
+            return
+
+        def context_current():
+            if (self._al_context_current(ctx) and ctx.target_obj is target_obj and
+                    ctx.target_name == target_obj.obj_options['name'] and
+                    ctx.units == self._al_data_units and
+                    ctx.units == str(target_obj.units).upper()):
+                return True
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _(
+                "The height map or its CNCJob context changed. Apply autolevelling again."))
+            return False
+
+        if not context_current():
+            return
         self._al_apply_running = True
 
         def worker_task():
             try:
                 with self.app.proc_container.new('%s...' % _("Autolevelling")):
-                    tools_gcode = self.autolevell_gcode(target_obj, al_method)
+                    if not context_current():
+                        return
+                    tools_gcode = self.autolevell_gcode(target_obj, al_method, snapshot=snapshot)
                     if tools_gcode is None:
                         return
 
                     outname = target_obj.obj_options['name'] + '_levelled'
 
                     def obj_init(new_obj, app_obj):
+                        if not context_current():
+                            return 'fail'
                         # copy over the tools/options needed to reconstruct the source_file,
                         # gcode_parsed (plot) and solid_geometry from the levelled per-tool
                         # G-code, exactly as export_gcode()/plot() rebuild them for any other
@@ -3142,6 +3439,8 @@ class ToolLevelling(CNCjob, AppTool):
                         new_obj.gcode_parsed = total_gcode_parsed
                         new_obj.create_geometry()
 
+                    if not context_current():
+                        return
                     ret = self.app.app_obj.new_object('cncjob', outname, obj_init)
                     if ret == 'fail':
                         self.app.inform.emit(

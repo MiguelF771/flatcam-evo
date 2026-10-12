@@ -802,6 +802,9 @@ class TestApplyAutolevelRealObject(unittest.TestCase):
         )
 
         tool = make_tool(units='MM', storage=storage, heights_valid=True)
+        tool._al_target_name = target.obj_options['name']
+        tool._al_target_obj = target
+        tool._al_data_units = target.units.upper()
         tool.app.collection.get_by_name.return_value = target
         tool.ui.al_method_radio.get_value.return_value = 'b'
 

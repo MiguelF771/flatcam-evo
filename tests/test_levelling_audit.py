@@ -44,6 +44,7 @@ def make_audit_tool(units='MM', storage=None, heights_valid=False):
     tool.units = units
     tool.decimals = 4
     tool.al_voronoi_geo_storage = storage if storage is not None else {}
+    tool._al_data_units = units if tool.al_voronoi_geo_storage else None
     tool.al_bilinear_geo_storage = []
     tool.al_heights_valid = heights_valid
     tool.probing_gcode_text = ''
@@ -70,6 +71,13 @@ def make_audit_tool(units='MM', storage=None, heights_valid=False):
     tool._grbl_op = None
     tool._grbl_recovery = None
     tool._grbl_close_pending = False
+    tool._grbl_connected = False
+    tool._grbl_connect_attempt = None
+    tool._grbl_safety_generation = 0
+    tool._grbl_rx_port = None
+    tool._grbl_rx_buffer = b''
+    tool._grbl_reply_pending = False
+    tool._grbl_reset_pending = False
     tool._al_generation = 0
     tool._al_target_name = None
     tool._al_target_obj = None
@@ -82,6 +90,7 @@ def make_port(lines=None):
     order; after the last item it returns b''. reset_input_buffer() does nothing."""
     port = MagicMock()
     port.is_open = True
+    port.in_waiting = 0
     queue = list(lines or [])
     port.readline.side_effect = lambda: queue.pop(0) if queue else b''
     return port
@@ -120,6 +129,15 @@ class FakeGrbl:
     def reset_input_buffer(self):
         self.rx.clear()
 
+    @property
+    def in_waiting(self):
+        return sum(len(line) for line in self.rx)
+
+    def read(self, size):
+        data = b''.join(self.rx)
+        self.rx = [data[size:]] if data[size:] else []
+        return data[:size]
+
     def readline(self):
         if self.read_hook is not None:
             self.read_hook()
@@ -156,7 +174,10 @@ class FakeGrbl:
         if cmd == '?':
             self._send('<%s|MPos:0.000,0.000,0.000|FS:0,0>' % self.state)
             return
-        if cmd in ('!', '~', '\x18', ''):
+        if cmd == '\x18':
+            self._send("Grbl 1.1h ['$' for help]")
+            return
+        if cmd in ('!', '~', ''):
             return
         if cmd == '$$':
             if self.has_report_setting:
@@ -423,6 +444,7 @@ class TestGrblSession(unittest.TestCase):
     def _tool(self, port=None):
         tool = make_audit_tool()
         tool.grbl_ser_port = port if port is not None else FakeGrbl()
+        tool._grbl_connected = True
         return tool
 
     def test_reserve_needs_open_port(self):
@@ -523,6 +545,7 @@ class TestGrblSession(unittest.TestCase):
 
         def readline():
             tool.grbl_ser_port = new_port
+            tool._grbl_connected = True
             raise serial.SerialException('gone')
         port.readline.side_effect = readline
         self.assertEqual(tool._grbl_transact(op, 'G0 Z2', timeout=1.0)[1], 'port_error')
@@ -593,7 +616,8 @@ class TestGrblConnect(unittest.TestCase):
         port = make_port()
         port.readlines.return_value = [b'garbage\r\n']
         tool.grbl_ser_port = port
-        tool._grbl_connect_finish('COM3')
+        tool._grbl_connect_attempt = object()
+        tool._grbl_connect_finish('COM3', port, tool._grbl_connect_attempt)
         port.close.assert_called_once()
         self.assertIsNone(tool.grbl_ser_port)
         tool.grbl_port_closed_sig.emit.assert_called_once()
@@ -604,7 +628,8 @@ class TestGrblConnect(unittest.TestCase):
             port = make_port()
             port.readlines.return_value = [answer]
             tool.grbl_ser_port = port
-            tool._grbl_connect_finish('COM3')
+            tool._grbl_connect_attempt = object()
+            tool._grbl_connect_finish('COM3', port, tool._grbl_connect_attempt)
             port.close.assert_not_called()
             tool.ui.controller_reset_button.setDisabled.assert_called_with(False)
 
@@ -612,15 +637,17 @@ class TestGrblConnect(unittest.TestCase):
         tool = self._tool()
         tool._grbl_recovery = 'needs_reset'
         port = make_port()
-        port.readlines.return_value = [b'ok\r\n']
+        port.readlines.return_value = [b"Grbl 1.1h ['$' for help]\r\n"]
         tool.grbl_ser_port = port
-        tool._grbl_connect_finish('COM3')
+        tool._grbl_connect_attempt = object()
+        tool._grbl_connect_finish('COM3', port, tool._grbl_connect_attempt)
         self.assertEqual(tool._grbl_recovery, 'needs_home')
 
     def test_click_while_connected_and_idle_disconnects(self):
         tool = self._tool()
         port = make_port()
         tool.grbl_ser_port = port
+        tool._grbl_connected = True
         tool.on_grbl_connect()
         port.close.assert_called_once()
         self.assertIsNone(tool.grbl_ser_port)
@@ -629,6 +656,7 @@ class TestGrblConnect(unittest.TestCase):
         tool = self._tool()
         fake = FakeGrbl()
         tool.grbl_ser_port = fake
+        tool._grbl_connected = True
         op = tool._grbl_reserve('probe', motion=True)
         tool._grbl_disconnect()
         self.assertTrue(op.cancel.is_set())
@@ -645,6 +673,7 @@ class TestGrblConnect(unittest.TestCase):
     def test_connect_blocked_while_operation_runs(self):
         tool = self._tool()
         tool.grbl_ser_port = FakeGrbl()
+        tool._grbl_connected = True
         tool._grbl_reserve('probe', motion=True)
         tool._grbl_disconnect()
         with patch('appPlugins.ToolLevelling.serial.serial_for_url') as opener:
@@ -655,6 +684,7 @@ class TestGrblConnect(unittest.TestCase):
         tool = self._tool()
         fake = FakeGrbl()
         tool.grbl_ser_port = fake
+        tool._grbl_connected = True
         op = tool._grbl_reserve('probe', motion=True)
         tool._grbl_force_close()
         self.assertTrue(op.cancel.is_set())
@@ -667,6 +697,7 @@ class TestGrblRealtime(unittest.TestCase):
     def _tool(self, port=None):
         tool = make_audit_tool()
         tool.grbl_ser_port = port if port is not None else FakeGrbl()
+        tool._grbl_connected = True
         return tool
 
     def test_stop_during_operation_cancels_and_blocks_next_write(self):
@@ -713,18 +744,25 @@ class TestGrblRealtime(unittest.TestCase):
         tool.on_grbl_reset()
         self.assertTrue(op.cancel.is_set())
         self.assertEqual(tool.grbl_ser_port.commands(), ['\x18'])
-        self.assertEqual(tool._grbl_recovery, 'needs_home')
+        self.assertEqual(tool._grbl_recovery, 'needs_reset')
+        self.assertTrue(tool._grbl_reset_pending)
+        self.assertIsNone(tool._grbl_reserve('jog', motion=True))
 
     def test_reset_after_stop_needs_home(self):
         tool = self._tool()
         tool.on_grbl_stop()
         tool.on_grbl_reset()
-        self.assertEqual(tool._grbl_recovery, 'needs_home')
+        self.assertEqual(tool._grbl_recovery, 'needs_reset')
+        self.assertTrue(tool._grbl_reset_pending)
+        self.assertIsNone(tool._grbl_reserve('jog', motion=True))
 
     def test_reset_when_idle_keeps_no_recovery(self):
         tool = self._tool()
         tool.on_grbl_reset()
-        self.assertIsNone(tool._grbl_recovery)
+        # Even an apparently Idle reset must prove its startup before motion.
+        self.assertEqual(tool._grbl_recovery, 'needs_reset')
+        self.assertTrue(tool._grbl_reset_pending)
+        self.assertIsNone(tool._grbl_reserve('jog', motion=True))
 
     def test_no_port_reports_error(self):
         tool = make_audit_tool()
@@ -736,6 +774,7 @@ class TestGrblCommands(unittest.TestCase):
     def _tool(self, port=None):
         tool = make_audit_tool()
         tool.grbl_ser_port = port if port is not None else FakeGrbl()
+        tool._grbl_connected = True
         tool.ui.jog_step_entry.get_value.return_value = 1.0
         tool.ui.jog_fr_entry.get_value.return_value = 100.0
         tool.app.options = {'tools_al_grbl_travelz': 2.0}
@@ -745,14 +784,14 @@ class TestGrblCommands(unittest.TestCase):
         tool = self._tool()
         tool.on_grbl_jog(direction='xplus')
         run_worker(tool)
-        self.assertEqual(tool.grbl_ser_port.commands(), ['$J=G91 G21 X1.0 F100.0'])
+        self.assertEqual(tool.grbl_ser_port.commands(), ['$J=G91 G21 X1.0 F100.0', '?'])
 
     def test_jog_origin_sends_2_commands(self):
         tool = self._tool()
         tool.on_grbl_jog(direction='origin')
         run_worker(tool)
         self.assertEqual(tool.grbl_ser_port.commands(),
-                         ['$J=G90 G21 Z2.0 F100.0', '$J=G90 G21 X0.0 Y0.0 F100.0'])
+                         ['$J=G90 G21 Z2.0 F100.0', '?', '$J=G90 G21 X0.0 Y0.0 F100.0', '?'])
 
     def test_jog_blocked_in_recovery(self):
         tool = self._tool()
@@ -766,7 +805,7 @@ class TestGrblCommands(unittest.TestCase):
         tool.on_grbl_send_command()
         self.assertEqual(tool.grbl_ser_port.commands(), [])
         run_worker(tool)
-        self.assertEqual(tool.grbl_ser_port.commands(), ['G0 X1'])
+        self.assertEqual(tool.grbl_ser_port.commands(), ['G0 X1', '?'])
 
     def test_report_reads_status(self):
         tool = self._tool()
@@ -813,30 +852,34 @@ class TestGrblZero(unittest.TestCase):
         fake = FakeGrbl(replies={'$G': ['[GC:G0 G55 G17 G21 G90 G94 M5 M9 T0 F0 S0]', 'ok']})
         tool = make_audit_tool()
         tool.grbl_ser_port = fake
+        tool._grbl_connected = True
         tool.on_grbl_zero(axis='x')
         run_worker(tool)
-        self.assertEqual(fake.commands(), ['$G', 'G10 L20 P2 X0'])
+        self.assertEqual(fake.commands(), ['$G', 'G10 L20 P2 X0', '?'])
 
     def test_zero_all_in_g54(self):
         fake = FakeGrbl()
         tool = make_audit_tool()
         tool.grbl_ser_port = fake
+        tool._grbl_connected = True
         tool.on_grbl_zero(axis='all')
         run_worker(tool)
-        self.assertEqual(fake.commands(), ['$G', 'G10 L20 P1 X0 Y0 Z0'])
+        self.assertEqual(fake.commands(), ['$G', 'G10 L20 P1 X0 Y0 Z0', '?'])
 
     def test_bad_wcs_reply_sends_no_g10(self):
         fake = FakeGrbl(replies={'$G': ['garbage', 'ok']})
         tool = make_audit_tool()
         tool.grbl_ser_port = fake
+        tool._grbl_connected = True
         tool.on_grbl_zero(axis='z')
         run_worker(tool)
-        self.assertEqual(fake.commands(), ['$G'])
+        self.assertEqual(fake.commands(), ['$G', '?'])
         self.assertTrue(any('[ERROR_NOTCL]' in t for t in emitted(tool)))
 
     def test_zero_blocked_in_recovery(self):
         tool = make_audit_tool()
         tool.grbl_ser_port = FakeGrbl()
+        tool._grbl_connected = True
         tool._grbl_recovery = 'needs_home'
         tool.on_grbl_zero(axis='x')
         tool.app.worker_task.emit.assert_not_called()
@@ -847,17 +890,22 @@ class TestGrblHoming(unittest.TestCase):
         tool = make_audit_tool()
         fake = FakeGrbl()
         tool.grbl_ser_port = fake
+        tool._grbl_connected = True
         tool.on_grbl_stop()
         tool.on_grbl_reset()
-        self.assertEqual(tool._grbl_recovery, 'needs_home')
+        self.assertEqual(tool._grbl_recovery, 'needs_reset')
+        self.assertTrue(tool._grbl_reset_pending)
         tool.on_grbl_homing()
         run_worker(tool)
         self.assertIn('$H', fake.commands())
         self.assertIsNone(tool._grbl_recovery)
+        self.assertFalse(tool._grbl_reset_pending)
+        self.assertEqual(fake.commands()[-1], '?')
 
     def test_home_without_reset_is_rejected(self):
         tool = make_audit_tool()
         tool.grbl_ser_port = FakeGrbl()
+        tool._grbl_connected = True
         tool._grbl_recovery = 'needs_reset'
         tool.on_grbl_homing()
         tool.app.worker_task.emit.assert_not_called()
@@ -865,6 +913,7 @@ class TestGrblHoming(unittest.TestCase):
     def test_failed_home_stays_blocked(self):
         tool = make_audit_tool()
         tool.grbl_ser_port = FakeGrbl(replies={'$H': ['ALARM:9']})
+        tool._grbl_connected = True
         tool._grbl_recovery = 'needs_home'
         tool.on_grbl_homing()
         run_worker(tool)
@@ -874,6 +923,7 @@ class TestGrblHoming(unittest.TestCase):
     def test_home_uses_long_timeout_and_no_sleep(self):
         tool = make_audit_tool()
         tool.grbl_ser_port = FakeGrbl()
+        tool._grbl_connected = True
         tool._grbl_transact = MagicMock(return_value=('ok', 'ok'))
         with patch('appPlugins.ToolLevelling.time.sleep') as sleeper:
             tool.on_grbl_homing()
@@ -885,6 +935,7 @@ class TestGrblHoming(unittest.TestCase):
     def test_homing_blocks_other_operations(self):
         tool = make_audit_tool()
         tool.grbl_ser_port = FakeGrbl()
+        tool._grbl_connected = True
         tool.on_grbl_homing()
         self.assertIsNone(tool._grbl_reserve('probe', motion=True))
         self.assertIsNone(tool._grbl_reserve('parameter'))
@@ -1029,6 +1080,7 @@ class TestGrblProbeRun(unittest.TestCase):
                    for k, (x, y) in self.POINTS.items()}
         tool = make_audit_tool(units=units, storage=storage, heights_valid=heights_valid)
         tool.grbl_ser_port = fake
+        tool._grbl_connected = True
         target = SimpleNamespace(obj_options={'name': 'job'}, kind='cncjob')
         tool._al_target_name = 'job'
         tool._al_target_obj = target
@@ -1059,7 +1111,7 @@ class TestGrblProbeRun(unittest.TestCase):
         tool.apply_autolevel.assert_called_once_with(target_obj=target)
         self.assertIsNone(tool._grbl_op)
         self.assertIsNone(tool._grbl_recovery)
-        self.assertEqual(self._after_last_probe(fake), ['G0 Z2.0000'])
+        self.assertEqual(self._after_last_probe(fake), ['G0 Z2.0000', 'G4 P0'])
         self.assertNotIn('M2', fake.commands())
 
     def test_startup_order(self):
@@ -1159,7 +1211,7 @@ class TestGrblProbeRun(unittest.TestCase):
         fake = FakeGrbl(replies={'G0 X10': ['error:9']})
         tool, target = self._tool(fake)
         self._run(tool)
-        self.assertEqual(fake.commands()[-1], 'G0 Z2.0000')
+        self.assertEqual(fake.commands()[-2:], ['G0 Z2.0000', 'G4 P0'])
         self.assertTrue(any('error:9' in t for t in emitted(tool)))
         self.assertIsNone(tool._grbl_recovery)
         tool.apply_autolevel.assert_not_called()

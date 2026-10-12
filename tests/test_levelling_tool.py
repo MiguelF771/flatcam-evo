@@ -10,6 +10,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import tempfile
+import threading
 import re
 import unittest
 from types import SimpleNamespace
@@ -42,6 +43,7 @@ def make_tool(units='MM', storage=None, heights_valid=True):
     tool.ui.plot_probing_pts_cb.get_value.return_value = False
     tool.units = units
     tool.al_voronoi_geo_storage = storage if storage is not None else {}
+    tool._al_data_units = units if tool.al_voronoi_geo_storage else None
     tool.al_heights_valid = heights_valid
     tool.grbl_probe_result = ''
     tool.grbl_work_offset = (0.0, 0.0, 0.0)
@@ -49,10 +51,12 @@ def make_tool(units='MM', storage=None, heights_valid=True):
     tool.apply_autolevel_sig = MagicMock()
     tool.show_probing_geo_sig = MagicMock()
     tool._al_apply_running = False
+    tool.mouse_events_connected = False
     tool.app.collection = MagicMock()
     tool.app.app_obj = MagicMock()
     tool.app.worker_task = MagicMock()
     tool._al_generation = 0
+    tool._grbl_op_lock = threading.Lock()
     tool._al_target_name = None
     tool._al_target_obj = None
     # publish results at once (the worker runs inline in these tests)
@@ -470,18 +474,93 @@ class TestAutolevellGcodeArcWarning(unittest.TestCase):
 
 
 class TestSendGrblCommand(unittest.TestCase):
-    def test_decodes_bytes_and_joins_lines(self):
+    def _tool(self, replies=None):
         tool = make_tool()
         tool.app.inform_shell = MagicMock()
-        tool.grbl_ser_port = MagicMock()
-        tool.grbl_ser_port.readlines.return_value = [
+        tool._grbl_connected = True
+        tool._grbl_op_lock = threading.Lock()
+        tool._grbl_op = None
+        tool._grbl_recovery = None
+        tool._grbl_close_pending = False
+        tool._grbl_safety_generation = 0
+        tool._grbl_rx_port = None
+        tool._grbl_rx_buffer = b''
+        tool._grbl_reply_pending = False
+        tool._grbl_reset_pending = False
+        port = MagicMock()
+        port.is_open = True
+        port.in_waiting = 0
+        queue = []
+
+        def write(data):
+            self.assertIsInstance(data, bytes)
+            if data == b'?':
+                self.assertIsNotNone(tool._grbl_op)
+                self.assertTrue(tool._grbl_op.motion)
+                queue.append(b'<Idle|MPos:0,0,0|FS:0,0>\r\n')
+            elif data not in (b'!', b'\x18'):
+                queue.extend([b'ok\r\n'] if replies is None else replies)
+            return len(data)
+
+        port.write.side_effect = write
+        port.readline.side_effect = lambda: queue.pop(0) if queue else b''
+        tool.grbl_ser_port = port
+        return tool, port
+
+    def test_decodes_bytes_and_joins_lines(self):
+        tool, port = self._tool([
             b'[PRB:1.000,2.000,-0.500:1]\r\n',
             b'ok\r\n',
-        ]
+        ])
         result = tool.send_grbl_command(command='G38.2 Z-1 F50')
         self.assertIsInstance(result, str)
         self.assertIn('PRB:1.000,2.000,-0.500:1', result)
         self.assertIn('ok', result.lower())
+        self.assertEqual(result, '[PRB:1.000,2.000,-0.500:1]\nok')
+        self.assertEqual([c.args[0] for c in port.write.call_args_list], [b'G38.2 Z-1 F50\n', b'?'])
+        port.readlines.assert_not_called()
+        self.assertIsNone(tool._grbl_op)
+        self.assertIsNone(tool._grbl_recovery)
+
+    def test_bad_bytes_use_replacement_characters(self):
+        tool, port = self._tool([b'\xff\xfe junk\r\n', b'ok\r\n'])
+        result = tool.send_grbl_command('G0 X1')
+        self.assertEqual(result, '\ufffd\ufffd junk\nok')
+        self.assertEqual([c.args[0] for c in port.write.call_args_list], [b'G0 X1\n', b'?'])
+
+    def test_no_answer_requires_recovery(self):
+        tool, port = self._tool([])
+        with patch('appPlugins.ToolLevelling.time.monotonic', side_effect=[0.0, 0.01, 31.0]):
+            result = tool.send_grbl_command('G0 X1')
+        self.assertEqual(result, '')
+        port.readline.assert_called_once()
+        self.assertEqual([c.args[0] for c in port.write.call_args_list], [b'G0 X1\n', b'!'])
+        self.assertEqual(tool._grbl_recovery, 'needs_reset')
+        self.assertIsNone(tool._grbl_op)
+
+    def test_echo_includes_command_and_decoded_reply(self):
+        tool, port = self._tool()
+        tool.send_grbl_command('G0 X1')
+        tool.app.inform_shell[str, bool].emit.assert_called_once_with('G0 X1', False)
+        tool.app.inform_shell.emit.assert_called_once_with('\t\t\t: OK')
+
+    def test_echo_false_suppresses_command_and_reply(self):
+        tool, port = self._tool()
+        self.assertEqual(tool.send_grbl_command('G0 X1', echo=False), 'ok')
+        tool.app.inform_shell[str, bool].emit.assert_not_called()
+        tool.app.inform_shell.emit.assert_not_called()
+        self.assertEqual([c.args[0] for c in port.write.call_args_list], [b'G0 X1\n', b'?'])
+
+    def test_multi_block_writes_bytes_and_waits_for_idle(self):
+        tool, port = self._tool()
+        self.assertIsNone(tool.send_grbl_block('G0 X1\nG0 X2'))
+        self.assertEqual([c.args[0] for c in port.write.call_args_list], [b'G0 X1\n', b'G0 X2\n', b'?'])
+        self.assertEqual([c.args[0] for c in tool.app.inform_shell[str, bool].emit.call_args_list],
+                         ['G0 X1', 'G0 X2'])
+        self.assertEqual(tool.app.inform_shell.emit.call_count, 2)
+        port.readlines.assert_not_called()
+        self.assertIsNone(tool._grbl_op)
+        self.assertIsNone(tool._grbl_recovery)
 
 
 class TestToolUiState(unittest.TestCase):
@@ -672,18 +751,17 @@ class TestImportHeightMap(unittest.TestCase):
             f.write(content)
         return path
 
-    def test_refreshes_self_units_from_app_units(self):
-        # self.units is only (re)set in set_ui() and can be stale; the
-        # unit-aware match tolerance (_al_match_tolerance) and the later
-        # units check (_al_prepare_interp, via apply_autolevel_sig) must use
-        # the app's *current* units, not whatever was active when this tool
-        # was last opened.
+    def test_records_data_units_without_mutating_self_units(self):
+        # An empty-storage import captures the project's units for its new
+        # points. Worker parsing must not rewrite the tool's shared units.
         path = self._write('units.txt', "0.0,0.0,-0.01\n10.0,0.0,-0.02\n")
         tool = make_tool(units='IN', storage={}, heights_valid=False)
         tool.app.app_units = 'MM'
         tool.import_height_map(path)
 
-        self.assertEqual(tool.units, 'MM')
+        self.assertEqual(tool.units, 'IN')
+        self.assertEqual(tool._al_data_units, 'MM')
+        self.assertTrue(tool.al_heights_valid)
 
     def test_mach3_comma_format_empty_storage_creates_points(self):
         path = self._write('mach3.txt', "0.0,0.0,-0.010\n10.0,0.0,-0.020\n")
@@ -837,6 +915,12 @@ class TestApplyAutolevel(unittest.TestCase):
     def setUp(self):
         self.storage = make_storage_grid([0, 10, 20], [0, 5, 10])
 
+    def _set_owner(self, tool, target):
+        tool._al_target_name = target.obj_options['name']
+        tool._al_target_obj = target
+        tool._al_data_units = target.units.upper()
+        tool.app.collection.get_by_name.return_value = target
+
     def test_busy_guard(self):
         tool = make_tool(storage=self.storage)
         tool._al_apply_running = True
@@ -866,9 +950,8 @@ class TestApplyAutolevel(unittest.TestCase):
         self.assertIn('[ERROR_NOTCL]', tool.app.inform.emit.call_args.args[0])
         tool.app.worker_task.emit.assert_not_called()
 
-    def test_refreshes_self_units_from_app_units(self):
-        # self.units is only (re)set in set_ui() and can be stale; apply_autolevel()
-        # must read self.app.app_units itself before validating anything
+    def test_does_not_change_mutable_tool_units(self):
+        # Apply uses captured data/app units without rewriting the tool's units.
         tool = make_tool(units='IN', storage=self.storage)
         tool.app.app_units = 'MM'
         tool.app.collection.get_by_name.return_value = SimpleNamespace(kind='geometry')
@@ -876,7 +959,7 @@ class TestApplyAutolevel(unittest.TestCase):
 
         tool.apply_autolevel()
 
-        self.assertEqual(tool.units, 'MM')
+        self.assertEqual(tool.units, 'IN')
 
     def test_units_mismatch_against_fresh_app_units_errors_and_creates_nothing(self):
         # target and self.units (stale) both say 'MM', but the app's *current*
@@ -887,13 +970,13 @@ class TestApplyAutolevel(unittest.TestCase):
         target = make_apply_target({1: "G1 X0 Y0 Z-0.1\n"})
         target.units = 'MM'
         tool = make_tool(units='MM', storage=self.storage)
+        self._set_owner(tool, target)
         tool.app.app_units = 'IN'
         tool.app.collection.get_by_name.return_value = target
         tool.ui.al_method_radio.get_value.return_value = 'b'
 
         tool.apply_autolevel()
-        worker_dict = tool.app.worker_task.emit.call_args.args[0]
-        worker_dict['fcn']()
+        tool.app.worker_task.emit.assert_not_called()
 
         tool.app.app_obj.new_object.assert_not_called()
         self.assertTrue(any('[ERROR_NOTCL]' in c.args[0] for c in tool.app.inform.emit.call_args_list))
@@ -903,7 +986,7 @@ class TestApplyAutolevel(unittest.TestCase):
         """Trigger apply_autolevel(), capture the emitted worker_task, run
         it synchronously against a fake new object, and return that
         object (or None if new_object was never called)."""
-        tool.app.collection.get_by_name.return_value = target
+        self._set_owner(tool, target)
         tool.ui.al_method_radio.get_value.return_value = 'b'
 
         captured = {}
@@ -912,7 +995,8 @@ class TestApplyAutolevel(unittest.TestCase):
             captured['kind'] = kind
             captured['name'] = name
             new_obj = new_obj_factory()
-            obj_init(new_obj, tool.app)
+            if obj_init(new_obj, tool.app) == 'fail':
+                return 'fail'
             captured['new_obj'] = new_obj
             return 'success'
 
@@ -971,7 +1055,7 @@ class TestApplyAutolevel(unittest.TestCase):
     def test_new_object_fail_emits_error_not_success(self):
         target = make_apply_target({1: "G1 X0 Y0 Z-0.1\n"})
         tool = make_tool(storage=self.storage)
-        tool.app.collection.get_by_name.return_value = target
+        self._set_owner(tool, target)
         tool.ui.al_method_radio.get_value.return_value = 'b'
         tool.app.app_obj.new_object.return_value = 'fail'
 
@@ -986,7 +1070,7 @@ class TestApplyAutolevel(unittest.TestCase):
     def test_busy_flag_cleared_after_exception_in_worker(self):
         target = make_apply_target({1: "G1 X0 Y0 Z-0.1\n"})
         tool = make_tool(storage=self.storage)
-        tool.app.collection.get_by_name.return_value = target
+        self._set_owner(tool, target)
         tool.ui.al_method_radio.get_value.return_value = 'b'
         tool.autolevell_gcode = MagicMock(side_effect=RuntimeError('boom'))
 
@@ -1013,6 +1097,42 @@ class TestApplyAutolevel(unittest.TestCase):
         self.assertIn(new_obj.tools[1]['gcode'], new_obj.gcode)
         self.assertIn(new_obj.tools[2]['gcode'], new_obj.gcode)
 
+    def test_apply_against_real_cncjob_preserves_all_tools_geometry(self):
+        from test_levelling_journey import make_real_cncjob
+
+        target = make_apply_target({
+            1: 'G21\nG90\nG0 X0 Y0 Z2\nG1 Z-0.1\nG1 X5 Y0\n',
+            2: 'G1 X10 Y0\n',
+        })
+        tool = make_tool(storage=self.storage)
+        captured = self._run_worker(tool, target, new_obj_factory=make_real_cncjob)
+        obj = captured['new_obj']
+
+        self.assertNotEqual(obj.tools[1]['gcode'], target.tools[1]['gcode'])
+        self.assertIn('Z0.1000', obj.tools[2]['gcode'])
+        self.assertTrue(obj.tools[1]['gcode_parsed'])
+        self.assertTrue(obj.tools[2]['gcode_parsed'])
+        self.assertEqual(len(obj.gcode_parsed), sum(
+            len(value['gcode_parsed']) for value in obj.tools.values()))
+        self.assertTrue(obj.solid_geometry)
+        self.assertEqual(obj.used_tools, target.used_tools)
+
+    def test_apply_uses_captured_grid_tolerance(self):
+        from appPlugins.levelling_interp import build_bilinear_grid
+
+        target = make_apply_target({1: 'G1 X0 Y0 Z-0.1\n'})
+        tool = make_tool(storage=self.storage)
+        self._set_owner(tool, target)
+        tool.ui.al_method_radio.get_value.return_value = 'b'
+        tolerance = tool._al_grid_tolerance()
+        tool.apply_autolevel()
+        tool.app.decimals = 1
+        with patch('appPlugins.ToolLevelling.build_bilinear_grid', wraps=build_bilinear_grid) as build:
+            tool.app.worker_task.emit.call_args.args[0]['fcn']()
+        self.assertEqual(build.call_args.args[1], tolerance)
+        self.assertIsInstance(build.call_args.args[0], tuple)
+        self.assertFalse(tool._al_apply_running)
+
     def test_pp_names_and_exc_tools_are_copied(self):
         target = make_apply_target({1: "G1 X0 Y0 Z-0.1\n"})
         target.pp_geometry_name = 'default'
@@ -1034,12 +1154,11 @@ class TestApplyAutolevel(unittest.TestCase):
         target = make_apply_target({1: "G1 X0 Y0 Z-0.1\n"})
         target.pp_geometry_name = 'Roland_test'
         tool = make_tool(storage=self.storage)
-        tool.app.collection.get_by_name.return_value = target
+        self._set_owner(tool, target)
         tool.ui.al_method_radio.get_value.return_value = 'b'
 
         tool.apply_autolevel()
-        worker_dict = tool.app.worker_task.emit.call_args.args[0]
-        worker_dict['fcn']()
+        tool.app.worker_task.emit.assert_not_called()
 
         tool.app.app_obj.new_object.assert_not_called()
         self.assertFalse(tool._al_apply_running)

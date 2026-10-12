@@ -458,15 +458,17 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     Apply height-map compensation to 1 line of G-code, modally tracking
     X/Y/Z/G state across calls.
 
-    Every linear move (modal G1), at any Z, gets its Z
-    height-compensated. Left untouched: rapids (G0); arcs (G2/G3,
+    Every linear move (modal G1), at any Z with known work X/Y/Z, gets
+    its Z height-compensated. Left untouched: rapids (G0); arcs (G2/G3,
     counted in `state['arcs']`); other members of the motion modal
     group that are never cutting moves (G31, G38.2/.3/.4/.5, G80) -
     selecting 1 of these sets `state['G']` to None so a following bare
     "X.. Y.." line is not mistaken for a continuing G1 move until a
     real G0/G1/G2/G3 reappears; non-modal one-shot codes (G10, G28,
-    G30, G53, G92) whose X/Y/Z words are not work-coordinate moves, so
+    G30, G92) whose X/Y/Z words are not work-coordinate moves, so
     they also leave `state['X']`/`['Y']`/`['Z']`/`['G']` untouched;
+    G53 machine-coordinate moves, which track explicit G0/G1 but mark
+    moved work axes unknown (None) until restored by absolute work words;
     non-motion modal codes (G4, G17, G20, G21, G90, G94, ...); and
     comment-only/blank lines.
 
@@ -517,7 +519,15 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     non_modal_gs = [g for g in g_words if g in _NON_MODAL_G_CODES]
     if non_modal_gs:
         # One-shot code: X/Y/Z here are not work-coordinate moves.
-        # Leave all modal state untouched.
+        if 53.0 in non_modal_gs:
+            motion_gs = [g for g in g_words if g in (0.0, 1.0)]
+            if motion_gs:
+                state['G'] = int(motion_gs[-1])
+            # The work offset is unknown, so machine positions cannot
+            # establish work coordinates for the moved axes.
+            for axis, value in [('X', x_val), ('Y', y_val), ('Z', z_val)]:
+                if value is not None:
+                    state[axis] = None
         return line
 
     motion_gs = [g for g in g_words if g in _MOTION_G_CODES]
@@ -539,12 +549,12 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     # else: no G word at all - keep the previous modal G unchanged.
 
     absolute = state.get('abs', True)
-    if x_val is not None:
-        state['X'] = x_val if absolute else state['X'] + x_val
-    if y_val is not None:
-        state['Y'] = y_val if absolute else state['Y'] + y_val
-    if z_val is not None:
-        state['Z'] = z_val if absolute else state['Z'] + z_val
+    for axis, value in [('X', x_val), ('Y', y_val), ('Z', z_val)]:
+        if value is not None:
+            if absolute:
+                state[axis] = value
+            elif state[axis] is not None:
+                state[axis] += value
 
     if not has_xyz:
         return line
@@ -564,6 +574,9 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
         return line
 
     if state['G'] != 1:
+        return line
+
+    if any(state[axis] is None for axis in ('X', 'Y', 'Z')):
         return line
 
     new_z = state['Z'] + offset_fn(state['X'], state['Y'])
