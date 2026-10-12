@@ -125,6 +125,8 @@ class _GrblOperation:
 
 
 class ToolLevelling(CNCjob, AppTool):
+    # emitted after the serial port closed (also from a worker thread)
+    grbl_port_closed_sig = QtCore.pyqtSignal()
     build_al_table_sig = QtCore.pyqtSignal()
     apply_autolevel_sig = QtCore.pyqtSignal()
     show_probing_geo_sig = QtCore.pyqtSignal(bool, bool)
@@ -290,6 +292,7 @@ class ToolLevelling(CNCjob, AppTool):
         self.app.ui.notebook.setTabText(2, _("Levelling"))
 
     def connect_signals_at_init(self):
+        self.grbl_port_closed_sig.connect(self._on_grbl_port_closed)
         self.build_al_table_sig.connect(self.build_al_table)
         self.apply_autolevel_sig.connect(self.apply_autolevel)
         self.show_probing_geo_sig.connect(self.show_probing_geo)
@@ -1729,11 +1732,24 @@ class ToolLevelling(CNCjob, AppTool):
             self.app.inform.emit('[WARNING_NOTCL] %s' % _("COM list updated ..."))
 
     def on_grbl_connect(self):
+        if self._grbl_op is not None or self._grbl_close_pending:
+            self.app.inform.emit('[WARNING_NOTCL] %s' % _("GRBL is busy. Wait until the running operation stops."))
+            return
+
+        # the Connect button toggles: a click while a port is open closes it
+        if self._grbl_port_ready():
+            self._grbl_disconnect()
+            return
+
         port_name = self.ui.com_list_combo.currentText()
         if " (" in port_name:
             port_name = port_name.rpartition(" (")[0]
 
-        baudrate = int(self.ui.baudrates_list_combo.currentText())
+        try:
+            baudrate = int(self.ui.baudrates_list_combo.currentText())
+        except ValueError:
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _("Select a valid baudrate."))
+            return
 
         try:
             self.grbl_ser_port = serial.serial_for_url(port_name, baudrate,
@@ -1757,46 +1773,112 @@ class ToolLevelling(CNCjob, AppTool):
             except IOError:
                 pass
 
-            answer = self.on_grbl_wake()
-            answer = ['ok']   # FIXME: hack for development without a GRBL controller connected
-            for line in answer:
-                if 'ok' in line.lower():
-                    self.ui.com_connect_button.setStyleSheet("QPushButton {background-color: seagreen;}")
-                    self.ui.com_connect_button.setText(_("Connected"))
-                    self.ui.controller_reset_button.setDisabled(False)
-
-                    for idx in range(self.ui.al_toolbar.count()):
-                        if self.ui.al_toolbar.tabText(idx) == _("Connect"):
-                            self.ui.al_toolbar.tabBar.setTabTextColor(idx, QtGui.QColor('seagreen'))
-                        if self.ui.al_toolbar.tabText(idx) == _("Control"):
-                            self.ui.al_toolbar.tabBar.setTabEnabled(idx, True)
-                        if self.ui.al_toolbar.tabText(idx) == _("Sender"):
-                            self.ui.al_toolbar.tabBar.setTabEnabled(idx, True)
-
-                    self.app.inform.emit("%s: %s" % (_("Port connected"), port_name))
-                    return
-
-            self.grbl_ser_port.close()
-            self.app.inform.emit("[ERROR_NOTCL] %s: %s" % (_("Could not connect to GRBL on port"), port_name))
-
-        except serial.SerialException:
-            self.grbl_ser_port = serial.Serial()
-            self.grbl_ser_port.port = port_name
-            self.grbl_ser_port.close()
-            self.ui.com_connect_button.setStyleSheet("QPushButton {background-color: red;}")
-            self.ui.com_connect_button.setText(_("Disconnected"))
-            self.ui.controller_reset_button.setDisabled(True)
-
-            for idx in range(self.ui.al_toolbar.count()):
-                if self.ui.al_toolbar.tabText(idx) == _("Connect"):
-                    self.ui.al_toolbar.tabBar.setTabTextColor(idx, QtGui.QColor('red'))
-                if self.ui.al_toolbar.tabText(idx) == _("Control"):
-                    self.ui.al_toolbar.tabBar.setTabEnabled(idx, False)
-                if self.ui.al_toolbar.tabText(idx) == _("Sender"):
-                    self.ui.al_toolbar.tabBar.setTabEnabled(idx, False)
-            self.app.inform.emit("%s: %s" % (_("Port is connected. Disconnecting"), port_name))
-        except Exception:
+            # wake up GRBL; a timer reads the answer 1 s later, so the GUI does not stop
+            self.grbl_ser_port.write("\r\n\r\n".encode('utf-8'))
+        except (serial.SerialException, OSError, ValueError) as err:
+            self.app.log.error("ToolLevelling.on_grbl_connect() -> %s" % str(err))
+            self._grbl_close_port()
             self.app.inform.emit("[ERROR_NOTCL] %s: %s" % (_("Could not connect to port"), port_name))
+            return
+
+        QtCore.QTimer.singleShot(1000, lambda: self._grbl_connect_finish(port_name))
+
+    def _grbl_connect_finish(self, port_name):
+        """
+        Read the GRBL answer to the wake-up lines. Mark the port as connected
+        if GRBL answered, else close the port.
+        """
+        port = self.grbl_ser_port
+        if port is None or not getattr(port, 'is_open', False):
+            return
+
+        try:
+            answer = port.readlines()
+            port.reset_input_buffer()
+        except (serial.SerialException, OSError) as err:
+            self.app.log.error("ToolLevelling._grbl_connect_finish() -> %s" % str(err))
+            answer = []
+
+        for line in answer:
+            text = line.decode('utf-8', errors='replace').lower()
+            if 'ok' in text or 'grbl' in text:
+                with self._grbl_op_lock:
+                    # the DTR toggle reset GRBL; the machine position is still unknown
+                    if self._grbl_recovery == 'needs_reset':
+                        self._grbl_recovery = 'needs_home'
+                self._grbl_set_ui_connected(True)
+                self.app.inform.emit("%s: %s" % (_("Port connected"), port_name))
+                if self._grbl_recovery is not None:
+                    self.app.inform.emit('[WARNING_NOTCL] %s' % self._grbl_recovery_text())
+                return
+
+        self._grbl_close_port()
+        self.app.inform.emit("[ERROR_NOTCL] %s: %s" % (_("Could not connect to GRBL on port"), port_name))
+
+    def _grbl_set_ui_connected(self, connected):
+        """Show the connection state on the Connect button and on the tabs."""
+        color = 'seagreen' if connected else 'red'
+        self.ui.com_connect_button.setStyleSheet("QPushButton {background-color: %s;}" % color)
+        self.ui.com_connect_button.setText(_("Connected") if connected else _("Disconnected"))
+        self.ui.controller_reset_button.setDisabled(not connected)
+
+        for idx in range(self.ui.al_toolbar.count()):
+            if self.ui.al_toolbar.tabText(idx) == _("Connect"):
+                self.ui.al_toolbar.tabBar.setTabTextColor(idx, QtGui.QColor(color))
+            if self.ui.al_toolbar.tabText(idx) in (_("Control"), _("Sender")):
+                self.ui.al_toolbar.tabBar.setTabEnabled(idx, connected)
+
+    def _on_grbl_port_closed(self):
+        """Slot of grbl_port_closed_sig (GUI thread)."""
+        try:
+            self._grbl_set_ui_connected(False)
+        except (AttributeError, RuntimeError):
+            # the UI can be already deleted when the application ends
+            pass
+
+    def _grbl_close_port(self):
+        """Close the serial port now. Safe in a worker thread (the UI changes through a signal)."""
+        with self._grbl_op_lock:
+            port = self.grbl_ser_port
+            self.grbl_ser_port = None
+            self._grbl_close_pending = False
+        if port is not None:
+            try:
+                port.close()
+            except (serial.SerialException, OSError) as err:
+                self.app.log.debug("ToolLevelling._grbl_close_port() -> %s" % str(err))
+        self.grbl_port_closed_sig.emit()
+
+    def _grbl_disconnect(self):
+        """
+        Close the port. During an operation: stop the operation (feed hold if it
+        can move the machine) and close the port when the operation releases it.
+        """
+        with self._grbl_op_lock:
+            op = self._grbl_op
+            if op is not None:
+                op.cancel.set()
+                if op.motion:
+                    self._grbl_write_realtime_locked(b'!')
+                    self._grbl_recovery = 'needs_reset'
+                self._grbl_close_pending = True
+
+        if op is not None:
+            self.app.inform.emit('[WARNING_NOTCL] %s' % _("The port closes when the running operation stops."))
+            return
+
+        self._grbl_close_port()
+        self.app.inform.emit("%s" % _("Port disconnected."))
+
+    def _grbl_force_close(self):
+        """Close the port now, also during an operation (the application ends)."""
+        with self._grbl_op_lock:
+            op = self._grbl_op
+            if op is not None:
+                op.cancel.set()
+                if op.motion:
+                    self._grbl_write_realtime_locked(b'!')
+        self._grbl_close_port()
 
     def on_grbl_add_baudrate(self):
         new_bd = str(self.ui.new_baudrate_entry.get_value())
@@ -1857,10 +1939,14 @@ class ToolLevelling(CNCjob, AppTool):
             return op
 
     def _grbl_release(self, op):
-        """Free the serial port after the operation `op` ended."""
+        """Free the serial port after the operation `op` ended; close it if a disconnect waits."""
+        close_now = False
         with self._grbl_op_lock:
             if self._grbl_op is op:
                 self._grbl_op = None
+                close_now = self._grbl_close_pending
+        if close_now:
+            self._grbl_close_port()
 
     def _grbl_start_op(self, name, fn, motion=False, allow_in_recovery=False):
         """

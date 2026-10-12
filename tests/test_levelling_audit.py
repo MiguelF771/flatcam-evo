@@ -547,5 +547,113 @@ class TestGrblSession(unittest.TestCase):
         self.assertTrue(any('[ERROR_NOTCL]' in t for t in emitted(tool)))
 
 
+
+class TestGrblConnect(unittest.TestCase):
+    def _tool(self):
+        tool = make_audit_tool()
+        tool.ui.com_list_combo.currentText.return_value = 'COM3'
+        tool.ui.baudrates_list_combo.currentText.return_value = '115200'
+        tool.ui.al_toolbar.count.return_value = 0
+        return tool
+
+    def test_bad_baudrate_opens_nothing(self):
+        tool = self._tool()
+        tool.ui.baudrates_list_combo.currentText.return_value = ''
+        with patch('appPlugins.ToolLevelling.serial.serial_for_url') as opener:
+            tool.on_grbl_connect()
+        opener.assert_not_called()
+        self.assertTrue(any('[ERROR_NOTCL]' in t for t in emitted(tool)))
+
+    def test_connect_schedules_finish_without_sleep(self):
+        tool = self._tool()
+        with patch('appPlugins.ToolLevelling.serial.serial_for_url', return_value=make_port()), \
+                patch('appPlugins.ToolLevelling.QtCore.QTimer.singleShot') as single_shot, \
+                patch('appPlugins.ToolLevelling.time.sleep') as sleeper:
+            tool.on_grbl_connect()
+        sleeper.assert_not_called()
+        self.assertEqual(single_shot.call_args.args[0], 1000)
+
+    def test_open_failure_leaves_no_port(self):
+        tool = self._tool()
+        with patch('appPlugins.ToolLevelling.serial.serial_for_url', side_effect=serial.SerialException('busy')):
+            tool.on_grbl_connect()
+        self.assertIsNone(tool.grbl_ser_port)
+        self.assertTrue(any('[ERROR_NOTCL]' in t for t in emitted(tool)))
+
+    def test_finish_without_answer_closes_port(self):
+        tool = self._tool()
+        port = make_port()
+        port.readlines.return_value = [b'garbage\r\n']
+        tool.grbl_ser_port = port
+        tool._grbl_connect_finish('COM3')
+        port.close.assert_called_once()
+        self.assertIsNone(tool.grbl_ser_port)
+        tool.grbl_port_closed_sig.emit.assert_called_once()
+
+    def test_finish_with_ok_or_banner_connects(self):
+        for answer in (b'ok\r\n', b"Grbl 1.1h ['$' for help]\r\n"):
+            tool = self._tool()
+            port = make_port()
+            port.readlines.return_value = [answer]
+            tool.grbl_ser_port = port
+            tool._grbl_connect_finish('COM3')
+            port.close.assert_not_called()
+            tool.ui.controller_reset_button.setDisabled.assert_called_with(False)
+
+    def test_reconnect_turns_needs_reset_into_needs_home(self):
+        tool = self._tool()
+        tool._grbl_recovery = 'needs_reset'
+        port = make_port()
+        port.readlines.return_value = [b'ok\r\n']
+        tool.grbl_ser_port = port
+        tool._grbl_connect_finish('COM3')
+        self.assertEqual(tool._grbl_recovery, 'needs_home')
+
+    def test_click_while_connected_and_idle_disconnects(self):
+        tool = self._tool()
+        port = make_port()
+        tool.grbl_ser_port = port
+        tool.on_grbl_connect()
+        port.close.assert_called_once()
+        self.assertIsNone(tool.grbl_ser_port)
+
+    def test_disconnect_during_operation_waits_and_holds(self):
+        tool = self._tool()
+        fake = FakeGrbl()
+        tool.grbl_ser_port = fake
+        op = tool._grbl_reserve('probe', motion=True)
+        tool._grbl_disconnect()
+        self.assertTrue(op.cancel.is_set())
+        self.assertEqual(fake.commands(), ['!'])
+        self.assertTrue(fake.is_open)
+        self.assertEqual(tool._grbl_recovery, 'needs_reset')
+        self.assertEqual(tool._grbl_transact(op, 'G0 Z2', timeout=1.0)[1], 'cancelled')
+        self.assertEqual(fake.commands(), ['!'])
+        tool._grbl_release(op)
+        self.assertFalse(fake.is_open)
+        self.assertIsNone(tool.grbl_ser_port)
+        self.assertFalse(tool._grbl_close_pending)
+
+    def test_connect_blocked_while_operation_runs(self):
+        tool = self._tool()
+        tool.grbl_ser_port = FakeGrbl()
+        tool._grbl_reserve('probe', motion=True)
+        tool._grbl_disconnect()
+        with patch('appPlugins.ToolLevelling.serial.serial_for_url') as opener:
+            tool.on_grbl_connect()
+        opener.assert_not_called()
+
+    def test_force_close_closes_during_operation(self):
+        tool = self._tool()
+        fake = FakeGrbl()
+        tool.grbl_ser_port = fake
+        op = tool._grbl_reserve('probe', motion=True)
+        tool._grbl_force_close()
+        self.assertTrue(op.cancel.is_set())
+        self.assertFalse(fake.is_open)
+        self.assertIsNone(tool.grbl_ser_port)
+        self.assertIn('!', fake.commands())
+
+
 if __name__ == '__main__':
     unittest.main()
