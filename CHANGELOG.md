@@ -19,10 +19,19 @@ Levelling Tool:
 - probe and import results are published as a whole in the GUI thread, only for the same points, target object and units
 - real connect check (removed a development hack); Connect toggles; the port closes on exit; no GUI freeze on connect, port list or homing
 - fixed jog, Zero (G10 L20 on the active WCS), the phantom manual probe point, old probing G-code, and handler and signal leaks
+- a cancelled or failed operation can never be reported as a success; motion keeps its owner until GRBL reports Idle, also through a feed hold or an open door
+- each connect has its own handshake; only the GRBL startup banner confirms a reset; the serial port has a write time limit
+- alarms that arrive between commands are kept and handled; a partly received line is read to its end; a late reply of an earlier command is never used as a new reply
+- Home works after Stop and Reset (the lines that GRBL sends before its banner are ignored)
+- a newer probe or import replaces an older one; Apply uses a frozen copy of the height map and its units
+- a refused Probe click no longer discards a running probe or a valid height map
+- a mode change clears all probe data; a target change releases the manual point handlers
+- removed the unused send_grbl_command() and send_grbl_block()
 
 levelling_interp:
 
 - every G1 move is compensated; G90/G91, canned cycles, modal settings with axis words and trailing-dot numbers are handled
+- a G53 line keeps its G0/G1 motion mode and makes the moved work axes unknown, so a following G1 is not compensated until they are known again
 
 19.09.2026
 
