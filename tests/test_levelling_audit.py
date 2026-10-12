@@ -255,5 +255,19 @@ class TestScaffold(unittest.TestCase):
         self.assertTrue(fake.readline().startswith(b'[GC:'))
 
 
+class TestWordRegex(unittest.TestCase):
+    def test_trailing_dot_number_is_replaced_whole(self):
+        state = li.new_levelling_state()
+        out = li.level_gcode_line('G1 X1 Y1 Z-1.', state, lambda x, y: 0.5)
+        self.assertEqual(out, 'G1 X1 Y1 Z-0.5000')
+
+    def test_leading_dot_number_still_parses(self):
+        state = li.new_levelling_state()
+        li.level_gcode_line('G1 X.5 Y.25 Z-.1', state, lambda x, y: 0.0)
+        self.assertAlmostEqual(state['X'], 0.5)
+        self.assertAlmostEqual(state['Y'], 0.25)
+        self.assertAlmostEqual(state['Z'], -0.1)
+
+
 if __name__ == '__main__':
     unittest.main()

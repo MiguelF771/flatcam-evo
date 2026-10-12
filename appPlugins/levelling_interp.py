@@ -383,7 +383,7 @@ _MOTION_NO_LEVEL_G_CODES = (31.0, 38.2, 38.3, 38.4, 38.5, 80.0)
 # so they must not update the modal X/Y/Z state, and the line itself is
 # never height-compensated.
 _NON_MODAL_G_CODES = (10.0, 28.0, 30.0, 53.0, 92.0, 92.1, 92.2, 92.3)
-_WORD_RE = re.compile(r'([A-Z])\s*([+\-]?\d*\.?\d+)')
+_WORD_RE = re.compile(r'([A-Z])\s*([+\-]?(?:\d+\.?\d*|\.\d+))')
 
 
 def new_levelling_state():
