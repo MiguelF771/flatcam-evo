@@ -892,5 +892,42 @@ class TestGrblHoming(unittest.TestCase):
         self.assertFalse(hasattr(ToolLevelling, 'on_grbl_wake'))
 
 
+class TestShowSignalSlot(unittest.TestCase):
+    def test_slot_skips_show_when_checkbox_off(self):
+        tool = make_audit_tool()
+        tool.show_probing_geo = MagicMock()
+        tool.ui.plot_probing_pts_cb.get_value.return_value = False
+        tool._on_show_probing_geo_sig(True, True)
+        tool.show_probing_geo.assert_not_called()
+
+    def test_slot_shows_when_checkbox_on(self):
+        tool = make_audit_tool()
+        tool.show_probing_geo = MagicMock()
+        tool.ui.plot_probing_pts_cb.get_value.return_value = True
+        tool._on_show_probing_geo_sig(True, True)
+        tool.show_probing_geo.assert_called_once_with(state=True, reset=True)
+
+    def test_slot_always_clears(self):
+        tool = make_audit_tool()
+        tool.show_probing_geo = MagicMock()
+        tool._on_show_probing_geo_sig(False, False)
+        tool.show_probing_geo.assert_called_once_with(state=False, reset=False)
+
+    def test_import_worker_does_not_read_checkbox(self):
+        tool = make_audit_tool()
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            f.write('0.0,0.0,0.1\n10.0,0.0,0.2\n')
+            filename = f.name
+        self.addCleanup(lambda: os.unlink(filename))
+        tool.import_height_map(filename)
+        tool.ui.plot_probing_pts_cb.get_value.assert_not_called()
+
+    def test_core_signal_uses_slot(self):
+        tool = make_audit_tool()
+        with patch('appPlugins.ToolLevelling.QtWidgets.QApplication.instance', return_value=MagicMock()):
+            tool.connect_signals_at_init()
+        tool.show_probing_geo_sig.connect.assert_called_once_with(tool._on_show_probing_geo_sig)
+
+
 if __name__ == '__main__':
     unittest.main()

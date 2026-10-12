@@ -295,7 +295,7 @@ class ToolLevelling(CNCjob, AppTool):
         self.grbl_port_closed_sig.connect(self._on_grbl_port_closed)
         self.build_al_table_sig.connect(self.build_al_table)
         self.apply_autolevel_sig.connect(self.apply_autolevel)
-        self.show_probing_geo_sig.connect(self.show_probing_geo)
+        self.show_probing_geo_sig.connect(self._on_show_probing_geo_sig)
         self.ui.level.toggled.connect(self.on_level_changed)
 
         self.ui.avoid_exc_holes_cb.toggled.connect(self.on_avoid_exc_holes)
@@ -866,6 +866,15 @@ class ToolLevelling(CNCjob, AppTool):
             self.plot_probing_geo(None, False)
 
         self.plot_probing_geo(geometry=fprobe_pt_buff, visibility=True, custom_color="#0000FFFA")
+
+    def _on_show_probing_geo_sig(self, state, reset):
+        """
+        Slot of show_probing_geo_sig. It runs in the GUI thread, so it can read
+        the 'Plot probing points' checkbox. Worker threads only emit the signal.
+        """
+        if state and not self.ui.plot_probing_pts_cb.get_value():
+            return
+        self.show_probing_geo(state=state, reset=reset)
 
     def show_probing_geo(self, state, reset=False):
         self.app.log.debug("ToolLevelling.show_probing_geo() -> %s" % ('cleared' if state is False else 'displayed'))
@@ -1595,8 +1604,8 @@ class ToolLevelling(CNCjob, AppTool):
 
         self.al_heights_valid = True
         self.build_al_table_sig.emit()
-        if self.ui.plot_probing_pts_cb.get_value():
-            self.show_probing_geo_sig.emit(True, True)
+        # the slot reads the 'Plot probing points' checkbox in the GUI thread
+        self.show_probing_geo_sig.emit(True, True)
         return True
 
     def on_show_al_table(self, state):
@@ -2638,8 +2647,8 @@ class ToolLevelling(CNCjob, AppTool):
 
         self.al_heights_valid = True
         self.build_al_table_sig.emit()
-        if self.ui.plot_probing_pts_cb.get_value():
-            self.show_probing_geo_sig.emit(True, True)
+        # the slot reads the 'Plot probing points' checkbox in the GUI thread
+        self.show_probing_geo_sig.emit(True, True)
 
     def on_grbl_autolevel(self):
         # show the Shell Dock
