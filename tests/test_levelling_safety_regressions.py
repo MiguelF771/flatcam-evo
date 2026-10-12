@@ -332,21 +332,6 @@ def test_failed_reset_does_not_relax_recovery():
     assert tool._grbl_safety_generation > before
 
 
-@pytest.mark.parametrize('entry', ['command', 'block'])
-def test_legacy_send_api_alarm_uses_shared_recovery(entry):
-    fake = SafetyGrbl(replies={'G0': ['ALARM:1']})
-    tool = make_audit_tool()
-    tool.grbl_ser_port = fake
-    tool._grbl_connected = True
-    if entry == 'command':
-        tool.send_grbl_command('G0 X1')
-    else:
-        tool.send_grbl_block('G0 X1\nG0 X2')
-        assert 'G0 X2' not in fake.commands()
-    assert tool._grbl_recovery == 'needs_reset'
-    assert tool._grbl_op is None
-
-
 def test_generation_is_captured_before_probe_work():
     fake = SafetyGrbl()
     tool = probe_tool(fake)
@@ -382,7 +367,9 @@ def test_unanswered_parameter_cannot_acknowledge_new_motion():
     tool._grbl_release(op)
     tool.ui.grbl_command_entry.get_value.return_value = 'G0 X1'
     tool.on_grbl_send_command()
-    run_worker(tool)
+    monotonic, sleep = fake_time(0.1)
+    with monotonic, sleep:
+        run_worker(tool)
     assert 'G0 X1' not in fake.commands()
     assert tool._grbl_recovery == 'needs_reset'
 
@@ -576,8 +563,7 @@ def test_reset_during_confirmation_or_final_idle_cannot_finish_home(at):
         assert '$H' not in fake.commands()
 
 
-@pytest.mark.parametrize('reset_lines', [[], [b'ALARM:9\r\n'],
-                                      [b'ALARM:9\r\n', ResetConfirmationGrbl.BANNER]])
+@pytest.mark.parametrize('reset_lines', [[], [b'ALARM:9\r\n']])
 def test_alarm_or_missing_banner_sends_no_home(reset_lines):
     fake = ResetConfirmationGrbl(reset_lines=reset_lines, home_reply=False)
     tool = reset_confirmation_tool(fake)
@@ -722,3 +708,204 @@ def test_non_home_reader_does_not_retire_pending_reset_evidence(reader):
     assert tool._grbl_reply_pending
     assert tool._grbl_reset_pending
     assert tool._grbl_recovery == 'needs_reset'
+
+
+MSG_LINE = b"[MSG:'$H'|'$X' to unlock]\r\n"
+
+
+def test_alarm_before_banner_after_reset_in_motion_is_old_epoch():
+    # GRBL 1.1 prints ALARM:3 before the banner when the reset hits a held or moving machine
+    fake = ResetConfirmationGrbl(reset_lines=[b'ALARM:3\r\n', ResetConfirmationGrbl.BANNER, MSG_LINE])
+    tool = reset_confirmation_tool(fake)
+    run_reset_home(tool)
+    assert '$H' in fake.commands()
+    assert tool._grbl_recovery is None
+    assert any('[success]' in c.args[0] for c in tool.app.inform.emit.call_args_list)
+
+
+def test_partial_line_after_banner_is_completed_before_home():
+    fake = ResetConfirmationGrbl(reset_lines=[ResetConfirmationGrbl.BANNER])
+    tool = reset_confirmation_tool(fake)
+
+    def rest_arrives():
+        fake.read_hook = None
+        fake.rx.append(b"'$X' to unlock]\r\n")
+
+    def banner_read(line):
+        if line == ResetConfirmationGrbl.BANNER:
+            fake.on_line = None
+            fake.rx.append(b"[MSG:'$H'|")
+            fake.read_hook = rest_arrives
+
+    fake.on_line = banner_read
+    run_reset_home(tool)
+    assert '$H' in fake.commands()
+    assert tool._grbl_recovery is None
+
+
+def test_partial_line_that_never_completes_fails_home():
+    fake = ResetConfirmationGrbl(reset_lines=[ResetConfirmationGrbl.BANNER])
+    tool = reset_confirmation_tool(fake)
+
+    def banner_read(line):
+        if line == ResetConfirmationGrbl.BANNER:
+            fake.on_line = None
+            fake.rx.append(b"[MSG:'$H'|")
+
+    fake.on_line = banner_read
+    run_reset_home(tool)
+    assert '$H' not in fake.commands()
+    assert tool._grbl_recovery == 'needs_reset'
+    assert not any('[success]' in c.args[0] for c in tool.app.inform.emit.call_args_list)
+
+
+def fake_time(step=1.0):
+    """Patches for a clock that advances `step` seconds per monotonic() call and a sleep that waits not."""
+    ticks = iter(i * step for i in range(100000))
+    return (patch('appPlugins.ToolLevelling.time.monotonic', side_effect=lambda: next(ticks)),
+            patch('appPlugins.ToolLevelling.time.sleep'))
+
+
+def stale_reply_tool(fake):
+    """A tool whose earlier non-motion transaction timed out, so its reply is still pending."""
+    tool = make_audit_tool()
+    tool.grbl_ser_port = fake
+    tool._grbl_connected = True
+    old = tool._grbl_reserve('parameter')
+    assert tool._grbl_transact(old, '$$', timeout=0.0)[1] == 'timeout'
+    tool._grbl_release(old)
+    assert tool._grbl_reply_pending
+    return tool
+
+
+def test_partial_status_line_is_completed_before_next_command():
+    fake = SafetyGrbl()
+    tool = make_audit_tool()
+    tool.grbl_ser_port = fake
+    tool._grbl_connected = True
+    op = tool._grbl_reserve('motion', motion=True)
+    fake.rx.append(b'<Idle|MPos:0.000,0.0')
+
+    def rest_arrives():
+        fake.read_hook = None
+        fake.rx.append(b'00,0.000|FS:0,0>\r\n')
+
+    fake.read_hook = rest_arrives
+    monotonic, sleep = fake_time()
+    with monotonic, sleep:
+        text, status = tool._grbl_transact(op, 'G0 X1')
+    assert status == 'ok'
+    assert tool._grbl_recovery is None
+
+
+def test_late_reply_of_earlier_command_is_consumed_not_used():
+    fake = SafetyGrbl(replies={'$$': []})
+    tool = stale_reply_tool(fake)
+
+    def late_ok():
+        fake.read_hook = None
+        fake._send('ok')
+
+    fake.read_hook = late_ok
+    op = tool._grbl_reserve('motion', motion=True)
+    monotonic, sleep = fake_time(0.1)
+    with monotonic, sleep:
+        text, status = tool._grbl_transact(op, 'G0 X1')
+    assert status == 'ok'
+    assert 'G0 X1' in fake.commands()
+    assert '!' not in fake.commands()
+    assert tool._grbl_recovery is None
+    assert not tool._grbl_reply_pending
+
+
+def test_unanswered_earlier_command_times_out_with_one_clear_message():
+    fake = SafetyGrbl(replies={'$$': []})
+    tool = stale_reply_tool(fake)
+    monotonic, sleep = fake_time(0.1)
+    with monotonic, sleep:
+        op = tool._grbl_reserve('report')
+        assert tool._grbl_transact(op, '$G')[1] == 'timeout'
+        tool._grbl_release(op)
+        op = tool._grbl_reserve('report')
+        assert tool._grbl_transact(op, '$G')[1] == 'timeout'
+        tool._grbl_release(op)
+    notices = [c.args[0] for c in tool.app.inform.emit.call_args_list if 'earlier command' in c.args[0]]
+    assert len(notices) == 1
+    assert notices[0].startswith('[ERROR_NOTCL] ')
+    assert tool._grbl_recovery is None
+    op = tool._grbl_reserve('motion', motion=True)
+    monotonic, sleep = fake_time(0.1)
+    with monotonic, sleep:
+        assert tool._grbl_transact(op, 'G0 X1')[1] == 'timeout'
+    assert 'G0 X1' not in fake.commands()
+    assert tool._grbl_recovery == 'needs_reset'
+
+
+def status_replies(*states):
+    return ['<%s|MPos:0.000,0.000,0.000|FS:0,0>' % state for state in states]
+
+
+def wait_idle_result(tool, op, states, step=10.0):
+    monotonic, sleep = fake_time(step)
+    with monotonic, sleep, patch.object(tool, '_grbl_query_status', side_effect=status_replies(*states)):
+        return tool._grbl_wait_idle(op)
+
+
+def motion_tool():
+    tool = make_audit_tool()
+    tool.grbl_ser_port = SafetyGrbl()
+    tool._grbl_connected = True
+    return tool, tool._grbl_reserve('motion', motion=True)
+
+
+def test_long_run_past_two_minutes_is_not_a_timeout():
+    tool, op = motion_tool()
+    assert wait_idle_result(tool, op, ['Run'] * 40 + ['Idle']) is True
+    assert tool._grbl_recovery is None
+
+
+def test_feed_hold_and_door_are_waited_through():
+    tool, op = motion_tool()
+    assert wait_idle_result(tool, op, ['Hold', 'Door', 'Run', 'Jog', 'Home', 'Idle']) is True
+    assert tool._grbl_recovery is None
+
+
+@pytest.mark.parametrize('state', ['Alarm', 'Check', 'Sleep'])
+def test_other_states_end_the_wait_as_failure(state):
+    tool, op = motion_tool()
+    assert wait_idle_result(tool, op, ['Run', state]) is False
+    assert tool._grbl_recovery == 'needs_reset'
+
+
+def test_second_probe_click_keeps_running_result():
+    tool = probe_tool(SafetyGrbl())
+    tool.al_heights_valid = True
+    tool.on_grbl_autolevel()
+    generation = tool._al_generation
+    tool.al_heights_valid = True
+    tool.on_grbl_autolevel()
+    assert tool._al_generation == generation
+    assert tool.al_heights_valid
+
+
+def test_refused_probe_click_in_recovery_keeps_valid_map():
+    tool = probe_tool(SafetyGrbl())
+    tool.al_heights_valid = True
+    tool._grbl_recovery = 'needs_reset'
+    generation = tool._al_generation
+    tool.on_grbl_autolevel()
+    assert tool._al_generation == generation
+    assert tool.al_heights_valid
+    assert tool._grbl_op is None
+
+
+def test_typed_alarm_uses_shared_recovery():
+    fake = SafetyGrbl(replies={'G0': ['ALARM:1']})
+    tool = make_audit_tool()
+    tool.grbl_ser_port = fake
+    tool._grbl_connected = True
+    tool.ui.grbl_command_entry.get_value.return_value = 'G0 X1'
+    tool.on_grbl_send_command()
+    run_worker(tool)
+    assert tool._grbl_recovery == 'needs_reset'
+    assert tool._grbl_op is None

@@ -474,6 +474,20 @@ class TestAutolevellGcodeArcWarning(unittest.TestCase):
 
 
 class TestSendGrblCommand(unittest.TestCase):
+    @staticmethod
+    def _send(tool, command, echo=True):
+        """What a typed command does: one reserved transaction, then the wait for Idle."""
+        op = tool._grbl_reserve('command', motion=True)
+        if op is None:
+            return ''
+        try:
+            text, status = tool._grbl_transact(op, command, timeout=30.0, echo=echo)
+            if status == 'ok':
+                tool._grbl_wait_idle(op)
+            return text
+        finally:
+            tool._grbl_release(op)
+
     def _tool(self, replies=None):
         tool = make_tool()
         tool.app.inform_shell = MagicMock()
@@ -512,7 +526,7 @@ class TestSendGrblCommand(unittest.TestCase):
             b'[PRB:1.000,2.000,-0.500:1]\r\n',
             b'ok\r\n',
         ])
-        result = tool.send_grbl_command(command='G38.2 Z-1 F50')
+        result = self._send(tool, 'G38.2 Z-1 F50')
         self.assertIsInstance(result, str)
         self.assertIn('PRB:1.000,2.000,-0.500:1', result)
         self.assertIn('ok', result.lower())
@@ -524,14 +538,14 @@ class TestSendGrblCommand(unittest.TestCase):
 
     def test_bad_bytes_use_replacement_characters(self):
         tool, port = self._tool([b'\xff\xfe junk\r\n', b'ok\r\n'])
-        result = tool.send_grbl_command('G0 X1')
+        result = self._send(tool, 'G0 X1')
         self.assertEqual(result, '\ufffd\ufffd junk\nok')
         self.assertEqual([c.args[0] for c in port.write.call_args_list], [b'G0 X1\n', b'?'])
 
     def test_no_answer_requires_recovery(self):
         tool, port = self._tool([])
         with patch('appPlugins.ToolLevelling.time.monotonic', side_effect=[0.0, 0.01, 31.0]):
-            result = tool.send_grbl_command('G0 X1')
+            result = self._send(tool, 'G0 X1')
         self.assertEqual(result, '')
         port.readline.assert_called_once()
         self.assertEqual([c.args[0] for c in port.write.call_args_list], [b'G0 X1\n', b'!'])
@@ -540,27 +554,16 @@ class TestSendGrblCommand(unittest.TestCase):
 
     def test_echo_includes_command_and_decoded_reply(self):
         tool, port = self._tool()
-        tool.send_grbl_command('G0 X1')
+        self._send(tool, 'G0 X1')
         tool.app.inform_shell[str, bool].emit.assert_called_once_with('G0 X1', False)
         tool.app.inform_shell.emit.assert_called_once_with('\t\t\t: OK')
 
     def test_echo_false_suppresses_command_and_reply(self):
         tool, port = self._tool()
-        self.assertEqual(tool.send_grbl_command('G0 X1', echo=False), 'ok')
+        self.assertEqual(self._send(tool, 'G0 X1', echo=False), 'ok')
         tool.app.inform_shell[str, bool].emit.assert_not_called()
         tool.app.inform_shell.emit.assert_not_called()
         self.assertEqual([c.args[0] for c in port.write.call_args_list], [b'G0 X1\n', b'?'])
-
-    def test_multi_block_writes_bytes_and_waits_for_idle(self):
-        tool, port = self._tool()
-        self.assertIsNone(tool.send_grbl_block('G0 X1\nG0 X2'))
-        self.assertEqual([c.args[0] for c in port.write.call_args_list], [b'G0 X1\n', b'G0 X2\n', b'?'])
-        self.assertEqual([c.args[0] for c in tool.app.inform_shell[str, bool].emit.call_args_list],
-                         ['G0 X1', 'G0 X2'])
-        self.assertEqual(tool.app.inform_shell.emit.call_count, 2)
-        port.readlines.assert_not_called()
-        self.assertIsNone(tool._grbl_op)
-        self.assertIsNone(tool._grbl_recovery)
 
 
 class TestToolUiState(unittest.TestCase):

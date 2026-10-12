@@ -242,9 +242,8 @@ def test_existing_point_units_cannot_be_reinterpreted(tmp_path, entry):
     tool.units = 'IN'
     tool.app.worker_task.emit.reset_mock()
     if entry == 'probe':
-        with patch.object(tool, '_grbl_reserve', wraps=tool._grbl_reserve) as reserve:
-            tool.on_grbl_autolevel()
-            reserve.assert_not_called()
+        tool.on_grbl_autolevel()
+        assert tool._grbl_op is None, 'The refused probe must release the port at once'
         scheduled = tool.app.worker_task.emit.call_args
         if scheduled:
             in_worker(lambda: run_worker(tool))

@@ -244,6 +244,8 @@ class ToolLevelling(CNCjob, AppTool):
         self._grbl_rx_port = None
         self._grbl_rx_buffer = b''
         self._grbl_reply_pending = False
+        # True after the user was told that an earlier command never got its reply
+        self._grbl_stale_notified = False
         self._grbl_reset_pending = False
 
         # changes each time the probe points change or a replacement attempt
@@ -2219,8 +2221,41 @@ class ToolLevelling(CNCjob, AppTool):
                     except (serial.SerialException, OSError) as err:
                         self.app.log.error("ToolLevelling._grbl_failure_locked() -> %s" % str(err))
 
+    def _grbl_read_more_locked(self, op, port):
+        """
+        Buffer 1 more readline() of `port`; the operation lock is free during the read.
+        The caller holds the lock and must treat everything it checked before as stale.
+
+        :return: None if the data was buffered, else 'port_error' or 'cancelled'.
+        """
+        error = None
+        chunk = b''
+        self._grbl_op_lock.release()
+        try:
+            try:
+                chunk = port.readline()
+            except (serial.SerialException, OSError) as err:
+                error = err
+            if not chunk:
+                time.sleep(0.01)
+        finally:
+            self._grbl_op_lock.acquire()
+        if error is not None:
+            self.app.log.error("ToolLevelling._grbl_read_more_locked() -> %s" % str(error))
+            self._grbl_failure_locked(op, 'port_error')
+            return 'port_error'
+        if not self._grbl_active_locked(op, port):
+            return 'cancelled'
+        self._grbl_rx_buffer += chunk or b''
+        return None
+
     def _grbl_prepare_locked(self, op, port):
-        """Classify buffered async data before writing; old ok is not a new acknowledgement."""
+        """
+        Classify buffered async data before writing; old ok is not a new acknowledgement.
+
+        A partial line is read to its end (up to 0.5 s) before it is classified. A reply that is
+        still pending from an earlier command gets 1 s to arrive; it is consumed, never reused.
+        """
         if self._grbl_rx_port is not port:
             self._grbl_rx_port = port
             self._grbl_rx_buffer = b''
@@ -2233,48 +2268,66 @@ class ToolLevelling(CNCjob, AppTool):
             self.app.log.error("ToolLevelling._grbl_prepare_locked() -> %s" % str(err))
             self._grbl_failure_locked(op, 'port_error')
             return '', 'port_error'
-        lines = self._grbl_rx_buffer.split(b'\n')
-        self._grbl_rx_buffer = lines.pop()
-        text = '\n'.join(line.decode('utf-8', errors='replace').strip() for line in lines)
-        self._grbl_failure_locked(op, 'error', text)
-        if op.failed:
-            return text, 'error'
-        if any(line.strip().lower() == 'ok' or line.strip().lower().startswith('error:')
-               for line in text.splitlines()):
-            self._grbl_reply_pending = False
-        if op.motion and any(line.strip().startswith('[PRB:') for line in text.splitlines()):
-            self._grbl_failure_locked(op, 'probe_invalid')
-            return text, 'error'
-        if self._grbl_rx_buffer:
-            # A partial stale acknowledgement cannot be associated with the next command.
-            self._grbl_failure_locked(op, 'probe_invalid')
-            return text, 'error'
-        if self._grbl_reply_pending:
-            self._grbl_failure_locked(op, 'timeout')
-            return text, 'timeout'
-        return '', None
+        partial_until = pending_until = None
+        while True:
+            lines = self._grbl_rx_buffer.split(b'\n')
+            self._grbl_rx_buffer = lines.pop()
+            text = '\n'.join(line.decode('utf-8', errors='replace').strip() for line in lines)
+            self._grbl_failure_locked(op, 'error', text)
+            if op.failed:
+                return text, 'error'
+            if any(line.strip().lower() == 'ok' or line.strip().lower().startswith('error:')
+                   for line in text.splitlines()):
+                self._grbl_reply_pending = False
+            if op.motion and any(line.strip().startswith('[PRB:') for line in text.splitlines()):
+                self._grbl_failure_locked(op, 'probe_invalid')
+                return text, 'error'
+            if self._grbl_rx_buffer:
+                # A line is still arriving: wait for its end before it is classified.
+                if partial_until is None:
+                    partial_until = time.monotonic() + 0.5
+                elif time.monotonic() >= partial_until:
+                    self._grbl_failure_locked(op, 'probe_invalid')
+                    return text, 'error'
+            else:
+                partial_until = None
+                if not self._grbl_reply_pending:
+                    return '', None
+                if getattr(self, '_grbl_stale_notified', False):
+                    self._grbl_failure_locked(op, 'timeout')
+                    return text, 'timeout'
+                if pending_until is None:
+                    pending_until = time.monotonic() + 1.0
+                elif time.monotonic() >= pending_until:
+                    self._grbl_stale_notified = True
+                    self.app.inform.emit('[ERROR_NOTCL] %s' % _(
+                        "GRBL did not answer an earlier command. Press Reset, then Home."))
+                    self._grbl_failure_locked(op, 'timeout')
+                    return text, 'timeout'
+            status = self._grbl_read_more_locked(op, port)
+            if status is not None:
+                return text, status
 
-    def _grbl_wait_idle(self, op, timeout=120.0):
-        """Keep motion ownership while Run/Jog is reported; acceptance is not completion."""
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
+    def _grbl_wait_idle(self, op):
+        """
+        Keep motion ownership while the controller reports a busy state; acceptance is not completion.
+        There is no overall deadline: a long move, a feed hold or an open door ends with Stop, Idle
+        or a failure. An unanswered status query already latches a timeout.
+        """
+        while True:
             with self._grbl_op_lock:
                 if not self._grbl_active_locked(op):
                     return False
-            state = parse_grbl_status_state(self._grbl_query_status(op, timeout=min(2.0, max(
-                0.0, deadline - time.monotonic()))))
+            state = parse_grbl_status_state(self._grbl_query_status(op))
             with self._grbl_op_lock:
                 if not self._grbl_active_locked(op):
                     return False
                 if state == 'Idle':
                     return True
-                if state not in ('Run', 'Jog'):
+                if state not in ('Run', 'Jog', 'Hold', 'Door', 'Home'):
                     self._grbl_failure_locked(op, 'probe_invalid')
                     return False
             time.sleep(0.05)
-        with self._grbl_op_lock:
-            self._grbl_failure_locked(op, 'timeout')
-        return False
 
     def _grbl_write_realtime_locked(self, data):
         """
@@ -2315,6 +2368,7 @@ class ToolLevelling(CNCjob, AppTool):
                 return text, status
             try:
                 self._grbl_reply_pending = True
+                self._grbl_stale_notified = False
                 port.write((cmd + '\n').encode('utf-8'))
             except (serial.SerialException, OSError) as err:
                 self.app.log.error("ToolLevelling._grbl_transact() -> %s" % str(err))
@@ -2445,43 +2499,6 @@ class ToolLevelling(CNCjob, AppTool):
         self.app.ui.shell_dock.show()
         self._grbl_start_op('report', task)
 
-    def send_grbl_command(self, command, echo=True):
-        """
-
-        :param command: GCode command
-        :type command:  str
-        :param echo:    if to send a '\n' char after
-        :type echo:     bool
-        :return:        the text returned by the GRBL controller after each command
-        :rtype:         str
-        """
-        op = self._grbl_reserve('command', motion=True)
-        if op is None:
-            return ''
-        try:
-            text, status = self._grbl_transact(op, command, timeout=30.0, echo=echo)
-            if status == 'ok':
-                self._grbl_wait_idle(op)
-            return text
-        finally:
-            self._grbl_release(op)
-
-    def send_grbl_block(self, command, echo=True):
-        op = self._grbl_reserve('block', motion=True)
-        if op is None:
-            return
-        try:
-            for grbl_line in command.strip().split('\n'):
-                if not grbl_line.strip():
-                    continue
-                text, status = self._grbl_transact(op, grbl_line, timeout=30.0, echo=echo)
-                if status != 'ok':
-                    self._grbl_wait_idle(op)
-                    return
-            self._grbl_wait_idle(op)
-        finally:
-            self._grbl_release(op)
-
     def on_grbl_get_parameter(self, param):
         try:
             number = int(str(param).replace('$', '').strip())
@@ -2598,11 +2615,6 @@ class ToolLevelling(CNCjob, AppTool):
                         or op.safety_generation != self._grbl_safety_generation):
                     return False
                 self._grbl_rx_buffer += chunk or b''
-                complete = self._grbl_rx_buffer.rsplit(b'\n', 1)[0] if b'\n' in self._grbl_rx_buffer else b''
-                self._grbl_failure_locked(op, 'error', complete.decode('utf-8', errors='replace'))
-                if op.failed:
-                    self._grbl_rx_buffer = self._grbl_rx_buffer.rsplit(b'\n', 1)[-1]
-                    return False
                 while b'\n' in self._grbl_rx_buffer:
                     raw_line, self._grbl_rx_buffer = self._grbl_rx_buffer.split(b'\n', 1)
                     line = raw_line.decode('utf-8', errors='replace').strip()
@@ -2613,7 +2625,8 @@ class ToolLevelling(CNCjob, AppTool):
                         self._grbl_recovery = 'needs_home'
                         text, status = self._grbl_prepare_locked(op, port)
                         return status is None
-                    # Pre-banner ok/error/other lines belong to the previous controller epoch.
+                    # Pre-banner ok/error/ALARM/MSG lines belong to the previous controller epoch
+                    # (GRBL 1.1 prints ALARM:3 before the banner when the reset hits a moving machine).
 
         with self._grbl_op_lock:
             if self._grbl_active_locked(op, port) and op.safety_generation == self._grbl_safety_generation:
@@ -3072,12 +3085,14 @@ class ToolLevelling(CNCjob, AppTool):
             self.app.inform.emit('[ERROR_NOTCL] %s' % _("There are no probe points. Add probe points first."))
             return
 
-        context = self._al_capture_context(replacement=True)
-        if context is None:
-            return
-
+        # reserve first: a refused click must not retire the running probe or a valid map
         op = self._grbl_reserve('probe', motion=True)
         if op is None:
+            return
+
+        context = self._al_capture_context(replacement=True)
+        if context is None:
+            self._grbl_release(op)
             return
 
         points = {key: (value['point'].x, value['point'].y) for key, value in self.al_voronoi_geo_storage.items()}
