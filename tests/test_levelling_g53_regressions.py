@@ -96,9 +96,10 @@ class TestG53Compatibility(unittest.TestCase):
             level_gcode_line("G1 X1 Y1", state, self.offset_fn),
             "G1 X1 Y1 Z2.5000"
         )
+        # relative moves from a known position are compensated too (G91 delta)
         self.assertEqual(
             level_gcode_line("G91 G1 X1 Y1 Z1", state, self.offset_fn),
-            "G91 G1 X1 Y1 Z1"
+            "G91 G1 X1 Y1 Z1.0000"
         )
         self.assertEqual(
             level_gcode_line("G90 G1 X3 Y3", state, self.offset_fn),
@@ -109,7 +110,7 @@ class TestG53Compatibility(unittest.TestCase):
         state = new_levelling_state()
         level_gcode_line("G1 X1 Y2 Z-1", state, self.offset_fn)
         before = state.copy()
-        for line in ["G92 Z0", "G28 X0 Y0", "G21 G90 G17 G94", "M3 S1000", "(G53 G0 Z0)"]:
+        for line in ["G21 G90 G17 G94","M3 S1000", "(G53 G0 Z0)"]:
             self.assertEqual(level_gcode_line(line, state, self.offset_fn), line)
             self.assertEqual(state, before)
         self.assertEqual(

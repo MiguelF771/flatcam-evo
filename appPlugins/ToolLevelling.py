@@ -1692,7 +1692,7 @@ class ToolLevelling(CNCjob, AppTool):
         if not self._al_prepare_interp(target_obj, al_method, snapshot=snapshot):
             return None
 
-        state = new_levelling_state()
+        state = new_levelling_state(arc_segment=self._al_arc_segment(target_obj))
         result = {}
         for tooluid in target_obj.tools.keys():
             tool_gcode = target_obj.tools[tooluid].get('gcode') or ''
@@ -1717,7 +1717,26 @@ class ToolLevelling(CNCjob, AppTool):
                 (_("Relative (G91) moves were not height-compensated"), state['relative'])
             )
 
+        if state['arcs_split'] > 0:
+            self.app.inform.emit("%s: %d" % (_("Arc moves split into line moves"), state['arcs_split']))
+
         return result
+
+    @staticmethod
+    def _al_arc_segment(target_obj):
+        """
+        Longest line segment that a split arc may have: the smallest positive
+        of the CNCJob's seg_x / seg_y, else 1.0 for MM or 0.04 for IN.
+
+        :param target_obj: the CNCJobObject being levelled.
+        :return: segment length in the units of the object.
+        :rtype: float
+        """
+        segments = [value for value in (getattr(target_obj, 'seg_x', 0) or 0,
+                                        getattr(target_obj, 'seg_y', 0) or 0) if value > 0]
+        if segments:
+            return min(segments)
+        return 0.04 if str(getattr(target_obj, 'units', 'MM')).upper() == 'IN' else 1.0
 
     def autolevell_bilinear(self, x, y):
         return bilinear_offset(self._al_grid, x, y)

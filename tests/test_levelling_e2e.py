@@ -360,6 +360,65 @@ def test_file_controller_import_points_without_rows_is_an_error(env):
     assert any('no valid rows' in m for m in env.errors()), env.messages()
 
 
+ARC_G91_MARKER = '(ARC AND G91 BLOCK)'
+ARC_G91_BLOCK = [
+    ARC_G91_MARKER,
+    'G00 Z2.0000',
+    'G00 X1000.0000 Y1000.0000',
+    'G01 Z-0.1000 F300.0000',
+    'G03 X995.0000 Y1005.0000 I-5.0000 J0.0000',     # quarter arc around (995, 1000)
+    'G91',
+    'G01 X2.0000 Y1.0000 Z-0.0500',
+    'G01 X1.0000',
+    'G90',
+    'G00 Z2.0000',
+]
+
+
+def test_file_controller_arc_and_g91_block_is_levelled(env):
+    """A G2/G3 arc and a G91 block in the tool G-code: the machine follows the height map."""
+    from tests.test_levelling_arc_g91 import Machine
+
+    job = env.load_cncjob('simple_line', 'job_arc')
+    gcode = job.tools[1]['gcode']
+    assert '\nM05\n' in gcode
+    gcode = gcode.replace('\nM05\n', '\n' + '\n'.join(ARC_G91_BLOCK) + '\nM05\n')
+    job.tools[1]['gcode'] = gcode
+    job.gcode = gcode
+    env.snapshot['gcode'] = gcode
+    env.snapshot['tools'] = {1: gcode}
+    env.select('job_arc', 'MACH3', 'b')
+    points = env.add_points()
+    hm = env.tmp_path / 'heights_arc.txt'
+    write_height_map(hm, 'MACH3', points)
+    import_through_button(env, hm)
+
+    assert env.tool.al_heights_valid
+    assert not env.errors(), env.errors()
+    new = env.objects[env.levelled_name()]
+    assert env.objects[env.source_name].tools[1]['gcode'] == gcode
+    levelled = new.tools[1]['gcode']
+    assert 'G03' not in levelled and 'G3 ' not in levelled
+    assert any(m.endswith('Arc moves split into line moves: 1') for m in env.messages()), env.messages()
+
+    head, block = levelled.split(ARC_G91_MARKER, 1)
+    machine = Machine()
+    machine.feed(head)
+    done = len(machine.trace)
+    machine.feed(block.split('\nM05\n')[0])
+    moves = machine.trace[done:]
+    cuts = [m for m in moves if m[3] == 1]
+    assert len(cuts) >= 12                                   # plunge + 9 or more arc segments + 2 relative
+    programmed_z = [-0.1] * (len(cuts) - 2) + [-0.15] * 2
+    for (x, y, z, _g), prog in zip(cuts, programmed_z):
+        assert z == pytest.approx(prog + PLANE(x, y), abs=TOL), (x, y, z)
+    for x, y, _z, _g in cuts[1:-2]:                          # the arc points are on the circle
+        assert ((x - 995.0) ** 2 + (y - 1000.0) ** 2) ** 0.5 == pytest.approx(5.0, abs=2e-4)
+    assert (cuts[-3][0], cuts[-3][1]) == (995.0, 1005.0)
+    assert (cuts[-1][0], cuts[-1][1]) == pytest.approx((998.0, 1006.0), abs=1e-9)
+    assert moves[-1][2] == 2.0                               # the final rapid is not compensated
+
+
 # --------------------------------------------------------------------------------------
 # GRBL
 # --------------------------------------------------------------------------------------

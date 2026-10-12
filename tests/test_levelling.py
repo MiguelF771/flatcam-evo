@@ -496,9 +496,10 @@ class TestLevelGcodeLine(unittest.TestCase):
 
         r4 = level_gcode_line("G92 Z0", state, self.offset_fn)
         self.assertEqual(r4, "G92 Z0")
-        # G92 does not touch modal state at all
+        # G92 leaves the modal G alone, but the work Z is no longer valid
         self.assertIsNone(state['G'])
-        self.assertEqual(state['Z'], -5.0)
+        self.assertIsNone(state['Z'])
+        self.assertEqual((state['X'], state['Y']), (1.0, 1.0))
 
         r5 = level_gcode_line("G00 Z2", state, self.offset_fn)
         self.assertEqual(r5, "G00 Z2")
@@ -514,7 +515,7 @@ class TestLevelGcodeLine(unittest.TestCase):
         self.assertEqual(r7, "G01 X2 Y2 Z{0:.4f}".format(expected_z7))
         self.assertEqual(state['Z'], -0.1)
 
-    def test_g92_1_does_not_change_state(self):
+    def test_g92_1_loses_the_work_position(self):
         state = new_levelling_state()
         state['X'] = 1.0
         state['Y'] = 1.0
@@ -523,19 +524,22 @@ class TestLevelGcodeLine(unittest.TestCase):
         line = "G92.1 X0 Y0 Z0"
         result = level_gcode_line(line, state, self.offset_fn)
         self.assertEqual(result, line)
-        self.assertEqual(state['X'], 1.0)
-        self.assertEqual(state['Y'], 1.0)
-        self.assertEqual(state['Z'], -0.1)
+        # the work coordinate system changed: X/Y/Z are unknown, G stays
+        self.assertIsNone(state['X'])
+        self.assertIsNone(state['Y'])
+        self.assertIsNone(state['Z'])
         self.assertEqual(state['G'], 1)
 
-    def test_g28_does_not_change_state_xy(self):
+    def test_g28_xy_makes_xy_unknown_and_keeps_z(self):
         state = new_levelling_state()
         state['X'] = 1.0
         state['Y'] = 1.0
+        state['Z'] = -0.5
         result = level_gcode_line("G28 X0 Y0", state, self.offset_fn)
         self.assertEqual(result, "G28 X0 Y0")
-        self.assertEqual(state['X'], 1.0)
-        self.assertEqual(state['Y'], 1.0)
+        self.assertIsNone(state['X'])
+        self.assertIsNone(state['Y'])
+        self.assertEqual(state['Z'], -0.5)
 
     def test_lowercase_line_unchanged(self):
         state = new_levelling_state()

@@ -39,6 +39,11 @@ levelling_interp:
 
 - every G1 move is compensated; G90/G91, canned cycles, modal settings with axis words and trailing-dot numbers are handled
 - a G53 line keeps its G0/G1 motion mode and makes the moved work axes unknown, so a following G1 is not compensated until they are known again
+- G2/G3 arcs in the G17 plane (I/J or R, full circles, helical arcs, G90.1/G91.1) are split into height-compensated G1 segments; the segment length is the CNCJob seg_x/seg_y, else 1 mm or 0.04 in
+- an arc that can not be split (G18/G19, G93, a bad radius, other words) is kept and gets an explicit G2/G3 word (after a block delete and a line number)
+- G91 G1 moves are compensated when X/Y/Z are known; the Z delta comes from the offset in effect, so rounding errors do not add up
+- G28, G30, G92, G92.1/.2/.3, G10 L2 and G10 L20 make the affected axes unknown
+- added arc and G91 tests and a G-code path simulator that compares the levelled path with the original path plus the height map
 
 19.09.2026
 

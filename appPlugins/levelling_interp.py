@@ -389,21 +389,43 @@ _NON_MODAL_G_CODES = (10.0, 28.0, 30.0, 53.0, 92.0, 92.1, 92.2, 92.3)
 # mode, distance mode, feed mode). They do not make the line a non-motion
 # command: "G90 X1 Y1" under a modal G1 is still a G1 move.
 _MODAL_SETTING_G_CODES = (17.0, 18.0, 19.0, 20.0, 21.0, 40.0, 49.0, 54.0, 55.0, 56.0, 57.0,
-                          58.0, 59.0, 61.0, 64.0, 90.0, 91.0, 93.0, 94.0)
+                          58.0, 59.0, 61.0, 64.0, 90.0, 90.1, 91.0, 91.1, 93.0, 94.0)
 _WORD_RE = re.compile(r'([A-Z])\s*([+\-]?(?:\d+\.?\d*|\.\d+))')
+# Start of a line that must stay in front of any G word: whitespace, a block
+# delete "/" and a line number "N<digits>" (RS274NGC wants N first).
+_LINE_LEAD_RE = re.compile(r'\s*(?:/\s*)?(?:N\s*\d+\s*)?')
+# Letters an arc line may carry and still be split into line moves.
+_ARC_SPLIT_LETTERS = frozenset('GXYZIJKRFP')
+# Largest angle of 1 arc segment, and the largest number of segments of 1 arc.
+_ARC_MAX_ANGLE = math.pi / 18.0
+_ARC_MAX_SEGMENTS = 10000
 
 
-def new_levelling_state():
+def new_levelling_state(arc_segment=1.0):
     """
     Create a fresh modal G-code state for use with level_gcode_line.
 
-    :return: dict with modal X/Y/Z position, modal motion G code, and an
-        `arcs` counter (arc moves are never height-compensated, so the
-        caller can warn/report on them).
+    :param arc_segment: largest chord length of 1 segment of a split arc
+        (G-code units), must be > 0.
+    :return: dict with modal X/Y/Z position, modal motion G code, and the
+        counters `arcs` (arc moves that were not compensated),
+        `relative` (G91 G1 moves that were not compensated) and
+        `arcs_split` (arcs that were split into G1 segments), so the
+        caller can warn/report on them.
+    :raises ValueError: if `arc_segment` is not > 0.
     """
+    if not arc_segment > 0:
+        raise ValueError("arc_segment must be > 0")
     # abs: True for G90 (absolute), False for G91 (relative)
-    # relative: count of G1 moves that were not compensated because of G91
-    return {'X': 0.0, 'Y': 0.0, 'Z': 0.0, 'G': 0, 'arcs': 0, 'abs': True, 'relative': 0}
+    # plane: 17/18/19 (G17/G18/G19)
+    # arc_abs: True for G90.1 (absolute I/J), False for G91.1 (incremental I/J)
+    # inverse_feed: True for G93
+    # applied: the Z offset now in effect, (machine Z that the emitted code
+    #   reaches) minus (programmed Z, state['Z'])
+    # known: the axes whose work position was set by an absolute G0..G3 word
+    return {'X': 0.0, 'Y': 0.0, 'Z': 0.0, 'G': 0, 'arcs': 0, 'abs': True, 'relative': 0,
+            'plane': 17, 'arc_abs': False, 'inverse_feed': False, 'applied': 0.0,
+            'known': set(), 'arc_segment': float(arc_segment), 'arcs_split': 0}
 
 
 def _mask_comments(line):
@@ -420,6 +442,37 @@ def _mask_comments(line):
     if idx != -1:
         masked = masked[:idx] + ' ' * (len(masked) - idx)
     return masked
+
+
+def _comment_text(line):
+    """
+    Collect the comments of a line: every `(...)` comment before a `;`
+    and the `;...` tail, joined with a space.
+
+    :param line: raw G-code line.
+    :return: the comment text, or '' if the line has no comment.
+    """
+    no_parens = re.sub(r'\([^)]*\)', lambda m: ' ' * len(m.group(0)), line)
+    idx = no_parens.find(';')
+    head = line if idx == -1 else line[:idx]
+    parts = re.findall(r'\([^)]*\)', head)
+    if idx != -1:
+        parts.append(line[idx:].rstrip())
+    return ' '.join(parts)
+
+
+def _fmt(value, decimals):
+    """
+    Format a number with `decimals` decimals, never as a negative zero.
+
+    :param value: number to format.
+    :param decimals: number of decimals.
+    :return: the formatted text.
+    """
+    text = "{0:.{1}f}".format(value, decimals)
+    if float(text) == 0.0:
+        text = text.lstrip('-')
+    return text
 
 
 def _insert_z_word(line, new_z_str, z_match):
@@ -453,20 +506,318 @@ def _insert_z_word(line, new_z_str, z_match):
     return line.rstrip() + " Z" + new_z_str
 
 
+def _note_modal_settings(state, g_words):
+    """
+    Update the distance mode, the plane, the arc distance mode and the
+    feed mode of `state` from the G words of a line.
+
+    :param state: modal state dict; mutated in place.
+    :param g_words: the G numbers of the line, in order.
+    """
+    # G90/G91 change the distance mode also on a line with a non-modal
+    # code (for example "G91 G28 Z0"), so this runs before anything else
+    if 91.0 in g_words:
+        state['abs'] = False
+    if 90.0 in g_words:
+        state['abs'] = True
+    for g in g_words:
+        if g in (17.0, 18.0, 19.0):
+            state['plane'] = int(g)
+        elif g == 90.1:
+            state['arc_abs'] = True
+        elif g == 91.1:
+            state['arc_abs'] = False
+        elif g == 93.0:
+            state['inverse_feed'] = True
+        elif g == 94.0:
+            state['inverse_feed'] = False
+
+
+def _lose_axes(state, axes):
+    """
+    Mark work axes as unknown (None) and no longer known.
+
+    :param state: modal state dict; mutated in place.
+    :param axes: iterable of 'X'/'Y'/'Z'.
+    """
+    for axis in axes:
+        state[axis] = None
+        state['known'].discard(axis)
+
+
+def _all_known(state):
+    """
+    :return: True if X, Y and Z were all set by an absolute word and are not None.
+    """
+    return all(axis in state['known'] and state[axis] is not None for axis in ('X', 'Y', 'Z'))
+
+
+def _arc_centre(start, end, words, clockwise, arc_abs, decimals):
+    """
+    Centre of an arc in the XY plane.
+
+    :param start: (x, y, z) start point.
+    :param end: (x, y, z) end point.
+    :param words: dict letter -> value of the arc line.
+    :param clockwise: True for G2.
+    :param arc_abs: True if I/J are absolute coordinates (G90.1).
+    :param decimals: number of decimals of the output.
+    :return: (cx, cy), or None if the line gives no valid centre (no I/J
+        and no R, both of them, an R arc with equal ends, or an R too
+        small for the chord).
+    """
+    has_ij = 'I' in words or 'J' in words
+    if has_ij and 'R' in words:
+        return None
+    if has_ij:
+        i_val, j_val = words.get('I', 0.0), words.get('J', 0.0)
+        if arc_abs:
+            return i_val, j_val
+        return start[0] + i_val, start[1] + j_val
+    if 'R' not in words:
+        return None
+
+    radius = words['R']
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    chord = math.hypot(dx, dy)
+    if chord <= 10 ** -decimals or radius == 0.0:
+        return None
+    if chord > 2.0 * abs(radius) + max(0.001 * abs(radius), 5 * 10 ** -decimals):
+        return None
+    height = math.sqrt(max(0.0, radius * radius - chord * chord / 4.0))
+    # the centre of the short arc is to the left of the chord for G3 and to
+    # the right for G2; a negative R selects the long arc (the other side)
+    side = -1.0 if clockwise else 1.0
+    if radius < 0.0:
+        side = -side
+    return (start[0] + dx / 2.0 - side * height * dy / chord,
+            start[1] + dy / 2.0 + side * height * dx / chord)
+
+
+def _arc_sweep(start, end, centre, clockwise, decimals):
+    """
+    Radius and signed sweep angle of an arc.
+
+    :param start: (x, y, z) start point.
+    :param end: (x, y, z) end point.
+    :param centre: (cx, cy).
+    :param clockwise: True for G2.
+    :param decimals: number of decimals of the output.
+    :return: (radius, sweep) with sweep < 0 for G2, or None if the start
+        radius is about 0 or differs from the end radius by more than
+        max(0.1 %, 5 * 10**-decimals). Equal start and end points make a
+        full circle.
+    """
+    r_start = math.hypot(start[0] - centre[0], start[1] - centre[1])
+    r_end = math.hypot(end[0] - centre[0], end[1] - centre[1])
+    if r_start < 10 ** -decimals:
+        return None
+    if abs(r_start - r_end) > max(0.001 * r_start, 5 * 10 ** -decimals):
+        return None
+    a_start = math.atan2(start[1] - centre[1], start[0] - centre[0])
+    a_end = math.atan2(end[1] - centre[1], end[0] - centre[0])
+    full = 2.0 * math.pi
+    if math.hypot(end[0] - start[0], end[1] - start[1]) <= 10 ** -decimals:
+        sweep = full
+    elif clockwise:
+        sweep = (a_start - a_end) % full
+    else:
+        sweep = (a_end - a_start) % full
+    return r_start, -sweep if clockwise else sweep
+
+
+def _arc_points(start, end, centre, radius, sweep, arc_segment):
+    """
+    The points of an arc cut into segments of at most `arc_segment` length
+    and at most 10 degrees (and at most 10000 segments).
+
+    :param start: (x, y, z) start point.
+    :param end: (x, y, z) end point; Z is interpolated linearly (helix).
+    :param centre: (cx, cy).
+    :param radius: radius of the circle through the start point.
+    :param sweep: signed sweep angle, negative for clockwise.
+    :param arc_segment: largest chord length of 1 segment.
+    :return: list of (x, y, z), the last one is exactly `end`.
+    """
+    count = max(1,
+                math.ceil(radius * abs(sweep) / arc_segment - 1e-9),
+                math.ceil(abs(sweep) / _ARC_MAX_ANGLE - 1e-9))
+    count = min(count, _ARC_MAX_SEGMENTS)
+    a_start = math.atan2(start[1] - centre[1], start[0] - centre[0])
+    points = []
+    for i in range(1, count):
+        angle = a_start + sweep * i / count
+        points.append((centre[0] + radius * math.cos(angle),
+                       centre[1] + radius * math.sin(angle),
+                       start[2] + (end[2] - start[2]) * i / count))
+    points.append((end[0], end[1], end[2]))
+    return points
+
+
+def _arc_lines(points, start, z_actual, absolute, offset_fn, decimals):
+    """
+    Format the points of an arc as G1 lines with height compensation.
+
+    In G91 the deltas are taken between the ROUNDED positions, so the
+    rounding errors do not accumulate; the Z delta of each segment brings
+    the machine to the compensated height of its point.
+
+    :param points: list of (x, y, z) from _arc_points().
+    :param start: (x, y, z) start point (programmed).
+    :param z_actual: machine Z at the start.
+    :param absolute: True for G90.
+    :param offset_fn: callable (x, y) -> height offset.
+    :param decimals: number of decimals of the output.
+    :return: (list of "G1 X.. Y.. Z.." texts, machine Z after the last one).
+    """
+    lines = []
+    prev_x, prev_y = float(_fmt(start[0], decimals)), float(_fmt(start[1], decimals))
+    for x, y, z in points:
+        desired = z + offset_fn(x, y)
+        if absolute:
+            x_str, y_str, z_str = _fmt(x, decimals), _fmt(y, decimals), _fmt(desired, decimals)
+            z_actual = float(z_str)
+        else:
+            cur_x, cur_y = float(_fmt(x, decimals)), float(_fmt(y, decimals))
+            x_str, y_str = _fmt(cur_x - prev_x, decimals), _fmt(cur_y - prev_y, decimals)
+            z_step = float(_fmt(desired - z_actual, decimals))
+            z_str = _fmt(z_step, decimals)
+            z_actual += z_step
+            prev_x, prev_y = cur_x, cur_y
+        lines.append("G1 X%s Y%s Z%s" % (x_str, y_str, z_str))
+    return lines, z_actual
+
+
+def _arc_splittable(info, state):
+    """
+    Check the conditions of the line and of the state that allow splitting
+    an arc: G17 plane, no inverse feed, only the words G X Y Z I J K R F P
+    (P only as P1) and G words that are 2/3 or modal settings.
+
+    :param info: parsed words of the line, as made by level_gcode_line.
+    :param state: modal state dict.
+    :return: True if the arc may be split.
+    """
+    if state['plane'] != 17 or state['inverse_feed']:
+        return False
+    if not info['letters'] <= _ARC_SPLIT_LETTERS:
+        return False
+    if 'P' in info['words'] and info['words']['P'] != 1.0:
+        return False
+    return all(g in (2.0, 3.0) or g in _MODAL_SETTING_G_CODES for g in info['g_words'])
+
+
+def _level_arc(line, info, state, offset_fn, decimals, start, was_known, absolute):
+    """
+    Split a G2/G3 arc line into height-compensated G1 lines, or leave it
+    unchanged (counted in `state['arcs']`) if that is not possible.
+
+    The X/Y/Z of `state` already hold the end point. The program keeps its
+    modal G2/G3, but the machine is left in G1 by a split arc, so an
+    unchanged arc line without a G2/G3 word gets the modal word in front.
+
+    :param line: original line.
+    :param info: parsed words of the line, as made by level_gcode_line.
+    :param state: modal state dict; mutated in place.
+    :param offset_fn: callable (x, y) -> height offset.
+    :param decimals: number of decimals of the output.
+    :param start: (x, y, z) before the line.
+    :param was_known: True if the start point was known before the line.
+    :param absolute: True for G90.
+    :return: the new text (lines joined with a newline) or the original line.
+    """
+    points = None
+    if was_known and _arc_splittable(info, state):
+        end = (state['X'], state['Y'], state['Z'])
+        clockwise = state['G'] == 2
+        centre = _arc_centre(start, end, info['words'], clockwise, state['arc_abs'], decimals)
+        geometry = None if centre is None else _arc_sweep(start, end, centre, clockwise, decimals)
+        if geometry is not None:
+            points = _arc_points(start, end, centre, geometry[0], geometry[1], state['arc_segment'])
+
+    if points is None:
+        state['arcs'] += 1
+        if absolute and 'Z' in info['words']:
+            state['applied'] = 0.0
+        if 2.0 not in info['g_words'] and 3.0 not in info['g_words']:
+            # the G word goes after a block delete and a line number
+            lead = _LINE_LEAD_RE.match(line).end()
+            return '%sG%d %s' % (line[:lead], state['G'], line[lead:])
+        return line
+
+    lines, z_actual = _arc_lines(points, start, start[2] + state['applied'], absolute,
+                                 offset_fn, decimals)
+    state['applied'] = z_actual - state['Z']
+    state['arcs_split'] += 1
+
+    head = [text for g, text in zip(info['g_words'], info['g_texts']) if g not in (2.0, 3.0)]
+    head.append(lines[0])
+    if info['f_text']:
+        head.append(info['f_text'])
+    lines[0] = ' '.join(head)
+    comment = _comment_text(line)
+    if comment:
+        lines[0] += ' ' + comment
+    if '/' in _LINE_LEAD_RE.match(line).group():
+        # a block deleted arc: all of its segments are block deleted
+        lines = ['/' + text for text in lines]
+    return '\n'.join(lines)
+
+
+def _level_relative(line, z_match, state, offset_fn, decimals, prev_z, was_known):
+    """
+    Height-compensate a G91 G1 move: the Z word becomes the delta that
+    brings the machine to the programmed Z plus the offset of the new X/Y.
+
+    :param line: original line.
+    :param z_match: `_WORD_RE` match of the line's Z word, or None.
+    :param state: modal state dict, already holding the new X/Y/Z; mutated.
+    :param offset_fn: callable (x, y) -> height offset.
+    :param decimals: number of decimals of the output.
+    :param prev_z: programmed Z before the line.
+    :param was_known: True if X, Y and Z were all known before the line.
+    :return: the new line, or the original line if the position was unknown
+        (counted in `state['relative']`) or nothing has to change.
+    """
+    if not was_known:
+        state['relative'] += 1
+        return line
+    prev_actual = prev_z + state['applied']
+    desired = state['Z'] + offset_fn(state['X'], state['Y'])
+    z_step = round(desired - prev_actual, decimals)
+    if z_step == 0:
+        z_step = 0.0
+    state['applied'] = prev_actual + z_step - state['Z']
+    if z_match is None and z_step == 0:
+        return line
+    return _insert_z_word(line, _fmt(z_step, decimals), z_match)
+
+
 def level_gcode_line(line, state, offset_fn, decimals=4):
     """
     Apply height-map compensation to 1 line of G-code, modally tracking
     X/Y/Z/G state across calls.
 
     Every linear move (modal G1), at any Z with known work X/Y/Z, gets
-    its Z height-compensated. Left untouched: rapids (G0); arcs (G2/G3,
-    counted in `state['arcs']`); other members of the motion modal
+    its Z height-compensated. In G91 a G1 move is compensated when X/Y/Z
+    were all set by absolute words before: its Z word becomes the delta
+    to the compensated height (`state['applied']` is the offset in effect).
+    An arc (modal G2/G3) in the G17 plane with a known start point is split
+    into G1 segments (returned as 1 string, lines joined with a newline);
+    other arcs are left untouched and counted in `state['arcs']`. Left
+    untouched: rapids (G0); other members of the motion modal
     group that are never cutting moves (G31, G38.2/.3/.4/.5, G80) -
     selecting 1 of these sets `state['G']` to None so a following bare
     "X.. Y.." line is not mistaken for a continuing G1 move until a
     real G0/G1/G2/G3 reappears; non-modal one-shot codes (G10, G28,
     G30, G92) whose X/Y/Z words are not work-coordinate moves, so
-    they also leave `state['X']`/`['Y']`/`['Z']`/`['G']` untouched;
+    they also leave `state['G']` untouched. They change `state['X']`/
+    `['Y']`/`['Z']` only by marking axes unknown (None, and no longer in
+    `state['known']`): G28 and G30 the axes they move (all 3 if none is
+    named); G92 and G10 L20 the axes named on the line; G92.1, G92.2,
+    G92.3 and G10 L2 all 3 axes (they change the work coordinate system,
+    so the tracked work positions are no longer valid). Other G10 forms
+    (L1, L10, ...) change nothing. The line itself is never changed;
     G53 machine-coordinate moves, which track explicit G0/G1 but mark
     moved work axes unknown (None) until restored by absolute work words;
     non-motion modal codes (G4, G17, G20, G21, G90, G94, ...); and
@@ -483,7 +834,8 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     :param offset_fn: callable (x, y) -> height offset (float) to add
         to Z.
     :param decimals: number of decimals used to format the new Z value.
-    :return: the (possibly modified) line, without a trailing newline.
+    :return: the (possibly modified) line, without a trailing newline; a
+        split arc is several lines joined with a newline.
     """
     stripped = line.strip()
     if not stripped or stripped.startswith('(') or stripped.startswith(';'):
@@ -494,9 +846,12 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     x_val = y_val = z_val = None
     z_match = None
     g_words = []
+    info = {'words': {}, 'letters': set(), 'g_words': g_words, 'g_texts': [], 'f_text': None}
 
     for m in _WORD_RE.finditer(masked):
         letter, num = m.group(1), m.group(2)
+        info['letters'].add(letter)
+        info['words'][letter] = float(num)
         if letter == 'X':
             x_val = float(num)
         elif letter == 'Y':
@@ -506,28 +861,44 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
             z_match = m
         elif letter == 'G':
             g_words.append(float(num))
+            info['g_texts'].append('G' + num)
+        elif letter == 'F':
+            info['f_text'] = 'F' + num
 
     has_xyz = x_val is not None or y_val is not None or z_val is not None
 
-    # G90/G91 change the distance mode also on a line with a non-modal
-    # code (for example "G91 G28 Z0"), so handle them first
-    if 91.0 in g_words:
-        state['abs'] = False
-    if 90.0 in g_words:
-        state['abs'] = True
+    _note_modal_settings(state, g_words)
 
     non_modal_gs = [g for g in g_words if g in _NON_MODAL_G_CODES]
     if non_modal_gs:
         # One-shot code: X/Y/Z here are not work-coordinate moves.
+        moved = [axis for axis, value in [('X', x_val), ('Y', y_val), ('Z', z_val)]
+                 if value is not None]
         if 53.0 in non_modal_gs:
             motion_gs = [g for g in g_words if g in (0.0, 1.0)]
             if motion_gs:
                 state['G'] = int(motion_gs[-1])
             # The work offset is unknown, so machine positions cannot
             # establish work coordinates for the moved axes.
-            for axis, value in [('X', x_val), ('Y', y_val), ('Z', z_val)]:
-                if value is not None:
-                    state[axis] = None
+            _lose_axes(state, moved)
+        elif 28.0 in non_modal_gs or 30.0 in non_modal_gs:
+            # Go to the predefined position: the axes it moves are unknown
+            # after it (all 3 if none is named).
+            _lose_axes(state, moved or ['X', 'Y', 'Z'])
+        elif any(g in non_modal_gs for g in (92.1, 92.2, 92.3)):
+            # The axis offsets are cleared or restored: every work position changes.
+            _lose_axes(state, ['X', 'Y', 'Z'])
+        elif 92.0 in non_modal_gs:
+            # G92 makes the current position the given values: the work
+            # coordinates of the named axes are no longer the tracked ones.
+            _lose_axes(state, moved)
+        elif 10.0 in non_modal_gs:
+            l_word = info['words'].get('L')
+            if l_word == 2.0:
+                # G10 L2 can change the offset of the active coordinate system.
+                _lose_axes(state, ['X', 'Y', 'Z'])
+            elif l_word == 20.0:
+                _lose_axes(state, moved)
         return line
 
     motion_gs = [g for g in g_words if g in _MOTION_G_CODES]
@@ -549,40 +920,46 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     # else: no G word at all - keep the previous modal G unchanged.
 
     absolute = state.get('abs', True)
+    start = (state['X'], state['Y'], state['Z'])
+    was_known = _all_known(state)
+    is_motion = state['G'] in _MOTION_G_CODES and not is_non_motion_cmd
     for axis, value in [('X', x_val), ('Y', y_val), ('Z', z_val)]:
         if value is not None:
             if absolute:
                 state[axis] = value
             elif state[axis] is not None:
                 state[axis] += value
+            if not is_motion:
+                state['known'].discard(axis)
+            elif absolute:
+                state['known'].add(axis)
+
+    if (state['G'] in (2, 3) and not is_non_motion_cmd
+            and (has_xyz or any(letter in info['words'] for letter in 'IJR'))):
+        return _level_arc(line, info, state, offset_fn, decimals, start, was_known, absolute)
 
     if not has_xyz:
         return line
 
     if is_non_motion_cmd:
+        if absolute and z_val is not None:
+            state['applied'] = 0.0
         return line
 
     if not absolute:
-        # a G91 Z word is a delta, so an absolute compensated Z can not
-        # be written; count the move so that the caller can warn
         if state['G'] == 1:
-            state['relative'] = state.get('relative', 0) + 1
+            return _level_relative(line, z_match, state, offset_fn, decimals, start[2], was_known)
         return line
 
-    if state['G'] in (2, 3):
-        state['arcs'] += 1
-        return line
+    if state['G'] == 1 and all(state[axis] is not None for axis in ('X', 'Y', 'Z')):
+        new_z = state['Z'] + offset_fn(state['X'], state['Y'])
+        new_z_str = "{0:.{1}f}".format(new_z, decimals)
+        state['applied'] = float(new_z_str) - state['Z']
+        return _insert_z_word(line, new_z_str, z_match)
 
-    if state['G'] != 1:
-        return line
-
-    if any(state[axis] is None for axis in ('X', 'Y', 'Z')):
-        return line
-
-    new_z = state['Z'] + offset_fn(state['X'], state['Y'])
-    new_z_str = "{0:.{1}f}".format(new_z, decimals)
-
-    return _insert_z_word(line, new_z_str, z_match)
+    if z_val is not None:
+        state['applied'] = 0.0
+    return line
 
 
 _GRBL_ERROR_RE = re.compile(r'^\s*((?:error|ALARM)\s*:\s*\d+)', re.IGNORECASE | re.MULTILINE)

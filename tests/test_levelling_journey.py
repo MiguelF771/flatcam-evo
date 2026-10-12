@@ -194,11 +194,13 @@ def _subdivide_path(points, max_len):
 
 
 def make_gcode(paths, cut_z=-0.1, travel_z=2.0, feed=300.0, segment_len=5.0,
-               decimals=4, spindle=10000, include_arc=True):
+               decimals=4, spindle=10000, include_arc=False):
     """Build FlatCAM/GRBL_11-style segmented G-code for a list of toolpaths.
     Guaranteed: no G01 cutting segment longer than segment_len (is_segmented
-    semantics); at least 1 trailing inline comment; 1 G02 arc line (at
-    travel height, so it never interferes with Z-levelling)."""
+    semantics); at least 1 trailing inline comment; with include_arc, 1 G02
+    arc line (at travel height). An arc is split into G1 lines by the
+    levelling, so verify_levelling() (same line count) can not check a job
+    with an arc: the arcs are checked in tests/test_levelling_arc_g91.py."""
 
     def f(v):
         return "{0:.{1}f}".format(v, decimals)
@@ -227,8 +229,7 @@ def make_gcode(paths, cut_z=-0.1, travel_z=2.0, feed=300.0, segment_len=5.0,
         last_x, last_y = x0, y0
 
     if include_arc:
-        # Semicircle at travel height (Z already lifted above 0): must
-        # survive untouched (arcs are never height-compensated).
+        # Semicircle at travel height (Z already lifted above 0).
         cx, cy = last_x + 1.0, last_y
         x2, y2 = last_x + 2.0, last_y
         lines.append("G02 X" + f(x2) + " Y" + f(y2) + " I1.0 J0.0 (return arc)")
