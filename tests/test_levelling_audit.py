@@ -834,5 +834,63 @@ class TestGrblZero(unittest.TestCase):
         tool.app.worker_task.emit.assert_not_called()
 
 
+class TestGrblHoming(unittest.TestCase):
+    def test_stop_reset_home_ends_recovery(self):
+        tool = make_audit_tool()
+        fake = FakeGrbl()
+        tool.grbl_ser_port = fake
+        tool.on_grbl_stop()
+        tool.on_grbl_reset()
+        self.assertEqual(tool._grbl_recovery, 'needs_home')
+        tool.on_grbl_homing()
+        run_worker(tool)
+        self.assertIn('$H', fake.commands())
+        self.assertIsNone(tool._grbl_recovery)
+
+    def test_home_without_reset_is_rejected(self):
+        tool = make_audit_tool()
+        tool.grbl_ser_port = FakeGrbl()
+        tool._grbl_recovery = 'needs_reset'
+        tool.on_grbl_homing()
+        tool.app.worker_task.emit.assert_not_called()
+
+    def test_failed_home_stays_blocked(self):
+        tool = make_audit_tool()
+        tool.grbl_ser_port = FakeGrbl(replies={'$H': ['ALARM:9']})
+        tool._grbl_recovery = 'needs_home'
+        tool.on_grbl_homing()
+        run_worker(tool)
+        self.assertEqual(tool._grbl_recovery, 'needs_reset')
+        self.assertIsNone(tool._grbl_reserve('probe', motion=True))
+
+    def test_home_uses_long_timeout_and_no_sleep(self):
+        tool = make_audit_tool()
+        tool.grbl_ser_port = FakeGrbl()
+        tool._grbl_transact = MagicMock(return_value=('ok', 'ok'))
+        with patch('appPlugins.ToolLevelling.time.sleep') as sleeper:
+            tool.on_grbl_homing()
+            run_worker(tool)
+        sleeper.assert_not_called()
+        self.assertEqual(tool._grbl_transact.call_args.args[1], '$H')
+        self.assertEqual(tool._grbl_transact.call_args.kwargs['timeout'], 120.0)
+
+    def test_homing_blocks_other_operations(self):
+        tool = make_audit_tool()
+        tool.grbl_ser_port = FakeGrbl()
+        tool.on_grbl_homing()
+        self.assertIsNone(tool._grbl_reserve('probe', motion=True))
+        self.assertIsNone(tool._grbl_reserve('parameter'))
+
+    def test_port_list_does_not_open_ports(self):
+        infos = [SimpleNamespace(device='COM3'), SimpleNamespace(device='COM7')]
+        with patch('appPlugins.ToolLevelling.serial.tools.list_ports.comports', return_value=infos), \
+                patch('appPlugins.ToolLevelling.serial.Serial') as serial_cls:
+            self.assertEqual(ToolLevelling.on_grbl_list_serial_ports(), ['COM3', 'COM7'])
+        serial_cls.assert_not_called()
+
+    def test_wake_method_is_gone(self):
+        self.assertFalse(hasattr(ToolLevelling, 'on_grbl_wake'))
+
+
 if __name__ == '__main__':
     unittest.main()

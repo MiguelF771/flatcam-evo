@@ -77,7 +77,7 @@ from appPlugins.levelling_interp import (
 import time
 import threading
 import serial
-import glob
+import serial.tools.list_ports
 import random
 from io import StringIO
 
@@ -1692,38 +1692,12 @@ class ToolLevelling(CNCjob, AppTool):
     @staticmethod
     def on_grbl_list_serial_ports():
         """
-        Lists serial port names.
-        From here: https://stackoverflow.com/questions/12090503/listing-available-com-ports-with-python
+        List the serial ports of the system. The ports are not opened, so this
+        is fast and does not reset a board through DTR.
 
-        :raises EnvironmentError:   On unsupported or unknown platforms
-        :returns:                   A list of the serial ports available on the system
+        :returns: a list of port names
         """
-
-        if sys.platform.startswith('win'):
-            ports = ['COM%s' % (i + 1) for i in range(256)]
-        elif sys.platform.startswith('linux') or sys.platform.startswith('cygwin'):
-            # this excludes your current terminal "/dev/tty"
-            ports = glob.glob('/dev/tty[A-Za-z]*')
-        elif sys.platform.startswith('darwin'):
-            ports = glob.glob('/dev/tty.*')
-        else:
-            raise EnvironmentError('Unsupported platform')
-
-        result = []
-        s = serial.Serial()
-
-        for port in ports:
-            s.port = port
-
-            try:
-                s.open()
-                s.close()
-                result.append(port)
-            except (OSError, serial.SerialException):
-                # result.append(port + " (in use)")
-                pass
-
-        return result
+        return [port_info.device for port_info in serial.tools.list_ports.comports()]
 
     def on_grbl_search_ports(self, muted=None):
         port_list = self.on_grbl_list_serial_ports()
@@ -1890,17 +1864,6 @@ class ToolLevelling(CNCjob, AppTool):
     def on_grbl_delete_baudrate_grbl(self):
         current_idx = self.ui.baudrates_list_combo.currentIndex()
         self.ui.baudrates_list_combo.removeItem(current_idx)
-
-    def on_grbl_wake(self):
-        # Wake up grbl
-        self.grbl_ser_port.write("\r\n\r\n".encode('utf-8'))
-        # Wait for GRBL controller to initialize
-        time.sleep(1)
-
-        grbl_out = deepcopy(self.grbl_ser_port.readlines())
-        self.grbl_ser_port.reset_input_buffer()
-
-        return grbl_out
 
     def _grbl_port_ready(self):
         """:return: True if a serial port is open."""
@@ -2282,10 +2245,22 @@ class ToolLevelling(CNCjob, AppTool):
         self._grbl_start_op('zero', task, motion=True)
 
     def on_grbl_homing(self):
-        cmd = '$H'
-        self.app.inform.emit("%s" % _("GRBL is doing a home cycle."))
-        self.on_grbl_wake()
-        self.send_grbl_command(command=cmd)
+        def task(op):
+            # a home cycle can take a long time; GRBL answers 'ok' at the end
+            text, status = self._grbl_transact(op, '$H', timeout=120.0)
+            if status == 'ok':
+                with self._grbl_op_lock:
+                    self._grbl_recovery = None
+                self.app.inform.emit('[success] %s' % _("Home cycle finished."))
+                return
+            if 'alarm' in (text or '').lower() or status in ('timeout', 'port_error'):
+                with self._grbl_op_lock:
+                    self._grbl_recovery = 'needs_reset'
+            self.app.inform.emit('[ERROR_NOTCL] %s: %s' % (_("Home cycle failed"), text or status))
+
+        # the home cycle is the only motion allowed in the 'needs_home' recovery state
+        if self._grbl_start_op('home', task, motion=True, allow_in_recovery=True):
+            self.app.inform.emit("%s" % _("GRBL is doing a home cycle."))
 
     def on_grbl_stop(self):
         """Stop the running operation at once: feed hold, and the machine needs recovery."""
