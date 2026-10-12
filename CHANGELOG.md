@@ -8,6 +8,22 @@ CHANGELOG for FlatCAM Evo beta
 
 =================================================
 
+12.10.2026
+
+Levelling Tool:
+
+- GRBL commands run as serial operations with 1 owner; Stop cancels the running operation before its next write
+- after Stop, a timeout, an alarm or a failed probe, GRBL accepts no motion until a reset and a successful home cycle
+- probing starts only when GRBL is Idle and the units, G90 and G94 are confirmed; each probe is checked before the next move; Z lifts only when it is safe
+- probing uses G20 in inch projects; GRBL positions are changed to the app units ($13)
+- probe and import results are published as a whole in the GUI thread, only for the same points, target object and units
+- real connect check (removed a development hack); Connect toggles; the port closes on exit; no GUI freeze on connect, port list or homing
+- fixed jog, Zero (G10 L20 on the active WCS), the phantom manual probe point, old probing G-code, and handler and signal leaks
+
+levelling_interp:
+
+- every G1 move is compensated; G90/G91, canned cycles, modal settings with axis words and trailing-dot numbers are handled
+
 19.09.2026
 
 appMain.py:
