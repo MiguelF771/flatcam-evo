@@ -1717,6 +1717,18 @@ class ToolLevelling(CNCjob, AppTool):
                 (_("Relative (G91) moves were not height-compensated"), state['relative'])
             )
 
+        if state['unparsed'] > 0:
+            self.app.inform.emit(
+                '[WARNING_NOTCL] %s: %d' %
+                (_("Lines with expressions or unknown words were not height-compensated"), state['unparsed'])
+            )
+
+        if state['unknown'] > 0:
+            self.app.inform.emit(
+                '[WARNING_NOTCL] %s: %d' %
+                (_("Moves at an unknown position or mode were not height-compensated"), state['unknown'])
+            )
+
         if state['arcs_split'] > 0:
             self.app.inform.emit("%s: %d" % (_("Arc moves split into line moves"), state['arcs_split']))
 

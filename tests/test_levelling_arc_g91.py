@@ -813,6 +813,175 @@ class TestToolPassesArcSegment(unittest.TestCase):
         self.assertTrue(any('Arc moves were not height-compensated: 1' in m for m in emitted(tool)))
         self.assertFalse(any('split' in m for m in emitted(tool)))
 
+    def test_unparsed_lines_warn(self):
+        from tests.test_levelling_audit import emitted
+        tool, target = self.tool_and_target('G90 G1 X10 Y0 Z-1\nG1 X[5] Y0\n')
+        tool.autolevell_gcode(target, 'v')
+        self.assertTrue(any('expressions or unknown words' in m and m.endswith(': 1')
+                            for m in emitted(tool)))
+
+
+class TestShortArcIsNotAFullCircle(unittest.TestCase):
+    # review of 6a302b32: endpoints 1 output unit apart are a short arc, not 360 degrees
+    def test_tiny_ccw_arc_stays_short(self):
+        state, _ = prime(10, 0, -1)
+        out = level_gcode_line('G3 X10 Y0.0001 I-10 J0', state, flat, DEC)
+        for x, y in points_of(out):
+            self.assertGreater(x, 9.99)
+            self.assertLess(abs(y), 0.01)
+        self.assertEqual(points_of(out)[-1], (10.0, 0.0001))
+
+    def test_tiny_cw_arc_stays_short(self):
+        state, _ = prime(10, 0, -1)
+        out = level_gcode_line('G2 X10 Y-0.0001 I-10 J0', state, flat, DEC)
+        self.assertEqual(len(out.split('\n')), 1)
+
+    def test_nearly_full_arc_stays_nearly_full(self):
+        # the end is just behind the start in the arc direction: about 360 degrees
+        state, _ = prime(10, 0, -1)
+        out = level_gcode_line('G3 X10 Y-0.0001 I-10 J0', state, flat, DEC)
+        self.assertLess(min(x for x, _y in points_of(out)), -9.9)
+
+    def test_equal_ends_are_still_a_full_circle(self):
+        state, _ = prime(10, 0, -1)
+        out = level_gcode_line('G3 X10 Y0 I-10 J0', state, flat, DEC)
+        self.assertLess(min(x for x, _y in points_of(out)), -9.9)
+        self.assertEqual(state['arcs_split'], 1)
+
+    def test_equal_ends_after_relative_moves_are_a_full_circle(self):
+        state, _ = prime(10, 0, -1)
+        run(state, flat, 'G91 G1 X0.1', 'G1 X0.2', 'G1 X-0.3')
+        out = level_gcode_line('G3 I-10 J0', state, flat, DEC)
+        self.assertGreater(len(out.split('\n')), 30)
+
+
+class TestBlockDelete(unittest.TestCase):
+    # review of 6a302b32: an optional "/" line may be skipped by the controller
+    def test_arc_after_optional_arc_is_not_split(self):
+        state, _ = prime(10, 0, -1)
+        level_gcode_line('G90.1', state, flat, DEC)
+        out = run(state, flat, '/G3 X0 Y10 I0 J0', 'G3 X-10 Y0 I0 J0')
+        self.assertTrue(out[0].startswith('/'))
+        self.assertEqual(out[1], 'G3 X-10 Y0 I0 J0')
+        self.assertEqual(state['arcs'], 1)
+
+    def test_relative_move_after_optional_arc_is_not_compensated(self):
+        def saddle(x, y):
+            return 0.01 * x * y
+        state, _ = prime(10, 0, -1, saddle)
+        out = run(state, saddle, '/G3 X0 Y10 I-10 J0', 'G91 G1 X1 Y0')
+        self.assertEqual(out[1], 'G91 G1 X1 Y0')
+        self.assertEqual(state['relative'], 1)
+
+    def test_optional_mode_change_makes_the_mode_unknown(self):
+        state, _ = prime(10, 0, -1, plane)
+        out = run(state, plane, '/G91', 'G1 X1 Y1', 'G90 G1 X2 Y2 Z-1', 'G1 X3 Y3')
+        self.assertEqual(out[1], 'G1 X1 Y1')
+        self.assertIn('Z%.4f' % (-1 + plane(2, 2)), out[2])
+        self.assertIn('Z%.4f' % (-1 + plane(3, 3)), out[3])
+
+    def test_optional_plane_and_arc_mode_block_the_split(self):
+        for optional in ('/G18', '/G90.1', '/G93'):
+            state, _ = prime(10, 0, -1)
+            out = run(state, flat, optional, 'G1 X10 Y0 Z-1', 'G3 X0 Y10 I-10 J0')
+            self.assertTrue(out[2].startswith('G3'), optional)
+            self.assertEqual(state['arcs'], 1, optional)
+
+    def test_optional_line_without_effect_changes_nothing(self):
+        state, _ = prime(10, 0, -1)
+        out = run(state, flat, '/M8', 'G3 X0 Y10 I-10 J0')
+        self.assertEqual(state['arcs_split'], 1)
+        self.assertNotIn('G3', out[1])
+
+    def test_absolute_words_restore_the_position(self):
+        state, _ = prime(10, 0, -1, plane)
+        out = run(state, plane, '/G1 X5 Y5', 'G1 X1 Y1 Z-1', 'G3 X-1 Y1 I-1 J0')
+        self.assertIn('Z%.4f' % (-1 + plane(1, 1)), out[1])
+        self.assertEqual(state['arcs_split'], 1)
+
+
+class TestUnknownMovesAreCounted(unittest.TestCase):
+    # a cutting line that can not be levelled because of an unknown position or mode must be counted
+    def counted(self, *lines):
+        state = new_levelling_state(arc_segment=0.5)
+        out = run(state, plane, 'G90 G0 X0 Y0 Z5', 'G1 X1 Y1 Z-1', *lines)
+        return state, out
+
+    def test_axis_unknown_after_optional_move(self):
+        state, out = self.counted('/G1 X2 Y2 Z-0.5', 'Z-0.4483')
+        self.assertEqual(out[-1], 'Z-0.4483')
+        self.assertEqual(state['unknown'], 1)
+
+    def test_bare_line_after_optional_arc_mode(self):
+        state, out = self.counted('/G2', 'X-2.67 Y5.29')
+        self.assertEqual(out[-1], 'X-2.67 Y5.29')
+        self.assertEqual(state['unknown'], 1)
+
+    def test_distance_mode_unknown(self):
+        state, out = self.counted('/G91', 'G1 Z-0.5')
+        self.assertEqual(out[-1], 'G1 Z-0.5')
+        self.assertEqual(state['unknown'], 1)
+
+    def test_g1_after_g53_is_counted(self):
+        state, _ = self.counted('G53 G0 Z-5', 'G1 X3 Y3')
+        self.assertEqual(state['unknown'], 1)
+
+    def test_rapid_is_not_counted(self):
+        state, _ = self.counted('/G91', 'G0 Z5')
+        self.assertEqual(state['unknown'], 0)
+
+    def test_drill_cycle_positions_are_not_counted(self):
+        state, _ = self.counted('G81 X2 Y2 Z-1 R1', 'X3 Y3', 'X4 Y4', 'G80')
+        self.assertEqual(state['unknown'], 0)
+
+    def test_known_motion_word_clears_the_unknown_mode(self):
+        state, out = self.counted('/G2', 'G1 X2 Y2 Z-1', 'X3 Y3')
+        self.assertIn('Z%.4f' % (-1 + plane(3, 3)), out[-1])
+        self.assertEqual(state['unknown'], 0)
+
+    def test_tool_warns(self):
+        from tests.test_levelling_audit import emitted
+        tool, target = TestToolPassesArcSegment.tool_and_target(
+            None, 'G90 G0 X0 Y0 Z5\nG1 X1 Y1 Z-1\n/G1 X2 Y2 Z-0.5\nZ-0.4\n')
+        tool.autolevell_gcode(target, 'v')
+        self.assertTrue(any('unknown position or mode' in m and m.endswith(': 1')
+                            for m in emitted(tool)))
+
+
+class TestUnparsedWords(unittest.TestCase):
+    # review of 6a302b32: expression or parameter words must not be dropped
+    def test_expression_feed_keeps_the_arc(self):
+        state, _ = prime(10, 0, -1)
+        out = level_gcode_line('G3 X0 Y10 I-10 J0 F[100]', state, flat, DEC)
+        self.assertEqual(out, 'G3 X0 Y10 I-10 J0 F[100]')
+        self.assertEqual(state['arcs_split'], 0)
+        self.assertEqual(state['unparsed'], 1)
+
+    def test_expression_axis_keeps_the_arc(self):
+        state, _ = prime(10, 0, -1)
+        out = level_gcode_line('G3 X[0] Y[10] I-10 J0', state, flat, DEC)
+        self.assertEqual(out, 'G3 X[0] Y[10] I-10 J0')
+        self.assertEqual(state['arcs_split'], 0)
+
+    def test_parameter_axis_makes_the_position_unknown(self):
+        state, _ = prime(10, 0, -1, plane)
+        out = run(state, plane, 'G1 X#1 Y5', 'G1 X2 Y2', 'G1 X3 Y3 Z-1')
+        self.assertEqual(out[0], 'G1 X#1 Y5')
+        self.assertEqual(out[1], 'G1 X2 Y2')
+        self.assertIn('Z%.4f' % (-1 + plane(3, 3)), out[2])
+
+    def test_lower_case_line_makes_the_position_unknown(self):
+        state, _ = prime(10, 0, -1, plane)
+        out = run(state, plane, 'g01 x5 y5', 'G1 X2 Y2')
+        self.assertEqual(out, ['g01 x5 y5', 'G1 X2 Y2'])
+
+    def test_percent_and_comments_are_understood(self):
+        state, _ = prime(10, 0, -1, plane)
+        out = run(state, plane, '%', 'G1 X2 Y2 (cut) ; note', 'N10 G1 X3 Y3')
+        self.assertEqual(state['unparsed'], 0)
+        self.assertIn('Z%.4f' % (-1 + plane(2, 2)), out[1])
+        self.assertIn('Z%.4f' % (-1 + plane(3, 3)), out[2])
+
 
 if __name__ == '__main__':
     unittest.main()

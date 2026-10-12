@@ -399,6 +399,11 @@ _ARC_SPLIT_LETTERS = frozenset('GXYZIJKRFP')
 # Largest angle of 1 arc segment, and the largest number of segments of 1 arc.
 _ARC_MAX_ANGLE = math.pi / 18.0
 _ARC_MAX_SEGMENTS = 10000
+# A sweep below this angle (radians) is a full circle (GRBL ARC_ANGULAR_TRAVEL_EPSILON).
+_ARC_FULL_CIRCLE_EPS = 5e-7
+# Modal keys that an optional (block delete) line can change; after such a line
+# each changed key is unknown (None), because the controller may skip the line.
+_BLOCK_DELETE_MODAL_KEYS = ('abs', 'plane', 'arc_abs', 'inverse_feed', 'G')
 
 
 def new_levelling_state(arc_segment=1.0):
@@ -409,9 +414,12 @@ def new_levelling_state(arc_segment=1.0):
         (G-code units), must be > 0.
     :return: dict with modal X/Y/Z position, modal motion G code, and the
         counters `arcs` (arc moves that were not compensated),
-        `relative` (G91 G1 moves that were not compensated) and
-        `arcs_split` (arcs that were split into G1 segments), so the
-        caller can warn/report on them.
+        `relative` (G91 G1 moves that were not compensated),
+        `arcs_split` (arcs that were split into G1 segments),
+        `unparsed` (lines with words that are not understood) and
+        `unknown` (cutting moves that were not compensated because the
+        position, the distance mode or the motion mode was unknown), so
+        the caller can warn/report on them.
     :raises ValueError: if `arc_segment` is not > 0.
     """
     if not arc_segment > 0:
@@ -420,12 +428,17 @@ def new_levelling_state(arc_segment=1.0):
     # plane: 17/18/19 (G17/G18/G19)
     # arc_abs: True for G90.1 (absolute I/J), False for G91.1 (incremental I/J)
     # inverse_feed: True for G93
+    # each of abs/plane/arc_abs/inverse_feed/G is None when it is unknown (after
+    #   an optional block delete line that changes it)
     # applied: the Z offset now in effect, (machine Z that the emitted code
     #   reaches) minus (programmed Z, state['Z'])
     # known: the axes whose work position was set by an absolute G0..G3 word
+    # g_unknown: True when G is None because the motion mode is unknown (after an
+    #   optional or a not understood line), not because of a probe/canned cycle code
     return {'X': 0.0, 'Y': 0.0, 'Z': 0.0, 'G': 0, 'arcs': 0, 'abs': True, 'relative': 0,
             'plane': 17, 'arc_abs': False, 'inverse_feed': False, 'applied': 0.0,
-            'known': set(), 'arc_segment': float(arc_segment), 'arcs_split': 0}
+            'known': set(), 'arc_segment': float(arc_segment), 'arcs_split': 0, 'unparsed': 0,
+            'unknown': 0, 'g_unknown': False}
 
 
 def _mask_comments(line):
@@ -605,8 +618,10 @@ def _arc_sweep(start, end, centre, clockwise, decimals):
     :param decimals: number of decimals of the output.
     :return: (radius, sweep) with sweep < 0 for G2, or None if the start
         radius is about 0 or differs from the end radius by more than
-        max(0.1 %, 5 * 10**-decimals). Equal start and end points make a
-        full circle.
+        max(0.1 %, 5 * 10**-decimals). An arc whose sweep is below
+        _ARC_FULL_CIRCLE_EPS (equal start and end angles) is a full circle,
+        as in GRBL; the output resolution never decides this, because ends
+        1 output unit apart are a short arc.
     """
     r_start = math.hypot(start[0] - centre[0], start[1] - centre[1])
     r_end = math.hypot(end[0] - centre[0], end[1] - centre[1])
@@ -617,12 +632,12 @@ def _arc_sweep(start, end, centre, clockwise, decimals):
     a_start = math.atan2(start[1] - centre[1], start[0] - centre[0])
     a_end = math.atan2(end[1] - centre[1], end[0] - centre[0])
     full = 2.0 * math.pi
-    if math.hypot(end[0] - start[0], end[1] - start[1]) <= 10 ** -decimals:
-        sweep = full
-    elif clockwise:
+    if clockwise:
         sweep = (a_start - a_end) % full
     else:
         sweep = (a_end - a_start) % full
+    if sweep < _ARC_FULL_CIRCLE_EPS:
+        sweep = full
     return r_start, -sweep if clockwise else sweep
 
 
@@ -698,7 +713,9 @@ def _arc_splittable(info, state):
     :param state: modal state dict.
     :return: True if the arc may be split.
     """
-    if state['plane'] != 17 or state['inverse_feed']:
+    # an unknown (None) arc distance mode or feed mode blocks the split too
+    if (state['plane'] != 17 or state['inverse_feed'] is not False or state['arc_abs'] is None
+            or state['abs'] is None):
         return False
     if not info['letters'] <= _ARC_SPLIT_LETTERS:
         return False
@@ -727,7 +744,8 @@ def _level_arc(line, info, state, offset_fn, decimals, start, was_known, absolut
     :return: the new text (lines joined with a newline) or the original line.
     """
     points = None
-    if was_known and _arc_splittable(info, state):
+    # in G91 the Z deltas need the Z offset in effect
+    if was_known and _arc_splittable(info, state) and (absolute or state['applied'] is not None):
         end = (state['X'], state['Y'], state['Z'])
         clockwise = state['G'] == 2
         centre = _arc_centre(start, end, info['words'], clockwise, state['arc_abs'], decimals)
@@ -745,7 +763,8 @@ def _level_arc(line, info, state, offset_fn, decimals, start, was_known, absolut
             return '%sG%d %s' % (line[:lead], state['G'], line[lead:])
         return line
 
-    lines, z_actual = _arc_lines(points, start, start[2] + state['applied'], absolute,
+    # G90 output does not use the start Z of the machine, so an unknown offset counts as 0
+    lines, z_actual = _arc_lines(points, start, start[2] + (state['applied'] or 0.0), absolute,
                                  offset_fn, decimals)
     state['applied'] = z_actual - state['Z']
     state['arcs_split'] += 1
@@ -776,10 +795,11 @@ def _level_relative(line, z_match, state, offset_fn, decimals, prev_z, was_known
     :param decimals: number of decimals of the output.
     :param prev_z: programmed Z before the line.
     :param was_known: True if X, Y and Z were all known before the line.
-    :return: the new line, or the original line if the position was unknown
-        (counted in `state['relative']`) or nothing has to change.
+    :return: the new line, or the original line if the position or the Z
+        offset in effect was unknown (counted in `state['relative']`) or
+        nothing has to change.
     """
-    if not was_known:
+    if not was_known or state['applied'] is None:
         state['relative'] += 1
         return line
     prev_actual = prev_z + state['applied']
@@ -793,7 +813,67 @@ def _level_relative(line, z_match, state, offset_fn, decimals, prev_z, was_known
     return _insert_z_word(line, _fmt(z_step, decimals), z_match)
 
 
+def _unparsed_text(masked):
+    """
+    The text of a comment-masked line that is not a recognized word: an
+    expression (`X[1+2]`), a parameter (`X#1`, `#1=5`), a lower-case word,
+    an O-word keyword, ... A leading block delete "/" is not part of it.
+
+    :param masked: line with its comments blanked by _mask_comments().
+    :return: the text left after removing all words, '' if every part of
+        the line is understood.
+    """
+    rest = _WORD_RE.sub('', masked).strip()
+    if rest.startswith('/'):
+        rest = rest[1:].strip()
+    return rest
+
+
 def level_gcode_line(line, state, offset_fn, decimals=4):
+    """
+    Apply height-map compensation to 1 line of G-code, modally tracking
+    X/Y/Z/G state across calls. The rules for 1 line are in _level_line().
+
+    An optional line (block delete "/") is levelled as if it runs, so its
+    output is right when the controller runs it. But the controller can
+    skip it, so after it every modal setting that it changed (distance
+    mode, plane, arc distance mode, feed mode, motion mode) is unknown
+    (None), each axis whose programmed value it changes is unknown, and
+    if it changes the Z or its text the Z offset in effect
+    (`state['applied']`) is unknown (None). Start-dependent moves (arcs,
+    G91 moves) are then not compensated until absolute words set the
+    position again; an absolute compensated G1 or an absolute Z word sets
+    the offset again.
+
+    :param line: 1 line of G-code text, no trailing newline.
+    :param state: modal state dict, as created by new_levelling_state();
+        mutated in place.
+    :param offset_fn: callable (x, y) -> height offset (float) to add
+        to Z.
+    :param decimals: number of decimals used to format the new Z value.
+    :return: the (possibly modified) line, without a trailing newline; a
+        split arc is several lines joined with a newline.
+    """
+    if '/' not in _LINE_LEAD_RE.match(line).group():
+        return _level_line(line, state, offset_fn, decimals)
+
+    modes_before = {key: state[key] for key in _BLOCK_DELETE_MODAL_KEYS}
+    axes_before = {axis: state[axis] for axis in ('X', 'Y', 'Z')}
+    out = _level_line(line, state, offset_fn, decimals)
+    for key, value in modes_before.items():
+        if state[key] != value:
+            state[key] = None
+            if key == 'G':
+                state['g_unknown'] = True
+    # an axis is uncertain only if the line changes its programmed value
+    _lose_axes(state, [axis for axis, value in axes_before.items() if state[axis] != value])
+    if out != line or state['Z'] != axes_before['Z']:
+        # the machine Z of a run line and of a skipped line can differ
+        state['applied'] = None
+    return out
+
+
+def _level_line(line, state, offset_fn, decimals):
     """
     Apply height-map compensation to 1 line of G-code, modally tracking
     X/Y/Z/G state across calls.
@@ -823,10 +903,15 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     non-motion modal codes (G4, G17, G20, G21, G90, G94, ...); and
     comment-only/blank lines.
 
-    Words are matched with upper-case letters only (`[A-Z]`), matching
-    what FlatCAM's preprocessors emit; a line using lower-case letters
-    (e.g. `g01 x10 y5 z-0.1`) has no recognized words and passes
-    through unchanged.
+    Words are matched with upper-case letters and plain numbers only
+    (`[A-Z]` and `_WORD_RE`), matching what FlatCAM's preprocessors emit.
+    A line with any other text (an expression `X[1]`, a parameter `X#1`,
+    lower-case words such as `g01 x10`, ...) is not understood: it passes
+    through unchanged, it is counted in `state['unparsed']`, all 3 axes
+    and the motion mode become unknown, and the modal settings of its
+    recognized G words still apply. A `%` line is understood. If the
+    distance mode is unknown (None), the axes that a line names become
+    unknown and the line is not changed.
 
     :param line: 1 line of G-code text, no trailing newline.
     :param state: modal state dict, as created by new_levelling_state();
@@ -838,7 +923,7 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
         split arc is several lines joined with a newline.
     """
     stripped = line.strip()
-    if not stripped or stripped.startswith('(') or stripped.startswith(';'):
+    if not stripped or stripped == '%' or stripped.startswith('(') or stripped.startswith(';'):
         return line
 
     masked = _mask_comments(line)
@@ -868,6 +953,15 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     has_xyz = x_val is not None or y_val is not None or z_val is not None
 
     _note_modal_settings(state, g_words)
+
+    if _unparsed_text(masked):
+        # Part of the line is not understood (it can hold an axis word), so
+        # nothing after it can trust the tracked position or motion mode.
+        state['unparsed'] += 1
+        state['G'] = None
+        state['g_unknown'] = True
+        _lose_axes(state, ['X', 'Y', 'Z'])
+        return line
 
     non_modal_gs = [g for g in g_words if g in _NON_MODAL_G_CODES]
     if non_modal_gs:
@@ -910,6 +1004,8 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     ]
 
     is_non_motion_cmd = False
+    if motion_gs or no_level_gs:
+        state['g_unknown'] = False
     if motion_gs:
         state['G'] = int(motion_gs[-1])
     elif no_level_gs:
@@ -925,6 +1021,10 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     is_motion = state['G'] in _MOTION_G_CODES and not is_non_motion_cmd
     for axis, value in [('X', x_val), ('Y', y_val), ('Z', z_val)]:
         if value is not None:
+            if absolute is None:
+                # unknown distance mode: the word can be a position or a delta
+                _lose_axes(state, [axis])
+                continue
             if absolute:
                 state[axis] = value
             elif state[axis] is not None:
@@ -946,6 +1046,19 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
             state['applied'] = 0.0
         return line
 
+    if state['G'] is None:
+        if state['g_unknown']:
+            # a bare move under an unknown motion mode may be a cut
+            state['unknown'] += 1
+        if absolute and z_val is not None:
+            state['applied'] = 0.0
+        return line
+
+    if absolute is None:
+        if state['G'] == 1:
+            state['unknown'] += 1
+        return line
+
     if not absolute:
         if state['G'] == 1:
             return _level_relative(line, z_match, state, offset_fn, decimals, start[2], was_known)
@@ -957,6 +1070,9 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
         state['applied'] = float(new_z_str) - state['Z']
         return _insert_z_word(line, new_z_str, z_match)
 
+    if state['G'] == 1:
+        # a cut at an unknown work position
+        state['unknown'] += 1
     if z_val is not None:
         state['applied'] = 0.0
     return line

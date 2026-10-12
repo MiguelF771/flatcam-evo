@@ -44,6 +44,10 @@ levelling_interp:
 - G91 G1 moves are compensated when X/Y/Z are known; the Z delta comes from the offset in effect, so rounding errors do not add up
 - G28, G30, G92, G92.1/.2/.3, G10 L2 and G10 L20 make the affected axes unknown
 - added arc and G91 tests and a G-code path simulator that compares the levelled path with the original path plus the height map
+- an arc is a full circle only when its sweep is below 5e-7 rad (as in GRBL); ends 1 output unit apart are a short arc, not 360 degrees
+- an optional block delete "/" line can be skipped by the controller: after it, the modal settings and axes that it changes and the Z offset in effect are unknown, so arcs and G91 moves are not compensated until absolute words set them again
+- a line with expressions, parameters or other unknown text (X[1], F[100], X#1) is kept unchanged, makes the position unknown and is reported in a warning
+- a cutting move that is not compensated because its position, distance mode or motion mode is unknown is reported in a warning
 
 19.09.2026
 
