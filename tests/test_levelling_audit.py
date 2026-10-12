@@ -655,5 +655,74 @@ class TestGrblConnect(unittest.TestCase):
         self.assertIn('!', fake.commands())
 
 
+class TestGrblRealtime(unittest.TestCase):
+    def _tool(self, port=None):
+        tool = make_audit_tool()
+        tool.grbl_ser_port = port if port is not None else FakeGrbl()
+        return tool
+
+    def test_stop_during_operation_cancels_and_blocks_next_write(self):
+        tool = self._tool()
+        fake = tool.grbl_ser_port
+        op = tool._grbl_reserve('probe', motion=True)
+        tool.on_grbl_stop()
+        self.assertTrue(op.cancel.is_set())
+        self.assertEqual(tool._grbl_recovery, 'needs_reset')
+        self.assertEqual(tool._grbl_transact(op, 'G0 X1', timeout=1.0)[1], 'cancelled')
+        self.assertEqual(fake.commands(), ['!'])
+
+    def test_stop_between_steps_prevents_the_second_command(self):
+        tool = self._tool()
+        fake = tool.grbl_ser_port
+        op = tool._grbl_reserve('probe', motion=True)
+        self.assertEqual(tool._grbl_transact(op, 'G0 Z2', timeout=1.0)[1], 'ok')
+        tool.on_grbl_stop()
+        self.assertEqual(tool._grbl_transact(op, 'G0 X1', timeout=1.0)[1], 'cancelled')
+        self.assertEqual(fake.commands(), ['G0 Z2', '!'])
+
+    def test_pause_blocked_during_operation(self):
+        tool = self._tool()
+        tool._grbl_reserve('probe', motion=True)
+        tool.on_grbl_pause_resume(True)
+        self.assertEqual(tool.grbl_ser_port.commands(), [])
+        self.assertTrue(any('[WARNING_NOTCL]' in t for t in emitted(tool)))
+
+    def test_resume_blocked_during_recovery(self):
+        tool = self._tool()
+        tool._grbl_recovery = 'needs_reset'
+        tool.on_grbl_pause_resume(False)
+        self.assertEqual(tool.grbl_ser_port.commands(), [])
+
+    def test_pause_and_resume_when_idle(self):
+        tool = self._tool()
+        tool.on_grbl_pause_resume(True)
+        tool.on_grbl_pause_resume(False)
+        self.assertEqual(tool.grbl_ser_port.commands(), ['!', '~'])
+
+    def test_reset_during_operation_needs_home(self):
+        tool = self._tool()
+        op = tool._grbl_reserve('probe', motion=True)
+        tool.on_grbl_reset()
+        self.assertTrue(op.cancel.is_set())
+        self.assertEqual(tool.grbl_ser_port.commands(), ['\x18'])
+        self.assertEqual(tool._grbl_recovery, 'needs_home')
+
+    def test_reset_after_stop_needs_home(self):
+        tool = self._tool()
+        tool.on_grbl_stop()
+        tool.on_grbl_reset()
+        self.assertEqual(tool._grbl_recovery, 'needs_home')
+
+    def test_reset_when_idle_keeps_no_recovery(self):
+        tool = self._tool()
+        tool.on_grbl_reset()
+        self.assertIsNone(tool._grbl_recovery)
+
+    def test_no_port_reports_error(self):
+        tool = make_audit_tool()
+        tool.on_grbl_stop()
+        self.assertTrue(any('[ERROR_NOTCL]' in t for t in emitted(tool)))
+
+
 if __name__ == '__main__':
     unittest.main()

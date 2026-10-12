@@ -338,6 +338,7 @@ class ToolLevelling(CNCjob, AppTool):
         self.ui.import_heights_button.clicked.connect(self.on_import_height_map)
         self.ui.pause_resume_button.clicked.connect(self.on_grbl_pause_resume)
         self.ui.grbl_get_heightmap_button.clicked.connect(self.on_grbl_autolevel)
+        self.ui.stop_probing_button.clicked.connect(self.on_grbl_stop)
         self.ui.grbl_save_height_map_button.clicked.connect(self.on_grbl_heightmap_save)
 
         # When object selection on canvas change
@@ -2266,21 +2267,54 @@ class ToolLevelling(CNCjob, AppTool):
         self.on_grbl_wake()
         self.send_grbl_command(command=cmd)
 
+    def on_grbl_stop(self):
+        """Stop the running operation at once: feed hold, and the machine needs recovery."""
+        with self._grbl_op_lock:
+            op = self._grbl_op
+            if op is not None:
+                op.cancel.set()
+            written = self._grbl_write_realtime_locked(b'!')
+            if written:
+                self._grbl_recovery = 'needs_reset'
+
+        if not written:
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _("Not connected to a GRBL controller."))
+            return
+        self.app.inform.emit('[WARNING_NOTCL] %s %s' % (
+            _("Stopped. GRBL is in feed hold."), self._grbl_recovery_text()))
+
     def on_grbl_reset(self):
-        cmd = '\x18'
+        with self._grbl_op_lock:
+            op = self._grbl_op
+            if op is not None:
+                op.cancel.set()
+            written = self._grbl_write_realtime_locked(b'\x18')
+            # a reset during motion, or during recovery, loses the machine position
+            if written and ((op is not None and op.motion) or self._grbl_recovery is not None):
+                self._grbl_recovery = 'needs_home'
+
+        if not written:
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _("Not connected to a GRBL controller."))
+            return
         self.app.inform.emit("%s" % _("GRBL software reset was sent."))
-        self.on_grbl_wake()
-        self.send_grbl_command(command=cmd)
+        if self._grbl_recovery is not None:
+            self.app.inform.emit('[WARNING_NOTCL] %s' % self._grbl_recovery_text())
 
     def on_grbl_pause_resume(self, checked):
-        if checked is False:
-            cmd = '~'
-            self.send_grbl_command(command=cmd)
-            self.app.inform.emit("%s" % _("GRBL resumed."))
-        else:
-            cmd = '!'
-            self.send_grbl_command(command=cmd)
-            self.app.inform.emit("%s" % _("GRBL paused."))
+        if self._grbl_op is not None:
+            self.app.inform.emit('[WARNING_NOTCL] %s' % _("An operation runs. Use Stop."))
+            return
+        if checked is False and self._grbl_recovery is not None:
+            # a resume after Stop would continue the held motion
+            self.app.inform.emit('[ERROR_NOTCL] %s' % self._grbl_recovery_text())
+            return
+
+        with self._grbl_op_lock:
+            written = self._grbl_write_realtime_locked(b'~' if checked is False else b'!')
+        if not written:
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _("Not connected to a GRBL controller."))
+            return
+        self.app.inform.emit("%s" % (_("GRBL resumed.") if checked is False else _("GRBL paused.")))
 
     def probing_gcode(self, storage):
         """
@@ -3436,6 +3470,16 @@ class LevelUI:
               "over the original GCode therefore doing autolevelling.")
         )
         hm_lay.addWidget(self.grbl_get_heightmap_button, stretch=1)
+
+        # STOP
+        self.stop_probing_button = FCButton(_("Stop"))
+        self.stop_probing_button.setToolTip(
+            _("Stop the running GRBL operation now.\n"
+              "GRBL goes into feed hold.\n"
+              "Press Reset, then Home, before more motion.")
+        )
+        self.stop_probing_button.setStyleSheet("QPushButton {background-color: red; color: white;}")
+        hm_lay.addWidget(self.stop_probing_button)
 
         self.grbl_save_height_map_button = QtWidgets.QToolButton()
         self.grbl_save_height_map_button.setIcon(QtGui.QIcon(self.app.resource_location + '/save_as.png'))
