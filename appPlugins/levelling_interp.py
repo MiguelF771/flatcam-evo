@@ -377,7 +377,8 @@ _MOTION_G_CODES = (0.0, 1.0, 2.0, 3.0)
 # the motion modal group in a state that is not G0/G1/G2/G3, so a
 # following bare "X.. Y.." line must NOT be treated as a levelled G1
 # move until a real G0/G1/G2/G3 is seen again.
-_MOTION_NO_LEVEL_G_CODES = (31.0, 38.2, 38.3, 38.4, 38.5, 80.0)
+_MOTION_NO_LEVEL_G_CODES = (31.0, 38.2, 38.3, 38.4, 38.5, 73.0, 76.0, 80.0,
+                            81.0, 82.0, 83.0, 84.0, 85.0, 86.0, 87.0, 88.0, 89.0)
 # Non-modal (one-shot) codes: their X/Y/Z words are not moves to work
 # coordinates (machine-coordinate move, coordinate-system offset, ...),
 # so they must not update the modal X/Y/Z state, and the line itself is

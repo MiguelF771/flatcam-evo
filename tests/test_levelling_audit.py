@@ -269,5 +269,14 @@ class TestWordRegex(unittest.TestCase):
         self.assertAlmostEqual(state['Z'], -0.1)
 
 
+class TestCannedCycles(unittest.TestCase):
+    def test_canned_cycle_stops_g1_modal_levelling(self):
+        state = li.new_levelling_state()
+        offset = lambda x, y: 0.5
+        li.level_gcode_line('G1 Z-1', state, offset)
+        self.assertEqual(li.level_gcode_line('G81 X3 Y3 Z-2 R1', state, offset), 'G81 X3 Y3 Z-2 R1')
+        self.assertEqual(li.level_gcode_line('X4 Y4', state, offset), 'X4 Y4')
+
+
 if __name__ == '__main__':
     unittest.main()
