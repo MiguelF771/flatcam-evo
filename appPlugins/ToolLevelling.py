@@ -394,7 +394,10 @@ class ToolLevelling(CNCjob, AppTool):
         self._release_manual_mouse_events()
 
         self.units = self.app.app_units.upper()
-        self.al_heights_valid = self._height_map_is_complete()
+        # new probe points carry a placeholder height of 0.0, so a full storage
+        # alone does not make a valid map: keep the flag that a probe or an import set
+        self.al_heights_valid = bool(getattr(self, 'al_heights_valid', False)) and \
+            self._height_map_is_complete()
         app_defaults = getattr(self.app, "defaults", None) or AppDefaults.factory_defaults
 
         self.clear_ui(self.layout)

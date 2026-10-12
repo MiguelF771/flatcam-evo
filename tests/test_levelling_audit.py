@@ -1406,5 +1406,24 @@ class TestManualStart(unittest.TestCase):
         tool._release_manual_mouse_events.assert_called_once()
 
 
+class TestPlaceholderHeights(unittest.TestCase):
+    @staticmethod
+    def storage():
+        return {
+            1: {'point': Point(0.0, 0.0), 'geo': None, 'height': 0.0},
+            2: {'point': Point(1.0, 0.0), 'geo': None, 'height': 0.0},
+        }
+
+    def test_unprobed_points_stay_invalid(self):
+        tool = run_set_tool_ui(self.storage(), heights_valid=False)
+        self.assertFalse(tool.al_heights_valid)
+        tool.build_al_table.assert_not_called()
+
+    def test_probed_points_stay_valid(self):
+        tool = run_set_tool_ui(self.storage(), heights_valid=True)
+        self.assertTrue(tool.al_heights_valid)
+        tool.build_al_table.assert_called_once()
+
+
 if __name__ == '__main__':
     unittest.main()
