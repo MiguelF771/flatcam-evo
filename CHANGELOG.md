@@ -48,6 +48,10 @@ levelling_interp:
 - an optional block delete "/" line can be skipped by the controller: after it, the modal settings and axes that it changes and the Z offset in effect are unknown, so arcs and G91 moves are not compensated until absolute words set them again
 - a line with expressions, parameters or other unknown text (X[1], F[100], X#1) is kept unchanged, makes the position unknown and is reported in a warning
 - a cutting move that is not compensated because its position, distance mode or motion mode is unknown is reported in a warning
+- an optional "/" line that changes only the Z offset in effect, or makes an axis known with the same value, makes them unknown; it never clears an unknown motion mode
+- the height map is valid only in its frame (the job units and the first work coordinate system that the program selects before its first move); a G1 move in other units or in another G54..G59.3 system is not compensated and is reported in a warning
+- a change of units or of the work coordinate system makes the position unknown
+- the position is unknown at the start of the program (no 0.0 default): a cut is compensated only after X, Y and Z are set
 
 19.09.2026
 

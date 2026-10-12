@@ -389,7 +389,16 @@ _NON_MODAL_G_CODES = (10.0, 28.0, 30.0, 53.0, 92.0, 92.1, 92.2, 92.3)
 # mode, distance mode, feed mode). They do not make the line a non-motion
 # command: "G90 X1 Y1" under a modal G1 is still a G1 move.
 _MODAL_SETTING_G_CODES = (17.0, 18.0, 19.0, 20.0, 21.0, 40.0, 49.0, 54.0, 55.0, 56.0, 57.0,
-                          58.0, 59.0, 61.0, 64.0, 90.0, 90.1, 91.0, 91.1, 93.0, 94.0)
+                          58.0, 59.0, 59.1, 59.2, 59.3, 61.0, 64.0, 90.0, 90.1, 91.0, 91.1,
+                          93.0, 94.0)
+# The units words (G20 inch, G21 mm) and the work coordinate system words
+# (G54..G59.3). The height map is valid only in the frame of the probing
+# (the units and the coordinate system), see _note_frame_words().
+_UNITS_G_CODES = (20.0, 21.0)
+_WCS_G_CODES = (54.0, 55.0, 56.0, 57.0, 58.0, 59.0, 59.1, 59.2, 59.3)
+# Frame value that no word can ever equal: the frame of the probing is not known
+# by name and an optional line made the current frame unknown.
+_FRAME_UNKNOWN = 'unknown'
 _WORD_RE = re.compile(r'([A-Z])\s*([+\-]?(?:\d+\.?\d*|\.\d+))')
 # Start of a line that must stay in front of any G word: whitespace, a block
 # delete "/" and a line number "N<digits>" (RS274NGC wants N first).
@@ -403,27 +412,41 @@ _ARC_MAX_SEGMENTS = 10000
 _ARC_FULL_CIRCLE_EPS = 5e-7
 # Modal keys that an optional (block delete) line can change; after such a line
 # each changed key is unknown (None), because the controller may skip the line.
-_BLOCK_DELETE_MODAL_KEYS = ('abs', 'plane', 'arc_abs', 'inverse_feed', 'G')
+_BLOCK_DELETE_MODAL_KEYS = ('abs', 'plane', 'arc_abs', 'inverse_feed', 'G', 'units', 'wcs')
 
 
-def new_levelling_state(arc_segment=1.0):
+def new_levelling_state(arc_segment=1.0, units=None):
     """
     Create a fresh modal G-code state for use with level_gcode_line.
 
+    The position is not known at the start: X, Y and Z are None until
+    absolute words set them, so a cutting move is compensated only when
+    X, Y and Z are all set (before the line or on it).
+
+    The height map is valid only in the frame of the probing: the units and
+    the work coordinate system (WCS). `home_units`/`home_wcs` are the frame
+    of the map (None: not known by name), `units`/`wcs` the frame now in
+    effect. A cutting move in another frame is not compensated.
+
     :param arc_segment: largest chord length of 1 segment of a split arc
         (G-code units), must be > 0.
+    :param units: the units of the job and of the height map: 'MM', 'IN'
+        (any case) or None if they are not known. The program is taken to run
+        in these units until a G20/G21 word says otherwise.
     :return: dict with modal X/Y/Z position, modal motion G code, and the
         counters `arcs` (arc moves that were not compensated),
         `relative` (G91 G1 moves that were not compensated),
         `arcs_split` (arcs that were split into G1 segments),
-        `unparsed` (lines with words that are not understood) and
+        `unparsed` (lines with words that are not understood),
         `unknown` (cutting moves that were not compensated because the
-        position, the distance mode or the motion mode was unknown), so
-        the caller can warn/report on them.
+        position, the distance mode or the motion mode was unknown) and
+        `frame` (G1 moves that were not compensated because they are in
+        another WCS or in other units), so the caller can warn/report on them.
     :raises ValueError: if `arc_segment` is not > 0.
     """
     if not arc_segment > 0:
         raise ValueError("arc_segment must be > 0")
+    home_units = {'MM': 21, 'IN': 20}.get(str(units).upper()) if units is not None else None
     # abs: True for G90 (absolute), False for G91 (relative)
     # plane: 17/18/19 (G17/G18/G19)
     # arc_abs: True for G90.1 (absolute I/J), False for G91.1 (incremental I/J)
@@ -435,10 +458,15 @@ def new_levelling_state(arc_segment=1.0):
     # known: the axes whose work position was set by an absolute G0..G3 word
     # g_unknown: True when G is None because the motion mode is unknown (after an
     #   optional or a not understood line), not because of a probe/canned cycle code
-    return {'X': 0.0, 'Y': 0.0, 'Z': 0.0, 'G': 0, 'arcs': 0, 'abs': True, 'relative': 0,
+    # units: 21 (G21, mm) or 20 (G20, inch); wcs: the G number of the WCS word (54..59.3)
+    # home_units/home_wcs: the units and the WCS of the height map; None when not known
+    #   by name (then the first word before any move declares it, see _note_frame_words)
+    # units/wcs: now in effect; None when unknown (after an optional line that changes them)
+    return {'X': None, 'Y': None, 'Z': None, 'G': 0, 'arcs': 0, 'abs': True, 'relative': 0,
             'plane': 17, 'arc_abs': False, 'inverse_feed': False, 'applied': 0.0,
             'known': set(), 'arc_segment': float(arc_segment), 'arcs_split': 0, 'unparsed': 0,
-            'unknown': 0, 'g_unknown': False}
+            'unknown': 0, 'g_unknown': False, 'frame': 0,
+            'home_units': home_units, 'units': home_units, 'home_wcs': None, 'wcs': None}
 
 
 def _mask_comments(line):
@@ -563,6 +591,48 @@ def _all_known(state):
     :return: True if X, Y and Z were all set by an absolute word and are not None.
     """
     return all(axis in state['known'] and state[axis] is not None for axis in ('X', 'Y', 'Z'))
+
+
+def _note_frame_word(state, key, value):
+    """
+    Apply 1 units word or WCS word to the frame of `state`.
+
+    A first word before any move, when the frame of the map is not known by
+    name, declares the frame of the map. A word that changes the frame makes
+    all work positions unknown.
+
+    :param state: modal state dict; mutated in place.
+    :param key: 'units' or 'wcs'.
+    :param value: the new units (20/21) or WCS (G number) in effect.
+    """
+    home_key = 'home_' + key
+    if state[home_key] is None and state[key] is None and not state['known']:
+        state[home_key] = value
+    if value != state[key]:
+        _lose_axes(state, ['X', 'Y', 'Z'])
+    state[key] = value
+
+
+def _note_frame_words(state, g_words):
+    """
+    Update the units and the work coordinate system of `state` from the
+    G words of a line.
+
+    :param state: modal state dict; mutated in place.
+    :param g_words: the G numbers of the line, in order.
+    """
+    for g in g_words:
+        if g in _UNITS_G_CODES:
+            _note_frame_word(state, 'units', int(g))
+        elif g in _WCS_G_CODES:
+            _note_frame_word(state, 'wcs', g)
+
+
+def _in_frame(state):
+    """
+    :return: True if the units and the WCS in effect are those of the height map.
+    """
+    return state['units'] == state['home_units'] and state['wcs'] == state['home_wcs']
 
 
 def _arc_centre(start, end, words, clockwise, arc_abs, decimals):
@@ -706,13 +776,16 @@ def _arc_lines(points, start, z_actual, absolute, offset_fn, decimals):
 def _arc_splittable(info, state):
     """
     Check the conditions of the line and of the state that allow splitting
-    an arc: G17 plane, no inverse feed, only the words G X Y Z I J K R F P
-    (P only as P1) and G words that are 2/3 or modal settings.
+    an arc: the frame of the height map (units and WCS), G17 plane, no inverse
+    feed, only the words G X Y Z I J K R F P (P only as P1) and G words that
+    are 2/3 or modal settings.
 
     :param info: parsed words of the line, as made by level_gcode_line.
     :param state: modal state dict.
     :return: True if the arc may be split.
     """
+    if not _in_frame(state):
+        return False
     # an unknown (None) arc distance mode or feed mode blocks the split too
     if (state['plane'] != 17 or state['inverse_feed'] is not False or state['arc_abs'] is None
             or state['abs'] is None):
@@ -837,8 +910,10 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     An optional line (block delete "/") is levelled as if it runs, so its
     output is right when the controller runs it. But the controller can
     skip it, so after it every modal setting that it changed (distance
-    mode, plane, arc distance mode, feed mode, motion mode) is unknown
-    (None), each axis whose programmed value or known status it changes
+    mode, plane, arc distance mode, feed mode, motion mode, units, work
+    coordinate system) is unknown (None; with units or WCS unknown the
+    moves are out of the frame of the height map and are not compensated
+    until a units or WCS word sets them again), each axis whose programmed value or known status it changes
     is unknown, it never clears an unknown motion mode, and if it changes
     the Z, its text or the applied offset the Z offset in effect
     (`state['applied']`) is unknown (None). Start-dependent moves (arcs,
@@ -869,6 +944,9 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
             state[key] = None
             if key == 'G':
                 state['g_unknown'] = True
+            elif key in ('units', 'wcs') and state['home_' + key] is None:
+                # an unknown frame must not look like the frame of a map that is not known by name
+                state['home_' + key] = _FRAME_UNKNOWN
     # a skipped line can not clear an unknown motion mode
     state['g_unknown'] = state['g_unknown'] or g_unknown_before
     # an axis is uncertain if the line changes its programmed value, or makes it
@@ -887,7 +965,17 @@ def _level_line(line, state, offset_fn, decimals):
     X/Y/Z/G state across calls.
 
     Every linear move (modal G1), at any Z with known work X/Y/Z, gets
-    its Z height-compensated. In G91 a G1 move is compensated when X/Y/Z
+    its Z height-compensated, if it is in the frame of the height map: the
+    units and the work coordinate system (WCS) of the probing. The frame
+    follows the G20/G21 and G54..G59.3 words (see _note_frame_words()); each
+    word that changes it makes all 3 axes unknown. A G1 move with X/Y/Z
+    words in another frame (absolute or relative) is not changed and is
+    counted in `state['frame']`; an absolute one with a Z word sets the Z
+    offset in effect (`state['applied']`) to 0, the machine goes to the
+    programmed Z. An arc in another frame is not split (counted in
+    `state['arcs']`). The axes are tracked as usual. X/Y/Z are None at the
+    start, so a G1 move needs all 3 axes set (before the line or on it);
+    else it is not changed and is counted in `state['unknown']`. In G91 a G1 move is compensated when X/Y/Z
     were all set by absolute words before: its Z word becomes the delta
     to the compensated height (`state['applied']` is the offset in effect).
     An arc (modal G2/G3) in the G17 plane with a known start point is split
@@ -961,6 +1049,8 @@ def _level_line(line, state, offset_fn, decimals):
     has_xyz = x_val is not None or y_val is not None or z_val is not None
 
     _note_modal_settings(state, g_words)
+    # also on a line that is not understood: its G words still apply
+    _note_frame_words(state, g_words)
 
     if _unparsed_text(masked):
         # Part of the line is not understood (it can hold an axis word), so
@@ -1065,6 +1155,13 @@ def _level_line(line, state, offset_fn, decimals):
     if absolute is None:
         if state['G'] == 1:
             state['unknown'] += 1
+        return line
+
+    if state['G'] == 1 and not _in_frame(state):
+        # another WCS or other units than those of the height map
+        state['frame'] += 1
+        if absolute and z_val is not None:
+            state['applied'] = 0.0
         return line
 
     if not absolute:

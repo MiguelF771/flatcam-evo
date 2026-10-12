@@ -1692,7 +1692,8 @@ class ToolLevelling(CNCjob, AppTool):
         if not self._al_prepare_interp(target_obj, al_method, snapshot=snapshot):
             return None
 
-        state = new_levelling_state(arc_segment=self._al_arc_segment(target_obj))
+        state = new_levelling_state(arc_segment=self._al_arc_segment(target_obj),
+                                    units=getattr(target_obj, 'units', None))
         result = {}
         for tooluid in target_obj.tools.keys():
             tool_gcode = target_obj.tools[tooluid].get('gcode') or ''
@@ -1727,6 +1728,12 @@ class ToolLevelling(CNCjob, AppTool):
             self.app.inform.emit(
                 '[WARNING_NOTCL] %s: %d' %
                 (_("Moves at an unknown position or mode were not height-compensated"), state['unknown'])
+            )
+
+        if state['frame'] > 0:
+            self.app.inform.emit(
+                '[WARNING_NOTCL] %s: %d' %
+                (_("Moves in another coordinate system or units were not height-compensated"), state['frame'])
             )
 
         if state['arcs_split'] > 0:

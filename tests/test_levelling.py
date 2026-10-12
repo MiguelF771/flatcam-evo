@@ -422,6 +422,8 @@ class TestLevelGcodeLine(unittest.TestCase):
 
     def test_inline_comment_preserved(self):
         state = new_levelling_state()
+        # no default start position: set X/Y/Z first (X/Y are named on the line)
+        level_gcode_line("G0 X0 Y0 Z0", state, self.offset_fn)
         state['G'] = 1
         line = "G01 X1 Y1 (cut)"
         result = level_gcode_line(line, state, self.offset_fn)
@@ -481,6 +483,8 @@ class TestLevelGcodeLine(unittest.TestCase):
         # (G00), then a real cut move (G01) that must still be levelled
         # from its own original Z, not from anything G92 wrote.
         state = new_levelling_state()
+        # no default start position: position X/Y/Z first
+        level_gcode_line("G00 X0 Y0 Z5", state, self.offset_fn)
 
         r1 = level_gcode_line("G01 Z-0.1", state, self.offset_fn)
         expected_z1 = -0.1 + self.offset_fn(0.0, 0.0)

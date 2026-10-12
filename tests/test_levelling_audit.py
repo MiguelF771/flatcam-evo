@@ -388,6 +388,8 @@ class TestAllG1Compensated(unittest.TestCase):
 
     def test_clearance_feed_keeps_its_clearance(self):
         state = li.new_levelling_state()
+        # no default start position: position X/Y/Z first
+        li.level_gcode_line('G0 X0 Y0 Z5', state, lambda x, y: -0.2)
         self.assertEqual(li.level_gcode_line('G1 Z5', state, lambda x, y: -0.2), 'G1 Z4.8000')
 
     def test_rapids_stay_untouched_at_any_z(self):

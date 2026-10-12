@@ -107,7 +107,8 @@ class TestG53Compatibility(unittest.TestCase):
         )
 
     def test_existing_nonmotion_compatibility(self):
-        state = new_levelling_state()
+        # the job is in mm: the G21 word repeats the units of the height map
+        state = new_levelling_state(units='MM')
         level_gcode_line("G1 X1 Y2 Z-1", state, self.offset_fn)
         before = state.copy()
         for line in ["G21 G90 G17 G94","M3 S1000", "(G53 G0 Z0)"]:
