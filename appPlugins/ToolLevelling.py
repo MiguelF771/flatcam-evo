@@ -108,6 +108,21 @@ if '_' not in builtins.__dict__:
 log = logging.getLogger('base')
 
 
+class _GrblProbeAbort(Exception):
+    """
+    Stops a GRBL probing run.
+
+    status: 'error', 'timeout', 'cancelled', 'port_error', 'not_idle',
+    'unknown_units', 'modes_not_confirmed', 'probe_failed' or 'probe_invalid'.
+    """
+
+    def __init__(self, command, text, status):
+        super().__init__(status)
+        self.command = command
+        self.text = text
+        self.status = status
+
+
 class _AlContext:
     """
     What a probing or import result belongs to: the generation of the probe
@@ -1414,7 +1429,7 @@ class ToolLevelling(CNCjob, AppTool):
     def _al_match_tolerance(self, points_xy):
         """
         Tolerance used to match a GRBL probe result back to the storage
-        point it was probed for (parse_grbl_probe_result()).
+        point it was probed for (_al_check_probe_reply()).
 
         Unlike the grid tolerance above, a probe result's X/Y is echoed
         back by the controller itself and can carry real-world noise
@@ -1576,61 +1591,6 @@ class ToolLevelling(CNCjob, AppTool):
 
     def autolevell_voronoi(self, x, y):
         return nearest_offset(self._al_points, x, y)
-
-    def parse_grbl_probe_result(self):
-        """
-        Parse self.grbl_probe_result (the raw serial answer stream
-        accumulated while probing) and write the resulting heights into
-        self.al_voronoi_geo_storage.
-
-        :return: True on success; False if a probe did not touch the
-                 surface, or a probed point could not be matched to a
-                 stored probe location, or a stored probe location did
-                 not receive any result.
-        :rtype:  bool
-        """
-        try:
-            results = parse_grbl_probe_output(self.grbl_probe_result)
-        except ValueError as e:
-            self.app.inform.emit('[ERROR_NOTCL] %s: %s' % (_("Probing failed"), str(e)))
-            return False
-
-        ox, oy, oz = self.grbl_work_offset
-
-        points = {
-            key: (value['point'].x, value['point'].y)
-            for key, value in self.al_voronoi_geo_storage.items()
-        }
-        tol = self._al_match_tolerance(points.values())
-
-        matched_keys = set()
-        for mx, my, mz in results:
-            x = mx - ox
-            y = my - oy
-            z = mz - oz
-
-            key = match_nearest_point(points, x, y, tol)
-            if key is None:
-                self.app.inform.emit(
-                    '[ERROR_NOTCL] %s' %
-                    _("A probed point could not be matched to any stored probe location.")
-                )
-                return False
-
-            self.al_voronoi_geo_storage[key]['height'] = z
-            matched_keys.add(key)
-
-        if matched_keys != set(self.al_voronoi_geo_storage.keys()):
-            self.app.inform.emit(
-                '[ERROR_NOTCL] %s' % _("Some probe points did not receive a height value.")
-            )
-            return False
-
-        self.al_heights_valid = True
-        self.build_al_table_sig.emit()
-        # the slot reads the 'Plot probing points' checkbox in the GUI thread
-        self.show_probing_geo_sig.emit(True, True)
-        return True
 
     def _al_bump_generation(self):
         """Mark that the probe points changed; results of older operations are discarded."""
@@ -2202,43 +2162,6 @@ class ToolLevelling(CNCjob, AppTool):
 
         return '\n'.join(decoded_lines)
 
-    def _send_grbl_probe_command(self, command, echo=True):
-        cmd = command.strip()
-        if echo:
-            self.app.inform_shell[str, bool].emit(cmd, False)
-
-        self.grbl_ser_port.write((cmd + '\n').encode('utf-8'))
-        decoded_lines = []
-        buffer = b''
-        deadline = time.monotonic() + 10.0
-
-        while time.monotonic() < deadline:
-            chunk = self.grbl_ser_port.readline()
-            if not chunk:
-                continue
-
-            # readline() with the serial port timeout can hand back a partial
-            # line (no trailing '\n' yet); buffer chunks and only process
-            # complete lines, so a '[PRB:' split across reads is still found
-            buffer += chunk
-            while b'\n' in buffer:
-                raw_line, buffer = buffer.split(b'\n', 1)
-                decoded_line = raw_line.decode('utf-8', errors='replace').strip()
-                decoded_lines.append(decoded_line)
-                if echo:
-                    try:
-                        self.app.inform_shell.emit('\t\t\t: ' + decoded_line.upper())
-                    except Exception as e:
-                        self.app.log.error("CNCJobObject.send_grbl_command() --> %s" % str(e))
-
-                if '[PRB:' in decoded_line:
-                    return '\n'.join(decoded_lines)
-
-        self.app.inform.emit(
-            '[ERROR_NOTCL] %s' % _("GRBL probe timed out waiting for a probe result.")
-        )
-        return None
-
     def send_grbl_block(self, command, echo=True):
         stripped_cmd = command.strip()
 
@@ -2741,57 +2664,226 @@ class ToolLevelling(CNCjob, AppTool):
         # the slot reads the 'Plot probing points' checkbox in the GUI thread
         self.show_probing_geo_sig.emit(True, True)
 
+    def _al_read_probe_inputs(self):
+        """
+        Read and check the probing parameters (GUI thread).
+
+        :return: (travel_z, depth, probe_fr), or None (the user was told why).
+        """
+        try:
+            travel_z = float(self.ui.ptravelz_entry.get_value())
+            probe_fr = float(self.ui.feedrate_probe_entry.get_value())
+            depth = float(self.ui.pdepth_entry.get_value())
+        except (TypeError, ValueError):
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _("The probing parameters are not valid numbers."))
+            return None
+        if not all(math.isfinite(v) for v in (travel_z, probe_fr, depth)):
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _("The probing parameters are not valid numbers."))
+            return None
+        if depth >= 0:
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _("The probe Z depth must be negative."))
+            return None
+        if probe_fr <= 0:
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _("The probe feedrate must be more than zero."))
+            return None
+        if travel_z <= 0:
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _("The probe travel Z must be more than zero."))
+            return None
+        return travel_z, depth, probe_fr
+
     def on_grbl_autolevel(self):
+        # read every UI value here, in the GUI thread; the worker must not touch widgets
+        inputs = self._al_read_probe_inputs()
+        if inputs is None:
+            return
+        travel_z, depth, probe_fr = inputs
+        if not self.al_voronoi_geo_storage:
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _("There are no probe points. Add probe points first."))
+            return
+
+        op = self._grbl_reserve('probe', motion=True)
+        if op is None:
+            return
+
+        self.units = self.app.app_units.upper()
+        context = self._al_capture_context()
+        points = {key: (value['point'].x, value['point'].y) for key, value in self.al_voronoi_geo_storage.items()}
+        tol = self._al_match_tolerance(list(points.values()))
+        units_cmd = 'G20' if self.units == 'IN' else 'G21'
+        probe_timeout = probe_timeout_s(travel_z, depth, probe_fr)
+
+        # a new probing pass replaces the map: the old heights are not valid from now on
+        self.al_heights_valid = False
+
         # show the Shell Dock
         self.app.ui.shell_dock.show()
 
         def worker_task():
-            with self.app.proc_container.new('%s...' % _("Sending")):
-                self.grbl_probe_result = ''
-                pr_travelz = str(self.ui.ptravelz_entry.get_value())
-                probe_fr = str(self.ui.feedrate_probe_entry.get_value())
-                pr_depth = str(self.ui.pdepth_entry.get_value())
-
-                cmd = 'G21\n'
-                self.send_grbl_command(command=cmd)
-                cmd = 'G90\n'
-                self.send_grbl_command(command=cmd)
-
-                try:
-                    wcs_output = self.send_grbl_command(command='$G\n')
-                    active_wcs = parse_grbl_active_wcs(wcs_output)
-                    offset_output = self.send_grbl_command(command='$#\n')
-                    self.grbl_work_offset = parse_grbl_work_offset(offset_output, active_wcs)
-                except ValueError as e:
-                    self.app.inform.emit(
-                        '[ERROR_NOTCL] %s: %s' % (_("Could not read the GRBL work offset"), str(e))
-                    )
-                    return
-
-                for pt_key in self.al_voronoi_geo_storage:
-                    x = str(self.al_voronoi_geo_storage[pt_key]['point'].x)
-                    y = str(self.al_voronoi_geo_storage[pt_key]['point'].y)
-
-                    cmd = 'G0 Z%s\n' % pr_travelz
-                    self.send_grbl_command(command=cmd)
-                    cmd = 'G0 X%s Y%s\n' % (x, y)
-                    self.send_grbl_command(command=cmd)
-                    cmd = 'G38.2 Z%s F%s' % (pr_depth, probe_fr)
-                    output = self._send_grbl_probe_command(command=cmd)
-                    if output is None:
-                        return
-
-                    self.grbl_probe_result += output + '\n'
-
-                cmd = 'M2\n'
-                self.send_grbl_command(command=cmd)
-                self.app.inform.emit('%s' % _("Finished probing. Doing the autolevelling."))
-
-                if self.parse_grbl_probe_result():
-                    self.apply_autolevel_sig.emit()
+            try:
+                with self.app.proc_container.new('%s...' % _("Probing")):
+                    self._grbl_probe_run(op, context, points, tol, travel_z, depth, probe_fr,
+                                         units_cmd, probe_timeout)
+            finally:
+                self._grbl_release(op)
 
         self.app.inform.emit('%s' % _("Sending probing GCode to the GRBL controller."))
         self.app.worker_task.emit({'fcn': worker_task, 'params': []})
+
+    def _grbl_probe_run(self, op, context, points, tol, travel_z, depth, probe_fr, units_cmd, probe_timeout):
+        """
+        Probe every point. Runs in a worker thread and reads no widgets.
+
+        Preconditions before any motion: GRBL is Idle, setting $13 is known,
+        the units, G90 and G94 are acknowledged and confirmed by $G.
+        Each probe must give 1 valid record for its point before the next move.
+        A complete result goes to the GUI thread through al_result_ready_sig.
+        """
+        modes_ok = False
+        staged = {}
+
+        def step(command, timeout=10.0):
+            text, status = self._grbl_transact(op, command, timeout=timeout)
+            if status != 'ok':
+                raise _GrblProbeAbort(command, text, status)
+            return text
+
+        try:
+            state = parse_grbl_status_state(self._grbl_query_status(op))
+            if state != 'Idle':
+                raise _GrblProbeAbort('?', state or _("no answer"), 'not_idle')
+
+            report_setting = parse_grbl_setting(step('$$'), 13)
+            if report_setting is None:
+                raise _GrblProbeAbort('$$', '', 'unknown_units')
+            scale = grbl_report_scale(self.units, report_setting == 1.0)
+
+            step(units_cmd)
+            step('G90')
+            step('G94')
+            gc_text = step('$G')
+            if not grbl_modes_confirmed(gc_text, units_cmd):
+                raise _GrblProbeAbort('$G', gc_text, 'modes_not_confirmed')
+            modes_ok = True
+
+            active_wcs = parse_grbl_active_wcs(gc_text)
+            offset = parse_grbl_work_offset(step('$#'), active_wcs)
+            self.grbl_work_offset = offset
+
+            probe_cmd = 'G38.2 Z{0:.4f} F{1:.4f}'.format(depth, probe_fr)
+            for key, (x, y) in points.items():
+                step('G0 Z{0:.4f}'.format(travel_z))
+                step('G0 X{0:.4f} Y{1:.4f}'.format(x, y))
+                # GRBL answers 'ok' to G4 P0 only when all queued moves are done,
+                # so the probe time limit starts when the probe move starts
+                step('G4 P0', timeout=120.0)
+                text = step(probe_cmd, timeout=probe_timeout)
+                staged[key] = self._al_check_probe_reply(probe_cmd, text, key, points, tol, offset, scale)
+
+            step('G0 Z{0:.4f}'.format(travel_z))
+        except _GrblProbeAbort as abort:
+            self._grbl_handle_abort(op, abort, travel_z, modes_ok)
+            self.al_result_ready_sig.emit({'kind': 'failed', 'context': context})
+            return False
+        except ValueError as err:
+            # the $G or $# reply could not be read; the modes are confirmed, so lift Z
+            self.app.inform.emit('[ERROR_NOTCL] %s: %s' % (_("Could not read the GRBL work offset"), str(err)))
+            self._grbl_retract(op, travel_z)
+            self.al_result_ready_sig.emit({'kind': 'failed', 'context': context})
+            return False
+
+        self.app.inform.emit('%s' % _("Finished probing. Doing the autolevelling."))
+        self.al_result_ready_sig.emit({'kind': 'probe', 'context': context, 'heights': staged})
+        return True
+
+    def _al_check_probe_reply(self, command, text, expected_key, points, tol, offset, scale):
+        """
+        Check the reply of 1 G38.2 move.
+
+        :return: the height (app units) for expected_key.
+        :raises _GrblProbeAbort: 'probe_failed' if the probe did not touch or the
+            record is not finite; 'probe_invalid' if there is not exactly 1 record,
+            or if the record is not at the commanded point.
+        """
+        try:
+            results = parse_grbl_probe_output(text)
+        except ValueError:
+            raise _GrblProbeAbort(command, text, 'probe_failed')
+        if len(results) != 1:
+            raise _GrblProbeAbort(command, text, 'probe_invalid')
+
+        mx, my, mz = results[0]
+        ox, oy, oz = offset
+        x = (mx - ox) * scale
+        y = (my - oy) * scale
+        z = (mz - oz) * scale
+        if match_nearest_point(points, x, y, tol) != expected_key:
+            raise _GrblProbeAbort(command, text, 'probe_invalid')
+        return z
+
+    def _grbl_hold_for_recovery(self):
+        """Feed hold now; the machine needs a reset and a home cycle."""
+        with self._grbl_op_lock:
+            self._grbl_write_realtime_locked(b'!')
+            self._grbl_recovery = 'needs_reset'
+
+    def _grbl_retract(self, op, travel_z):
+        """
+        Lift Z to travel_z. Call it only after the units and G90 are confirmed.
+
+        :return: True if GRBL accepted the move.
+        """
+        text, status = self._grbl_transact(op, 'G0 Z{0:.4f}'.format(travel_z), timeout=30.0)
+        if status == 'ok':
+            return True
+        if status == 'cancelled':
+            return False
+        self._grbl_hold_for_recovery()
+        self.app.inform.emit('[ERROR_NOTCL] %s: %s. %s' % (
+            _("The Z retract failed"), grbl_reply_error(text) or status, self._grbl_recovery_text()))
+        return False
+
+    def _grbl_handle_abort(self, op, abort, travel_z, modes_ok):
+        """Tell the user why the probing run stopped, and make the machine safe."""
+        status = abort.status
+        if status == 'cancelled':
+            # Stop, Reset or a disconnect already sent the hold or the reset
+            self.app.inform.emit('[WARNING_NOTCL] %s' % _("Probing was stopped."))
+            return
+
+        if status == 'not_idle':
+            self.app.inform.emit('[ERROR_NOTCL] %s: %s. %s' % (
+                _("GRBL state"), abort.text, _("GRBL must be Idle before probing. Reset or home GRBL.")))
+            return
+
+        if status == 'unknown_units':
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _(
+                "GRBL did not report setting $13 (report units). Probing was not started."))
+            return
+
+        if status in ('timeout', 'probe_invalid', 'port_error'):
+            # the machine state is not known: stop the motion now
+            self._grbl_hold_for_recovery()
+            self.app.inform.emit('[ERROR_NOTCL] %s: %s (%s). %s' % (
+                _("Probing stopped"), abort.command, status, self._grbl_recovery_text()))
+            return
+
+        if status == 'probe_failed' or 'alarm' in (abort.text or '').lower():
+            # GRBL is in alarm: it accepts no motion until a reset
+            with self._grbl_op_lock:
+                self._grbl_recovery = 'needs_reset'
+            self.app.inform.emit('[ERROR_NOTCL] %s: %s. %s' % (
+                _("The probe did not touch the surface or GRBL is in alarm"), abort.command,
+                self._grbl_recovery_text()))
+            return
+
+        # 'error' or 'modes_not_confirmed': GRBL refused a command
+        self.app.inform.emit('[ERROR_NOTCL] %s: %s -> %s' % (
+            _("GRBL refused a command"), abort.command, grbl_reply_error(abort.text) or abort.text))
+        if modes_ok:
+            self._grbl_retract(op, travel_z)
+        else:
+            self.app.inform.emit('[WARNING_NOTCL] %s' % _(
+                "No Z retract was sent, because the units and the distance mode were not confirmed."))
 
     def on_grbl_heightmap_save(self):
         if not self.al_heights_valid or not self._height_map_is_complete():

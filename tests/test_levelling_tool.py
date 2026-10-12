@@ -284,20 +284,6 @@ class TestBilinearOverlay(unittest.TestCase):
                     for item in tool.probing_shapes.shapes
                 ))
 
-    def test_successful_probe_refreshes_bilinear_overlay_when_enabled(self):
-        tool = make_overlay_tool(heights_valid=False)
-        tool.show_probing_geo = MagicMock()
-        tool.grbl_probe_result = (
-            '[PRB:0.000,0.000,0.000:1]\n'
-            '[PRB:10.000,0.000,1.000:1]\n'
-            '[PRB:0.000,10.000,2.000:1]\n'
-            '[PRB:10.000,10.000,3.000:1]\n'
-        )
-
-        self.assertTrue(tool.parse_grbl_probe_result())
-        tool.show_probing_geo_sig.emit.assert_called_once_with(True, True)
-        tool.show_probing_geo.assert_not_called()
-
     def test_successful_import_refreshes_bilinear_overlay_when_enabled(self):
         tool = make_tool(storage={}, heights_valid=False)
         tool.ui.al_method_radio.get_value.return_value = 'b'
@@ -483,69 +469,6 @@ class TestAutolevellGcodeArcWarning(unittest.TestCase):
         self.assertTrue(any('1' in c.args[0] for c in warning_calls))
 
 
-class TestParseGrblProbeResult(unittest.TestCase):
-    def test_matches_points_and_sets_heights(self):
-        storage = {
-            'a': {'point': Point(0.0, 0.0), 'geo': None, 'height': None},
-            'b': {'point': Point(10.0, 0.0), 'geo': None, 'height': None},
-        }
-        tool = make_tool(storage=storage, heights_valid=False)
-        tool.grbl_work_offset = (-100.0, -50.0, -20.0)
-        # machine coords = work coords + offset
-        tool.grbl_probe_result = (
-            "[PRB:-100.000,-50.000,-20.500:1]\n"
-            "ok\n"
-            "[PRB:-90.000,-50.000,-20.700:1]\n"
-            "ok\n"
-        )
-        ok = tool.parse_grbl_probe_result()
-        self.assertTrue(ok)
-        self.assertAlmostEqual(storage['a']['height'], -0.5)
-        self.assertAlmostEqual(storage['b']['height'], -0.7)
-        tool.build_al_table_sig.emit.assert_called_once()
-        self.assertTrue(tool.al_heights_valid)
-
-    def test_step_quantization_still_matches(self):
-        # probe echoes X/Y with a 0.0125mm step-quantization offset from
-        # the exact storage coordinate; must still match given the 10mm
-        # spacing between the 2 stored points (tolerance = 0.5mm cap).
-        storage = {
-            'a': {'point': Point(0.0, 0.0), 'geo': None, 'height': None},
-            'b': {'point': Point(10.0, 0.0), 'geo': None, 'height': None},
-        }
-        tool = make_tool(storage=storage, heights_valid=False)
-        tool.grbl_work_offset = (0.0, 0.0, 0.0)
-        tool.grbl_probe_result = (
-            "[PRB:0.0125,0.0000,-0.500:1]\n"
-            "[PRB:9.9875,0.0000,-0.700:1]\n"
-        )
-        ok = tool.parse_grbl_probe_result()
-        self.assertTrue(ok)
-        self.assertAlmostEqual(storage['a']['height'], -0.5)
-        self.assertAlmostEqual(storage['b']['height'], -0.7)
-
-    def test_failed_probe_returns_false(self):
-        storage = {
-            'a': {'point': Point(0.0, 0.0), 'geo': None, 'height': None},
-        }
-        tool = make_tool(storage=storage, heights_valid=False)
-        tool.grbl_probe_result = "[PRB:-100.000,-50.000,-20.500:0]\n"
-        self.assertFalse(tool.parse_grbl_probe_result())
-        tool.app.inform.emit.assert_called()
-        self.assertFalse(tool.al_heights_valid)
-
-    def test_unmatched_point_returns_false(self):
-        storage = {
-            'a': {'point': Point(0.0, 0.0), 'geo': None, 'height': None},
-        }
-        tool = make_tool(storage=storage, heights_valid=False)
-        tool.grbl_work_offset = (0.0, 0.0, 0.0)
-        # far away from any storage point
-        tool.grbl_probe_result = "[PRB:500.000,500.000,-20.500:1]\n"
-        self.assertFalse(tool.parse_grbl_probe_result())
-        self.assertFalse(tool.al_heights_valid)
-
-
 class TestSendGrblCommand(unittest.TestCase):
     def test_decodes_bytes_and_joins_lines(self):
         tool = make_tool()
@@ -559,108 +482,6 @@ class TestSendGrblCommand(unittest.TestCase):
         self.assertIsInstance(result, str)
         self.assertIn('PRB:1.000,2.000,-0.500:1', result)
         self.assertIn('ok', result.lower())
-
-    def test_probe_command_waits_for_probe_result(self):
-        tool = make_tool()
-        tool.app.inform_shell = MagicMock()
-        tool.grbl_ser_port = MagicMock()
-        tool.grbl_ser_port.readline.side_effect = [
-            b'',
-            b'[PRB:1.000,2.000,-0.100:1]\r\n',
-        ]
-
-        with patch(
-                'appPlugins.ToolLevelling.time.monotonic',
-                side_effect=[0.0, 0.1, 0.2]
-        ):
-            result = tool._send_grbl_probe_command('G38.2 Z-1 F50')
-
-        self.assertEqual(result, '[PRB:1.000,2.000,-0.100:1]')
-        self.assertEqual(tool.grbl_ser_port.readline.call_count, 2)
-        tool.grbl_ser_port.write.assert_called_once_with(b'G38.2 Z-1 F50\n')
-
-    def test_probe_command_times_out_without_probe_result(self):
-        tool = make_tool()
-        tool.app.inform_shell = MagicMock()
-        tool.grbl_ser_port = MagicMock()
-        tool.grbl_ser_port.readline.return_value = b''
-
-        with patch(
-                'appPlugins.ToolLevelling.time.monotonic',
-                side_effect=[0.0, 0.1, 10.0]
-        ):
-            result = tool._send_grbl_probe_command('G38.2 Z-1 F50')
-
-        self.assertIsNone(result)
-        self.assertTrue(any(
-            '[ERROR_NOTCL]' in call.args[0] and 'probe' in call.args[0].lower()
-            for call in tool.app.inform.emit.call_args_list
-        ))
-
-    def test_probe_command_handles_prb_line_split_across_reads(self):
-        # regression: readline() with the port timeout can hand back a
-        # partial line (e.g. b'[PR' then b'B:...\n'); neither chunk alone
-        # contains '[PRB:', so the old per-chunk check ran to the 10s
-        # deadline and reported a false timeout.
-        tool = make_tool()
-        tool.app.inform_shell = MagicMock()
-        tool.grbl_ser_port = MagicMock()
-        tool.grbl_ser_port.readline.side_effect = [
-            b'',
-            b'[PR',
-            b'B:1.000,2.000,-0.500:1]\r\n',
-        ]
-
-        with patch(
-                'appPlugins.ToolLevelling.time.monotonic',
-                side_effect=[0.0, 0.1, 0.2, 0.3]
-        ):
-            result = tool._send_grbl_probe_command('G38.2 Z-1 F50')
-
-        self.assertEqual(result, '[PRB:1.000,2.000,-0.500:1]')
-        self.assertFalse(any(
-            '[ERROR_NOTCL]' in call.args[0]
-            for call in tool.app.inform.emit.call_args_list
-        ))
-
-
-class TestGrblAutolevelProbeTimeout(unittest.TestCase):
-    def test_probe_timeout_stops_remaining_points_and_apply(self):
-        storage = {
-            0: {'point': Point(0.0, 0.0), 'geo': None, 'height': None},
-            1: {'point': Point(10.0, 0.0), 'geo': None, 'height': None},
-        }
-        tool = make_tool(storage=storage, heights_valid=False)
-        tool.ui.ptravelz_entry.get_value.return_value = 2.0
-        tool.ui.feedrate_probe_entry.get_value.return_value = 50.0
-        tool.ui.pdepth_entry.get_value.return_value = -1.0
-
-        def command_output(command):
-            if command.strip() == '$G':
-                return '[GC:G0 G54 G17 G21 G90 G94 M5 M9 T0 F0 S0]'
-            if command.strip() == '$#':
-                return '[G54:0.000,0.000,0.000]'
-            return ''
-
-        tool.send_grbl_command = MagicMock(side_effect=command_output)
-        tool._send_grbl_probe_command = MagicMock(return_value=None)
-        tool.parse_grbl_probe_result = MagicMock()
-
-        tool.on_grbl_autolevel()
-        worker_task = tool.app.worker_task.emit.call_args.args[0]['fcn']
-        worker_task()
-
-        tool._send_grbl_probe_command.assert_called_once()
-        self.assertFalse(any(
-            'X10.0' in call.kwargs['command'] or call.kwargs['command'].strip() == 'M2'
-            for call in tool.send_grbl_command.call_args_list
-        ))
-        tool.parse_grbl_probe_result.assert_not_called()
-        tool.apply_autolevel_sig.emit.assert_not_called()
-        self.assertFalse(any(
-            'Finished probing' in call.args[0]
-            for call in tool.app.inform.emit.call_args_list
-        ))
 
 
 class TestToolUiState(unittest.TestCase):

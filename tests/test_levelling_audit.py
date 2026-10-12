@@ -1013,5 +1013,282 @@ class TestResultPublication(unittest.TestCase):
         self.assertTrue(any('[ERROR_NOTCL]' in t for t in emitted(tool)))
 
 
+class TestGrblProbeRun(unittest.TestCase):
+    POINTS = {1: (0.0, 0.0), 2: (10.0, 0.0)}
+
+    def _tool(self, fake, units='MM', heights_valid=False, old_height=0.0):
+        storage = {k: {'point': Point(x, y), 'geo': None, 'height': old_height}
+                   for k, (x, y) in self.POINTS.items()}
+        tool = make_audit_tool(units=units, storage=storage, heights_valid=heights_valid)
+        tool.grbl_ser_port = fake
+        target = SimpleNamespace(obj_options={'name': 'job'}, kind='cncjob')
+        tool._al_target_name = 'job'
+        tool._al_target_obj = target
+        tool.app.collection.get_by_name.return_value = target
+        tool.ui.ptravelz_entry.get_value.return_value = 2.0
+        tool.ui.feedrate_probe_entry.get_value.return_value = 600.0
+        tool.ui.pdepth_entry.get_value.return_value = -1.0
+        tool.apply_autolevel = MagicMock()
+        return tool, target
+
+    def _run(self, tool):
+        tool.on_grbl_autolevel()
+        run_worker(tool)
+
+    def _after_last_probe(self, fake):
+        cmds = fake.commands()
+        last = max(i for i, c in enumerate(cmds) if c.startswith('G38.2'))
+        return cmds[last + 1:]
+
+    # ---- success ----
+    def test_success_publishes_heights_and_applies(self):
+        fake = FakeGrbl(heights={(0.0, 0.0): -0.1, (10.0, 0.0): 0.2})
+        tool, target = self._tool(fake)
+        self._run(tool)
+        self.assertAlmostEqual(tool.al_voronoi_geo_storage[1]['height'], -0.1)
+        self.assertAlmostEqual(tool.al_voronoi_geo_storage[2]['height'], 0.2)
+        self.assertTrue(tool.al_heights_valid)
+        tool.apply_autolevel.assert_called_once_with(target_obj=target)
+        self.assertIsNone(tool._grbl_op)
+        self.assertIsNone(tool._grbl_recovery)
+        self.assertEqual(self._after_last_probe(fake), ['G0 Z2.0000'])
+        self.assertNotIn('M2', fake.commands())
+
+    def test_startup_order(self):
+        fake = FakeGrbl()
+        tool, target = self._tool(fake)
+        self._run(tool)
+        self.assertEqual(fake.commands()[:7], ['?', '$$', 'G21', 'G90', 'G94', '$G', '$#'])
+
+    def test_g4_wait_before_each_probe(self):
+        fake = FakeGrbl()
+        tool, target = self._tool(fake)
+        self._run(tool)
+        cmds = fake.commands()
+        for i, c in enumerate(cmds):
+            if c.startswith('G38.2'):
+                self.assertEqual(cmds[i - 1], 'G4 P0')
+
+    def test_inch_project_sends_g20_and_scales(self):
+        fake = FakeGrbl(heights={(0.0, 0.0): -2.54, (10.0, 0.0): 2.54})
+        tool, target = self._tool(fake, units='IN')
+        self._run(tool)
+        self.assertEqual(fake.commands()[2], 'G20')
+        self.assertAlmostEqual(tool.al_voronoi_geo_storage[1]['height'], -0.1, places=4)
+        self.assertAlmostEqual(tool.al_voronoi_geo_storage[2]['height'], 0.1, places=4)
+
+    def test_inch_reports_are_scaled_for_mm_project(self):
+        fake = FakeGrbl(heights={(0.0, 0.0): -0.254, (10.0, 0.0): 0.254}, report_inches=True)
+        tool, target = self._tool(fake)
+        self._run(tool)
+        self.assertAlmostEqual(tool.al_voronoi_geo_storage[1]['height'], -0.254, places=3)
+
+    def test_new_pass_invalidates_old_map_at_start(self):
+        fake = FakeGrbl()
+        tool, target = self._tool(fake, heights_valid=True, old_height=0.5)
+        tool.on_grbl_autolevel()
+        self.assertFalse(tool.al_heights_valid)
+
+    # ---- preconditions: no motion ----
+    def _assert_no_motion(self, fake):
+        self.assertFalse(any(c.startswith('G0') or c.startswith('G38') for c in fake.commands()))
+
+    def test_not_idle_sends_no_motion(self):
+        fake = FakeGrbl(state='Alarm')
+        tool, target = self._tool(fake)
+        self._run(tool)
+        self.assertEqual(fake.commands(), ['?'])
+        self.assertTrue(any('Alarm' in t for t in emitted(tool)))
+
+    def test_missing_report_setting_aborts(self):
+        fake = FakeGrbl(has_report_setting=False)
+        tool, target = self._tool(fake)
+        self._run(tool)
+        self.assertEqual(fake.commands(), ['?', '$$'])
+
+    def test_failed_units_setup_sends_no_retract(self):
+        fake = FakeGrbl(replies={'G21': ['error:20']})
+        tool, target = self._tool(fake)
+        self._run(tool)
+        self._assert_no_motion(fake)
+
+    def test_failed_g90_sends_no_retract(self):
+        fake = FakeGrbl(replies={'G90': ['error:20']})
+        tool, target = self._tool(fake)
+        self._run(tool)
+        self._assert_no_motion(fake)
+
+    def test_unconfirmed_modes_send_no_motion(self):
+        fake = FakeGrbl(replies={'$G': ['[GC:G0 G54 G17 G21 G91 G94]', 'ok']})
+        tool, target = self._tool(fake)
+        self._run(tool)
+        self._assert_no_motion(fake)
+
+    def test_invalid_inputs_schedule_nothing(self):
+        for field, value in (('pdepth_entry', float('nan')), ('feedrate_probe_entry', 'abc'),
+                             ('pdepth_entry', 0.0), ('feedrate_probe_entry', 0.0),
+                             ('ptravelz_entry', 0.0), ('ptravelz_entry', float('inf'))):
+            fake = FakeGrbl()
+            tool, target = self._tool(fake)
+            getattr(tool.ui, field).get_value.return_value = value
+            tool.on_grbl_autolevel()
+            tool.app.worker_task.emit.assert_not_called()
+            self.assertIsNone(tool._grbl_op)
+
+    def test_no_points_or_no_port_schedule_nothing(self):
+        fake = FakeGrbl()
+        tool, target = self._tool(fake)
+        tool.al_voronoi_geo_storage.clear()
+        tool.on_grbl_autolevel()
+        tool2, target2 = self._tool(FakeGrbl())
+        tool2.grbl_ser_port = None
+        tool2.on_grbl_autolevel()
+        tool.app.worker_task.emit.assert_not_called()
+        tool2.app.worker_task.emit.assert_not_called()
+
+    # ---- errors after the modes are confirmed ----
+    def test_refused_move_retracts(self):
+        fake = FakeGrbl(replies={'G0 X10': ['error:9']})
+        tool, target = self._tool(fake)
+        self._run(tool)
+        self.assertEqual(fake.commands()[-1], 'G0 Z2.0000')
+        self.assertTrue(any('error:9' in t for t in emitted(tool)))
+        self.assertIsNone(tool._grbl_recovery)
+        tool.apply_autolevel.assert_not_called()
+
+    def test_failed_retract_is_reported_and_needs_recovery(self):
+        fake = FakeGrbl(replies={'G0 Z2': ['error:9']})
+        tool, target = self._tool(fake)
+        self._run(tool)
+        self.assertEqual(fake.commands().count('G0 Z2.0000'), 2)
+        self.assertEqual(tool._grbl_recovery, 'needs_reset')
+        self.assertTrue(any('retract' in t.lower() for t in emitted(tool)))
+
+    # ---- each probe must prove success ----
+    def _assert_stopped_at_probe(self, tool, fake, probes=1):
+        self.assertEqual(len([c for c in fake.commands() if c.startswith('G38.2')]), probes)
+        self.assertEqual([c for c in self._after_last_probe(fake) if c != '!'], [])
+        self.assertEqual(tool._grbl_recovery, 'needs_reset')
+        self.assertFalse(tool.al_heights_valid)
+        tool.apply_autolevel.assert_not_called()
+
+    def test_alarm_on_probe_stops(self):
+        fake = FakeGrbl(replies={'G38.2': ['ALARM:4']})
+        tool, target = self._tool(fake)
+        self._run(tool)
+        self._assert_stopped_at_probe(tool, fake)
+
+    def test_missing_probe_record_stops(self):
+        fake = FakeGrbl(replies={'G38.2': ['ok']})
+        tool, target = self._tool(fake)
+        self._run(tool)
+        self._assert_stopped_at_probe(tool, fake)
+        self.assertIn('!', fake.commands())
+
+    def test_malformed_probe_record_stops(self):
+        fake = FakeGrbl(replies={'G38.2': ['[PRB:1.000,2.000:1]', 'ok']})
+        tool, target = self._tool(fake)
+        self._run(tool)
+        self._assert_stopped_at_probe(tool, fake)
+
+    def test_failed_probe_flag_stops(self):
+        fake = FakeGrbl(replies={'G38.2': ['[PRB:0.000,0.000,-1.000:0]', 'ok']})
+        tool, target = self._tool(fake)
+        self._run(tool)
+        self._assert_stopped_at_probe(tool, fake)
+
+    def test_non_finite_probe_record_stops(self):
+        fake = FakeGrbl(replies={'G38.2': ['[PRB:nan,0.000,0.000:1]', 'ok']})
+        tool, target = self._tool(fake)
+        self._run(tool)
+        self._assert_stopped_at_probe(tool, fake)
+
+    def test_probe_record_at_wrong_position_stops(self):
+        fake = FakeGrbl(replies={'G38.2': ['[PRB:0.000,0.000,0.100:1]', 'ok']})
+        tool, target = self._tool(fake)
+        self._run(tool)
+        self._assert_stopped_at_probe(tool, fake, probes=2)
+
+    def test_timeout_holds_and_needs_recovery(self):
+        fake = FakeGrbl(replies={'G38.2': []})
+        tool, target = self._tool(fake)
+        with patch('appPlugins.ToolLevelling.probe_timeout_s', return_value=0.2):
+            self._run(tool)
+        self._assert_stopped_at_probe(tool, fake)
+        self.assertIn('!', fake.commands())
+
+    def test_failed_reprobe_leaves_no_valid_mixed_map(self):
+        fake = FakeGrbl(fail_probe_at=2, heights={(0.0, 0.0): -0.3})
+        tool, target = self._tool(fake, heights_valid=True, old_height=0.5)
+        self._run(tool)
+        self.assertEqual(tool.al_voronoi_geo_storage[1]['height'], 0.5)
+        self.assertEqual(tool.al_voronoi_geo_storage[2]['height'], 0.5)
+        self.assertFalse(tool.al_heights_valid)
+        tool.apply_autolevel.assert_not_called()
+
+    # ---- recovery and ownership ----
+    def test_timeout_blocks_next_probe_until_reset_and_home(self):
+        fake = FakeGrbl(replies={'G38.2': []})
+        tool, target = self._tool(fake)
+        with patch('appPlugins.ToolLevelling.probe_timeout_s', return_value=0.2):
+            self._run(tool)
+        tool.on_grbl_autolevel()
+        self.assertEqual(tool.app.worker_task.emit.call_count, 1)
+        tool.on_grbl_reset()
+        tool.on_grbl_homing()
+        run_worker(tool)
+        self.assertIsNone(tool._grbl_recovery)
+        fake.replies.clear()
+        tool.on_grbl_autolevel()
+        self.assertEqual(tool.app.worker_task.emit.call_count, 3)
+
+    def test_cancel_between_steps_writes_nothing_after_stop(self):
+        def hook():
+            cmds = fake.commands()
+            if cmds and cmds[-1].startswith('G0 X10') and '!' not in cmds:
+                tool.on_grbl_stop()
+        fake = FakeGrbl(read_hook=hook)
+        tool, target = self._tool(fake)
+        self._run(tool)
+        cmds = fake.commands()
+        self.assertEqual(cmds[cmds.index('!') + 1:], [])
+        tool.apply_autolevel.assert_not_called()
+
+    def test_queued_sender_blocks_probe(self):
+        fake = FakeGrbl()
+        tool, target = self._tool(fake)
+        tool.ui.grbl_command_entry.get_value.return_value = 'G0 X1'
+        tool.on_grbl_send_command()
+        tool.on_grbl_autolevel()
+        self.assertEqual(tool.app.worker_task.emit.call_count, 1)
+
+    def test_stale_result_after_points_regenerated(self):
+        fake = FakeGrbl(heights={(0.0, 0.0): -0.1})
+        tool, target = self._tool(fake)
+        tool.on_grbl_autolevel()
+        tool._al_bump_generation()
+        run_worker(tool)
+        self.assertEqual(tool.al_voronoi_geo_storage[1]['height'], 0.0)
+        self.assertFalse(tool.al_heights_valid)
+        tool.apply_autolevel.assert_not_called()
+
+    def test_stale_result_after_target_replaced(self):
+        fake = FakeGrbl()
+        tool, target = self._tool(fake)
+        tool.on_grbl_autolevel()
+        tool.app.collection.get_by_name.return_value = SimpleNamespace(obj_options={'name': 'job'})
+        run_worker(tool)
+        self.assertFalse(tool.al_heights_valid)
+        tool.apply_autolevel.assert_not_called()
+
+    def test_worker_reads_no_widgets(self):
+        fake = FakeGrbl()
+        tool, target = self._tool(fake)
+        tool.on_grbl_autolevel()
+        tool.ui = None
+        run_worker(tool)
+        self.assertTrue(tool.al_heights_valid)
+
+
 if __name__ == '__main__':
     unittest.main()

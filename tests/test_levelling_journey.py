@@ -8,7 +8,7 @@ correct.
 These tests build their own G-code from real Gerber test files (parsed with
 appParsers.ParseGerber.Gerber, the same MockApp pattern as
 tests/test_gerber_parser.py) and their own height-map files/text (consumed
-by the *real* ToolLevelling.import_height_map()/parse_grbl_probe_result()),
+by the *real* ToolLevelling.import_height_map()/_al_check_probe_reply()),
 then run the *real* ToolLevelling.autolevell_gcode() and independently
 verify every line of the result with a small G-code reader written in this
 file (it does not call level_gcode_line()/codes_split()).
@@ -521,9 +521,19 @@ class TestJourneyPlaneAllSources(LevellingJourneyTestCase):
                             tool = make_tool(units='MM', storage=storage, heights_valid=False)
                             offset_text = make_grbl_offset_text()
                             tool.grbl_work_offset = parse_grbl_work_offset(offset_text)
-                            tool.grbl_probe_result = make_grbl_probe_text(grid_points, tool.grbl_work_offset)
-                            ok = tool.parse_grbl_probe_result()
-                            self.assertTrue(ok, "GRBL probe parsing failed")
+                            # each G38.2 reply goes through the real per-probe check, then the
+                            # complete result is published through the real GUI-thread slot
+                            probe_text = make_grbl_probe_text(grid_points, tool.grbl_work_offset)
+                            replies = [r for r in probe_text.split('ok\n') if r.strip()]
+                            points = {k: (v['point'].x, v['point'].y) for k, v in storage.items()}
+                            tol = tool._al_match_tolerance(list(points.values()))
+                            heights = {
+                                key: tool._al_check_probe_reply('G38.2', reply, key, points, tol,
+                                                                tool.grbl_work_offset, 1.0)
+                                for key, reply in zip(sorted(points), replies)
+                            }
+                            tool._on_al_result_ready({'kind': 'import', 'context': tool._al_capture_context(),
+                                                      'heights': heights})
 
                         self.assertTrue(tool.al_heights_valid)
                         self.assert_journey(tool, target, 1, 'b', plane_fn, tol=tol)
