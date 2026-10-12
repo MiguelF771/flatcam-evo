@@ -1425,5 +1425,25 @@ class TestPlaceholderHeights(unittest.TestCase):
         tool.build_al_table.assert_called_once()
 
 
+class TestSignalsOnce(unittest.TestCase):
+    def test_core_signals_connect_once(self):
+        tool = make_audit_tool()
+        with patch('appPlugins.ToolLevelling.QtWidgets.QApplication.instance', return_value=MagicMock()):
+            for _i in range(3):
+                tool.connect_signals_at_init()
+        for sig in (tool.build_al_table_sig, tool.apply_autolevel_sig, tool.show_probing_geo_sig,
+                    tool.grbl_port_closed_sig, tool.al_result_ready_sig, tool.app.proj_selection_changed):
+            self.assertEqual(sig.connect.call_count, 1)
+        # set_tool_ui and _grbl_disconnect
+        self.assertEqual(tool.app.cleanup.connect.call_count, 2)
+
+    def test_port_force_closes_on_app_quit(self):
+        tool = make_audit_tool()
+        qt_app = MagicMock()
+        with patch('appPlugins.ToolLevelling.QtWidgets.QApplication.instance', return_value=qt_app):
+            tool.connect_signals_at_init()
+        qt_app.aboutToQuit.connect.assert_called_once_with(tool._grbl_force_close)
+
+
 if __name__ == '__main__':
     unittest.main()

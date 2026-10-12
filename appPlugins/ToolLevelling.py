@@ -269,6 +269,7 @@ class ToolLevelling(CNCjob, AppTool):
         self.ui = LevelUI(layout=self.layout, app=self.app)
         self.pluginName = self.ui.pluginName
 
+        self._al_core_signals_connected = False
         self.connect_signals_at_init()
 
     def install(self, icon=None, separator=None, **kwargs):
@@ -330,11 +331,25 @@ class ToolLevelling(CNCjob, AppTool):
         self.app.ui.notebook.setTabText(2, _("Levelling"))
 
     def connect_signals_at_init(self):
-        self.grbl_port_closed_sig.connect(self._on_grbl_port_closed)
-        self.al_result_ready_sig.connect(self._on_al_result_ready)
-        self.build_al_table_sig.connect(self.build_al_table)
-        self.apply_autolevel_sig.connect(self.apply_autolevel)
-        self.show_probing_geo_sig.connect(self._on_show_probing_geo_sig)
+        # the signals of the tool and of the app live as long as the tool;
+        # set_tool_ui() calls this method again for each new LevelUI, so
+        # connect them only 1 time
+        if not getattr(self, '_al_core_signals_connected', False):
+            self._al_core_signals_connected = True
+            self.grbl_port_closed_sig.connect(self._on_grbl_port_closed)
+            self.al_result_ready_sig.connect(self._on_al_result_ready)
+            self.build_al_table_sig.connect(self.build_al_table)
+            self.apply_autolevel_sig.connect(self.apply_autolevel)
+            self.show_probing_geo_sig.connect(self._on_show_probing_geo_sig)
+            # When object selection on canvas change
+            self.app.proj_selection_changed.connect(self.on_object_selection_changed)
+            # Cleanup on Graceful exit (CTRL+ALT+X combo key)
+            self.app.cleanup.connect(self.set_tool_ui)
+            self.app.cleanup.connect(self._grbl_disconnect)
+            # close the serial port when the application ends
+            qt_app = QtWidgets.QApplication.instance()
+            if qt_app is not None:
+                qt_app.aboutToQuit.connect(self._grbl_force_close)
         self.ui.level.toggled.connect(self.on_level_changed)
 
         self.ui.avoid_exc_holes_cb.toggled.connect(self.on_avoid_exc_holes)
@@ -380,13 +395,8 @@ class ToolLevelling(CNCjob, AppTool):
         self.ui.stop_probing_button.clicked.connect(self.on_grbl_stop)
         self.ui.grbl_save_height_map_button.clicked.connect(self.on_grbl_heightmap_save)
 
-        # When object selection on canvas change
-        self.app.proj_selection_changed.connect(self.on_object_selection_changed)
-
         # Reset Tool
         self.ui.reset_button.clicked.connect(self.set_tool_ui)
-        # Cleanup on Graceful exit (CTRL+ALT+X combo key)
-        self.app.cleanup.connect(self.set_tool_ui)
 
     def set_tool_ui(self):
         # closing or resetting the tool while adding manual points must give
