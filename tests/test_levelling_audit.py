@@ -23,7 +23,10 @@ _qapp = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 from shapely import Point, Polygon, MultiPolygon, LineString, box
 
-import appPlugins.ToolLevelling as tl_module
+import appPlugins.ToolLevelling  # noqa: F401
+# appPlugins/__init__.py re-exports the class ToolLevelling under the module name,
+# so take the module itself from sys.modules
+tl_module = sys.modules['appPlugins.ToolLevelling']
 from appPlugins.ToolLevelling import ToolLevelling
 from appPlugins import levelling_interp as li
 
@@ -1571,6 +1574,57 @@ class TestTargetOwnership(unittest.TestCase):
         tool.build_al_table = MagicMock()
         tool._update_mode_radio_ui = MagicMock()
         tool.on_mode_radio('grid')
+        self.assertEqual(tool._al_generation, 1)
+
+
+class TestPolygonsAndAdd(unittest.TestCase):
+    def test_iter_polygons(self):
+        iter_polygons = getattr(tl_module, '_iter_polygons', None)
+        self.assertIsNotNone(iter_polygons)
+        poly = box(0, 0, 1, 1)
+        self.assertEqual(iter_polygons(None), [])
+        self.assertEqual(iter_polygons(poly), [poly])
+        self.assertEqual(len(iter_polygons(MultiPolygon([poly, box(2, 2, 3, 3)]))), 2)
+        self.assertEqual(iter_polygons([poly, LineString([(0, 0), (1, 1)])]), [poly])
+
+    def test_excellon_single_polygon_is_checked(self):
+        tool = make_audit_tool()
+        hole = Point(0.0, 0.0).buffer(0.5)
+        exc = SimpleNamespace(kind='excellon', obj_options={'plot': True}, solid_geometry=hole)
+        tool.app.collection.get_list.return_value = [exc]
+        result = tool.check_point_over_excellon(Point(0.0, 0.0).buffer(0.1), True)
+        self.assertFalse(result.is_empty)
+
+    def _add_tool(self, gcode_parsed):
+        tool = make_audit_tool()
+        target = SimpleNamespace(gcode_parsed=gcode_parsed, obj_options={'name': 'job_a'})
+        tool.ui.object_combo.get_value.return_value = 'job_a'
+        tool.app.collection.get_by_name.return_value = target
+        tool.ui.al_mode_radio.get_value.return_value = 'grid'
+        tool.on_add_grid_points = MagicMock()
+        tool.on_add_manual_points = MagicMock()
+        tool.al_bilinear_geo_storage = [(0.0, 0.0, 0.0)]
+        tool.probing_gcode_text = 'OLD'
+        return tool, target
+
+    def test_empty_cut_geometry_fails_cleanly(self):
+        tool, target = self._add_tool([])
+        self.assertEqual(tool.on_add_al_probepoints(), 'fail')
+        tool.on_add_grid_points.assert_not_called()
+        self.assertTrue(any('[ERROR_NOTCL]' in t for t in emitted(tool)))
+
+    def test_bad_parsed_entry_fails_cleanly(self):
+        tool, target = self._add_tool([{'kind': ['C']}])
+        self.assertEqual(tool.on_add_al_probepoints(), 'fail')
+
+    def test_add_resets_old_state_and_sets_owner(self):
+        tool, target = self._add_tool([{'geom': box(0, 0, 10, 10), 'kind': ['C']}])
+        tool.on_add_al_probepoints()
+        tool.on_add_grid_points.assert_called_once()
+        self.assertEqual(tool.al_bilinear_geo_storage, [])
+        self.assertEqual(tool.probing_gcode_text, '')
+        self.assertEqual(tool._al_target_name, 'job_a')
+        self.assertIs(tool._al_target_obj, target)
         self.assertEqual(tool._al_generation, 1)
 
 

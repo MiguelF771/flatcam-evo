@@ -35,7 +35,7 @@ import math
 from copy import deepcopy
 import sys
 
-from shapely import Point, MultiPoint, MultiPolygon, box
+from shapely import Point, MultiPoint, MultiPolygon, Polygon, box
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 from shapely.affinity import translate
@@ -106,6 +106,28 @@ if '_' not in builtins.__dict__:
     _ = gettext.gettext
 
 log = logging.getLogger('base')
+
+
+def _iter_polygons(geometry):
+    """
+    Return a flat list of the Polygons in `geometry`. `geometry` can be None,
+    a Polygon, a Multi* geometry, a GeometryCollection or a list of these.
+    Other geometry types (lines, points) are ignored.
+    """
+    if geometry is None:
+        return []
+    if isinstance(geometry, Polygon):
+        return [geometry]
+    if isinstance(geometry, (list, tuple)):
+        parts = geometry
+    elif hasattr(geometry, 'geoms'):
+        parts = geometry.geoms
+    else:
+        return []
+    result = []
+    for part in parts:
+        result.extend(_iter_polygons(part))
+    return result
 
 
 class _GrblProbeAbort(Exception):
@@ -784,7 +806,12 @@ class ToolLevelling(CNCjob, AppTool):
 
         try:
             self.solid_geo = unary_union([geo['geom'] for geo in loaded_obj.gcode_parsed if geo['kind'][0] == 'C'])
-        except TypeError:
+        except (TypeError, KeyError, IndexError):
+            self.solid_geo = None
+
+        if self.solid_geo is None or self.solid_geo.is_empty:
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _(
+                "The selected object has no cut geometry. Can not add probe points."))
             return 'fail'
 
         # reset al table
@@ -793,6 +820,13 @@ class ToolLevelling(CNCjob, AppTool):
         # reset the al dict
         self.al_voronoi_geo_storage.clear()
         self.al_heights_valid = False
+        # the old bilinear grid and probing G-code belong to the old points
+        self.al_bilinear_geo_storage = []
+        self.probing_gcode_text = ''
+        # the new points belong to this object
+        self._al_target_name = self.ui.object_combo.get_value()
+        self._al_target_obj = loaded_obj
+        self._al_bump_generation()
 
         if self.ui.al_mode_radio.get_value() == 'grid':
             self.on_add_grid_points()
@@ -807,7 +841,7 @@ class ToolLevelling(CNCjob, AppTool):
             exc_geo
             for obj_in_collection in self.app.collection.get_list()
             if obj_in_collection.kind == 'excellon' and obj_in_collection.obj_options['plot']
-            for exc_geo in MultiPolygon(obj_in_collection.solid_geometry).geoms
+            for exc_geo in _iter_polygons(obj_in_collection.solid_geometry)
             if isinstance(exc_geo, Polygon) and pol.intersects(exc_geo)
         ]
         return unary_union(fused_geometries)
@@ -1387,8 +1421,7 @@ class ToolLevelling(CNCjob, AppTool):
             if check_for_exc_hole is True:
                 for obj_in_collection in self.app.collection.get_list():
                     if obj_in_collection.kind == 'excellon' and obj_in_collection.obj_options['plot'] is True:
-                        exc_solid_geometry = MultiPolygon(obj_in_collection.solid_geometry)
-                        for exc_geo in exc_solid_geometry.geoms:
+                        for exc_geo in _iter_polygons(obj_in_collection.solid_geometry):
                             if probe_pt.within(exc_geo):
                                 self.app.inform.emit(_("Point on an Excellon drill hole. Choose another point."))
                                 return
