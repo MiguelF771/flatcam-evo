@@ -108,6 +108,20 @@ if '_' not in builtins.__dict__:
 log = logging.getLogger('base')
 
 
+class _AlContext:
+    """
+    What a probing or import result belongs to: the generation of the probe
+    points, the owner object (name and identity) and the units. The GUI slot
+    publishes a result only if all of them are still the same.
+    """
+
+    def __init__(self, generation, target_name, target_obj, units):
+        self.generation = generation
+        self.target_name = target_name
+        self.target_obj = target_obj
+        self.units = units
+
+
 class _GrblOperation:
     """
     1 operation that sends commands to GRBL and reads the replies. While it
@@ -127,6 +141,8 @@ class _GrblOperation:
 class ToolLevelling(CNCjob, AppTool):
     # emitted after the serial port closed (also from a worker thread)
     grbl_port_closed_sig = QtCore.pyqtSignal()
+    # a worker sends a probing/import result to the GUI thread with this signal
+    al_result_ready_sig = QtCore.pyqtSignal(object)
     build_al_table_sig = QtCore.pyqtSignal()
     apply_autolevel_sig = QtCore.pyqtSignal()
     show_probing_geo_sig = QtCore.pyqtSignal(bool, bool)
@@ -181,6 +197,13 @@ class ToolLevelling(CNCjob, AppTool):
         self._grbl_recovery = None
         # True if a disconnect waits for the running operation to stop
         self._grbl_close_pending = False
+
+        # changes each time the probe points change; a result of an older
+        # generation is discarded
+        self._al_generation = 0
+        # the object that the probe points belong to (name and the object itself)
+        self._al_target_name = None
+        self._al_target_obj = None
 
         '''
         dictionary of dictionaries to store the information's for the autolevelling
@@ -293,6 +316,7 @@ class ToolLevelling(CNCjob, AppTool):
 
     def connect_signals_at_init(self):
         self.grbl_port_closed_sig.connect(self._on_grbl_port_closed)
+        self.al_result_ready_sig.connect(self._on_al_result_ready)
         self.build_al_table_sig.connect(self.build_al_table)
         self.apply_autolevel_sig.connect(self.apply_autolevel)
         self.show_probing_geo_sig.connect(self._on_show_probing_geo_sig)
@@ -1608,6 +1632,73 @@ class ToolLevelling(CNCjob, AppTool):
         self.show_probing_geo_sig.emit(True, True)
         return True
 
+    def _al_bump_generation(self):
+        """Mark that the probe points changed; results of older operations are discarded."""
+        self._al_generation = getattr(self, '_al_generation', 0) + 1
+
+    def _al_capture_context(self):
+        """:return: an _AlContext for the probe points and the owner object of now."""
+        return _AlContext(
+            generation=getattr(self, '_al_generation', 0),
+            target_name=getattr(self, '_al_target_name', None),
+            target_obj=getattr(self, '_al_target_obj', None),
+            units=self.app.app_units.upper()
+        )
+
+    def _al_context_current(self, ctx):
+        """:return: True if the probe points, the owner object and the units did not change."""
+        if ctx.generation != getattr(self, '_al_generation', 0):
+            return False
+        if ctx.target_name != getattr(self, '_al_target_name', None):
+            return False
+        if ctx.target_obj is not getattr(self, '_al_target_obj', None):
+            return False
+        if ctx.target_obj is not None and self.app.collection.get_by_name(ctx.target_name) is not ctx.target_obj:
+            return False
+        return ctx.units == self.app.app_units.upper()
+
+    def _on_al_result_ready(self, result):
+        """
+        GUI-thread slot of al_result_ready_sig. Publishes a probing or import
+        result only if its context is still current, and only as a whole.
+
+        :param result: dict with 'kind' ('probe', 'import', 'import_points' or
+            'failed'), 'context' (an _AlContext), and 'heights' ({key: z}) or
+            'points' ([(x, y, z), ...]).
+        """
+        if not self._al_context_current(result['context']):
+            self.app.inform.emit('[WARNING_NOTCL] %s' % _(
+                "The probe points, the target object or the units changed while the "
+                "operation ran. The result was discarded."))
+            return
+
+        kind = result['kind']
+        storage = self.al_voronoi_geo_storage
+        if kind == 'failed':
+            self.al_heights_valid = False
+            return
+
+        if kind == 'import_points':
+            storage.clear()
+            for idx, (x, y, z) in enumerate(result['points'], start=1):
+                storage[idx] = {'point': Point((x, y)), 'geo': None, 'height': z}
+            self._al_bump_generation()
+        else:
+            heights = result['heights']
+            if set(heights) != set(storage):
+                self.al_heights_valid = False
+                self.app.inform.emit('[ERROR_NOTCL] %s' % _(
+                    "Some probe points did not receive a height value. The result was discarded."))
+                return
+            for key, z in heights.items():
+                storage[key]['height'] = z
+
+        self.al_heights_valid = True
+        self.build_al_table_sig.emit()
+        self.show_probing_geo_sig.emit(True, True)
+        if kind == 'probe':
+            self.apply_autolevel(target_obj=result['context'].target_obj)
+
     def on_show_al_table(self, state):
         self.ui.al_probe_points_table.show() if state else self.ui.al_probe_points_table.hide()
 
@@ -2745,7 +2836,7 @@ class ToolLevelling(CNCjob, AppTool):
                 )
                 return 'fail'
 
-    def apply_autolevel(self):
+    def apply_autolevel(self, target_obj=None):
         """
         Apply the probed/imported height map to the currently selected
         CNCJob object's G-code and create a new '<name>_levelled' CNCJob
@@ -2771,7 +2862,11 @@ class ToolLevelling(CNCjob, AppTool):
         # stale self.units here could silently pass a mismatched height map.
         self.units = self.app.app_units.upper()
 
-        target_obj = self.app.collection.get_by_name(self.ui.object_combo.get_value())
+        if target_obj is None:
+            target_obj = self.app.collection.get_by_name(self.ui.object_combo.get_value())
+        elif self.app.collection.get_by_name(target_obj.obj_options['name']) is not target_obj:
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _("The probed object is no longer in the project."))
+            return
         al_method = self.ui.al_method_radio.get_value()
 
         if target_obj is None or target_obj.kind != 'cncjob':

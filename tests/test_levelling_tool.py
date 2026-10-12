@@ -52,6 +52,12 @@ def make_tool(units='MM', storage=None, heights_valid=True):
     tool.app.collection = MagicMock()
     tool.app.app_obj = MagicMock()
     tool.app.worker_task = MagicMock()
+    tool._al_generation = 0
+    tool._al_target_name = None
+    tool._al_target_obj = None
+    # publish results at once (the worker runs inline in these tests)
+    tool.al_result_ready_sig = MagicMock()
+    tool.al_result_ready_sig.emit.side_effect = lambda result: tool._on_al_result_ready(result)
     return tool
 
 

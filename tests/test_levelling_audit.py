@@ -929,5 +929,89 @@ class TestShowSignalSlot(unittest.TestCase):
         tool.show_probing_geo_sig.connect.assert_called_once_with(tool._on_show_probing_geo_sig)
 
 
+class TestResultPublication(unittest.TestCase):
+    def _tool(self):
+        storage = {
+            1: {'point': Point(0.0, 0.0), 'geo': None, 'height': 0.5},
+            2: {'point': Point(10.0, 0.0), 'geo': None, 'height': 0.5},
+        }
+        tool = make_audit_tool(storage=storage, heights_valid=False)
+        target = SimpleNamespace(obj_options={'name': 'job'}, kind='cncjob')
+        tool._al_target_name = 'job'
+        tool._al_target_obj = target
+        tool.app.collection.get_by_name.return_value = target
+        tool.apply_autolevel = MagicMock()
+        return tool, target
+
+    def test_probe_result_is_published_and_applied_to_the_owned_target(self):
+        tool, target = self._tool()
+        ctx = tool._al_capture_context()
+        tool._on_al_result_ready({'kind': 'probe', 'context': ctx, 'heights': {1: -0.1, 2: 0.2}})
+        self.assertEqual(tool.al_voronoi_geo_storage[1]['height'], -0.1)
+        self.assertEqual(tool.al_voronoi_geo_storage[2]['height'], 0.2)
+        self.assertTrue(tool.al_heights_valid)
+        tool.show_probing_geo_sig.emit.assert_called_once_with(True, True)
+        tool.apply_autolevel.assert_called_once_with(target_obj=target)
+
+    def test_stale_generation_is_discarded(self):
+        tool, target = self._tool()
+        ctx = tool._al_capture_context()
+        tool._al_bump_generation()
+        tool._on_al_result_ready({'kind': 'probe', 'context': ctx, 'heights': {1: -0.1, 2: 0.2}})
+        self.assertEqual(tool.al_voronoi_geo_storage[1]['height'], 0.5)
+        self.assertFalse(tool.al_heights_valid)
+        tool.apply_autolevel.assert_not_called()
+        self.assertTrue(any('[WARNING_NOTCL]' in t for t in emitted(tool)))
+
+    def test_replaced_object_with_same_name_is_discarded(self):
+        tool, target = self._tool()
+        ctx = tool._al_capture_context()
+        tool.app.collection.get_by_name.return_value = SimpleNamespace(obj_options={'name': 'job'})
+        tool._on_al_result_ready({'kind': 'probe', 'context': ctx, 'heights': {1: -0.1, 2: 0.2}})
+        self.assertFalse(tool.al_heights_valid)
+        tool.apply_autolevel.assert_not_called()
+
+    def test_units_change_is_discarded(self):
+        tool, target = self._tool()
+        ctx = tool._al_capture_context()
+        tool.app.app_units = 'IN'
+        tool._on_al_result_ready({'kind': 'probe', 'context': ctx, 'heights': {1: -0.1, 2: 0.2}})
+        self.assertFalse(tool.al_heights_valid)
+
+    def test_incomplete_heights_are_not_published(self):
+        tool, target = self._tool()
+        tool.al_heights_valid = True
+        ctx = tool._al_capture_context()
+        tool._on_al_result_ready({'kind': 'probe', 'context': ctx, 'heights': {1: -0.1}})
+        self.assertEqual(tool.al_voronoi_geo_storage[1]['height'], 0.5)
+        self.assertFalse(tool.al_heights_valid)
+        tool.apply_autolevel.assert_not_called()
+
+    def test_failed_result_invalidates(self):
+        tool, target = self._tool()
+        tool.al_heights_valid = True
+        tool._on_al_result_ready({'kind': 'failed', 'context': tool._al_capture_context()})
+        self.assertFalse(tool.al_heights_valid)
+
+    def test_import_points_create_storage_and_bump_generation(self):
+        tool, target = self._tool()
+        tool.al_voronoi_geo_storage.clear()
+        ctx = tool._al_capture_context()
+        tool._on_al_result_ready({'kind': 'import_points', 'context': ctx,
+                                  'points': [(0.0, 0.0, 0.1), (5.0, 0.0, 0.2)]})
+        self.assertEqual(len(tool.al_voronoi_geo_storage), 2)
+        self.assertTrue(tool.al_heights_valid)
+        self.assertEqual(tool._al_generation, 1)
+        tool.apply_autolevel.assert_not_called()
+
+    def test_apply_refuses_a_removed_target(self):
+        tool, target = self._tool()
+        tool.apply_autolevel = ToolLevelling.apply_autolevel.__get__(tool)
+        tool.app.collection.get_by_name.return_value = None
+        tool.apply_autolevel(target_obj=target)
+        tool.app.worker_task.emit.assert_not_called()
+        self.assertTrue(any('[ERROR_NOTCL]' in t for t in emitted(tool)))
+
+
 if __name__ == '__main__':
     unittest.main()
