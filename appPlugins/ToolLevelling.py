@@ -1495,6 +1495,12 @@ class ToolLevelling(CNCjob, AppTool):
                 '[WARNING_NOTCL] %s: %d' % (_("Arc moves were not height-compensated"), state['arcs'])
             )
 
+        if state['relative'] > 0:
+            self.app.inform.emit(
+                '[WARNING_NOTCL] %s: %d' %
+                (_("Relative (G91) moves were not height-compensated"), state['relative'])
+            )
+
         return result
 
     def autolevell_bilinear(self, x, y):

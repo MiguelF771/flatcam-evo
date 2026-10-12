@@ -278,5 +278,70 @@ class TestCannedCycles(unittest.TestCase):
         self.assertEqual(li.level_gcode_line('X4 Y4', state, offset), 'X4 Y4')
 
 
+class TestDistanceMode(unittest.TestCase):
+    @staticmethod
+    def off(x, y):
+        return 0.5
+
+    def test_new_state_keys(self):
+        state = li.new_levelling_state()
+        self.assertTrue(state['abs'])
+        self.assertEqual(state['relative'], 0)
+
+    def test_g91_moves_not_levelled_and_counted(self):
+        state = li.new_levelling_state()
+        li.level_gcode_line('G1 Z-1', state, self.off)
+        li.level_gcode_line('G91', state, self.off)
+        self.assertEqual(li.level_gcode_line('G1 X5 Y5', state, self.off), 'G1 X5 Y5')
+        self.assertEqual(state['relative'], 1)
+
+    def test_g91_position_accumulates(self):
+        state = li.new_levelling_state()
+        li.level_gcode_line('G0 X10 Y10', state, self.off)
+        li.level_gcode_line('G91 G0 X5 Y-2', state, self.off)
+        self.assertAlmostEqual(state['X'], 15.0)
+        self.assertAlmostEqual(state['Y'], 8.0)
+
+    def test_g90_restores_absolute_levelling(self):
+        state = li.new_levelling_state()
+        li.level_gcode_line('G91', state, self.off)
+        li.level_gcode_line('G90', state, self.off)
+        self.assertEqual(li.level_gcode_line('G1 X1 Y1 Z-1', state, self.off), 'G1 X1 Y1 Z-0.5000')
+
+    def test_g91_with_g28_sets_relative_mode(self):
+        state = li.new_levelling_state()
+        li.level_gcode_line('G1 Z-1', state, self.off)
+        self.assertEqual(li.level_gcode_line('G91 G28 Z0', state, self.off), 'G91 G28 Z0')
+        self.assertFalse(state['abs'])
+        self.assertEqual(li.level_gcode_line('G1 X5 Y5', state, self.off), 'G1 X5 Y5')
+        self.assertEqual(state['relative'], 1)
+
+    def test_g90_with_g53_then_absolute_motion_is_levelled(self):
+        state = li.new_levelling_state()
+        li.level_gcode_line('G91', state, self.off)
+        self.assertEqual(li.level_gcode_line('G90 G53 G0 Z0', state, self.off), 'G90 G53 G0 Z0')
+        self.assertTrue(state['abs'])
+        self.assertEqual(li.level_gcode_line('G1 X1 Y1 Z-1', state, self.off), 'G1 X1 Y1 Z-0.5000')
+
+    def test_modal_setting_with_axis_words_under_modal_g1_is_levelled(self):
+        state = li.new_levelling_state()
+        li.level_gcode_line('G1 X0 Y0 Z-1', state, self.off)
+        self.assertEqual(li.level_gcode_line('G90 X1 Y1', state, self.off), 'G90 X1 Y1 Z-0.5000')
+
+    def test_settings_only_line_unchanged(self):
+        state = li.new_levelling_state()
+        self.assertEqual(li.level_gcode_line('G21 G90 G17 G94', state, self.off), 'G21 G90 G17 G94')
+
+    def test_tool_warns_about_relative_moves(self):
+        tool = make_audit_tool()
+        tool._al_prepare_interp = MagicMock(return_value=True)
+        tool._al_offset_fn = self.off
+        tool._al_decimals = 4
+        tool._al_points = [(0.0, 0.0, 0.5)]
+        target = SimpleNamespace(tools={1: {'gcode': 'G1 Z-1\nG91\nG1 X5 Y5\n'}})
+        tool.autolevell_gcode(target, 'v')
+        self.assertTrue(any('G91' in t for t in emitted(tool)))
+
+
 if __name__ == '__main__':
     unittest.main()

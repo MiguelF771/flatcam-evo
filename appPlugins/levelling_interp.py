@@ -384,6 +384,12 @@ _MOTION_NO_LEVEL_G_CODES = (31.0, 38.2, 38.3, 38.4, 38.5, 73.0, 76.0, 80.0,
 # so they must not update the modal X/Y/Z state, and the line itself is
 # never height-compensated.
 _NON_MODAL_G_CODES = (10.0, 28.0, 30.0, 53.0, 92.0, 92.1, 92.2, 92.3)
+# Modal settings that can stand on the same line as a move (plane, units,
+# cutter compensation off, tool length off, work coordinate system, path
+# mode, distance mode, feed mode). They do not make the line a non-motion
+# command: "G90 X1 Y1" under a modal G1 is still a G1 move.
+_MODAL_SETTING_G_CODES = (17.0, 18.0, 19.0, 20.0, 21.0, 40.0, 49.0, 54.0, 55.0, 56.0, 57.0,
+                          58.0, 59.0, 61.0, 64.0, 90.0, 91.0, 93.0, 94.0)
 _WORD_RE = re.compile(r'([A-Z])\s*([+\-]?(?:\d+\.?\d*|\.\d+))')
 
 
@@ -395,7 +401,9 @@ def new_levelling_state():
         `arcs` counter (arc moves are never height-compensated, so the
         caller can warn/report on them).
     """
-    return {'X': 0.0, 'Y': 0.0, 'Z': 0.0, 'G': 0, 'arcs': 0}
+    # abs: True for G90 (absolute), False for G91 (relative)
+    # relative: count of G1 moves that were not compensated because of G91
+    return {'X': 0.0, 'Y': 0.0, 'Z': 0.0, 'G': 0, 'arcs': 0, 'abs': True, 'relative': 0}
 
 
 def _mask_comments(line):
@@ -499,6 +507,13 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
 
     has_xyz = x_val is not None or y_val is not None or z_val is not None
 
+    # G90/G91 change the distance mode also on a line with a non-modal
+    # code (for example "G91 G28 Z0"), so handle them first
+    if 91.0 in g_words:
+        state['abs'] = False
+    if 90.0 in g_words:
+        state['abs'] = True
+
     non_modal_gs = [g for g in g_words if g in _NON_MODAL_G_CODES]
     if non_modal_gs:
         # One-shot code: X/Y/Z here are not work-coordinate moves.
@@ -510,6 +525,7 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     other_gs = [
         g for g in g_words
         if g not in _MOTION_G_CODES and g not in _MOTION_NO_LEVEL_G_CODES
+        and g not in _MODAL_SETTING_G_CODES
     ]
 
     is_non_motion_cmd = False
@@ -522,17 +538,25 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
         is_non_motion_cmd = True
     # else: no G word at all - keep the previous modal G unchanged.
 
+    absolute = state.get('abs', True)
     if x_val is not None:
-        state['X'] = x_val
+        state['X'] = x_val if absolute else state['X'] + x_val
     if y_val is not None:
-        state['Y'] = y_val
+        state['Y'] = y_val if absolute else state['Y'] + y_val
     if z_val is not None:
-        state['Z'] = z_val
+        state['Z'] = z_val if absolute else state['Z'] + z_val
 
     if not has_xyz:
         return line
 
     if is_non_motion_cmd:
+        return line
+
+    if not absolute:
+        # a G91 Z word is a delta, so an absolute compensated Z can not
+        # be written; count the move so that the caller can warn
+        if state['G'] == 1:
+            state['relative'] = state.get('relative', 0) + 1
         return line
 
     if state['G'] in (2, 3):
