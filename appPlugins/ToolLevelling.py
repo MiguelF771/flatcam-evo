@@ -2256,27 +2256,30 @@ class ToolLevelling(CNCjob, AppTool):
         self._grbl_start_op('jog', task, motion=True)
 
     def on_grbl_zero(self, axis):
-        current_mode = self.on_grbl_get_parameter('10')
-        if current_mode is None:
-            return
+        axes = {'x': 'X0', 'y': 'Y0', 'z': 'Z0'}.get(axis, 'X0 Y0 Z0')
 
-        cmd = '$10=0'
-        self.send_grbl_command(command=cmd, echo=False)
+        def task(op):
+            text, status = self._grbl_transact(op, '$G', timeout=5.0, echo=False)
+            try:
+                if status != 'ok':
+                    raise ValueError(status)
+                active_wcs = parse_grbl_active_wcs(text)
+            except ValueError as err:
+                self.app.inform.emit('[ERROR_NOTCL] %s: %s' % (
+                    _("Could not read the active work coordinate system"), str(err)))
+                return
 
-        if axis == 'x':
-            cmd = 'G10 L2 P1 X0'
-        elif axis == 'y':
-            cmd = 'G10 L2 P1 Y0'
-        elif axis == 'z':
-            cmd = 'G10 L2 P1 Z0'
-        else:
-            # all
-            cmd = 'G10 L2 P1 X0 Y0 Z0'
-        self.send_grbl_command(command=cmd, echo=False)
+            # G10 L20 makes the current position 0 in the active work coordinate
+            # system (G10 L2 would set the offset to machine 0)
+            p_number = int(active_wcs[1:]) - 53
+            cmd = 'G10 L20 P%d %s' % (p_number, axes)
+            text, status = self._grbl_transact(op, cmd, timeout=5.0, echo=False)
+            if status != 'ok':
+                self.app.inform.emit('[ERROR_NOTCL] %s: %s -> %s' % (
+                    _("Zero failed"), cmd, grbl_reply_error(text) or status))
 
-        # restore previous mode
-        cmd = '$10=%d' % int(current_mode)
-        self.send_grbl_command(command=cmd, echo=False)
+        # the position is not trusted during recovery
+        self._grbl_start_op('zero', task, motion=True)
 
     def on_grbl_homing(self):
         cmd = '$H'

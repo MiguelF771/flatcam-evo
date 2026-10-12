@@ -800,5 +800,39 @@ class TestGrblCommands(unittest.TestCase):
         tool.app.worker_task.emit.assert_not_called()
 
 
+class TestGrblZero(unittest.TestCase):
+    def test_zero_x_in_g55(self):
+        fake = FakeGrbl(replies={'$G': ['[GC:G0 G55 G17 G21 G90 G94 M5 M9 T0 F0 S0]', 'ok']})
+        tool = make_audit_tool()
+        tool.grbl_ser_port = fake
+        tool.on_grbl_zero(axis='x')
+        run_worker(tool)
+        self.assertEqual(fake.commands(), ['$G', 'G10 L20 P2 X0'])
+
+    def test_zero_all_in_g54(self):
+        fake = FakeGrbl()
+        tool = make_audit_tool()
+        tool.grbl_ser_port = fake
+        tool.on_grbl_zero(axis='all')
+        run_worker(tool)
+        self.assertEqual(fake.commands(), ['$G', 'G10 L20 P1 X0 Y0 Z0'])
+
+    def test_bad_wcs_reply_sends_no_g10(self):
+        fake = FakeGrbl(replies={'$G': ['garbage', 'ok']})
+        tool = make_audit_tool()
+        tool.grbl_ser_port = fake
+        tool.on_grbl_zero(axis='z')
+        run_worker(tool)
+        self.assertEqual(fake.commands(), ['$G'])
+        self.assertTrue(any('[ERROR_NOTCL]' in t for t in emitted(tool)))
+
+    def test_zero_blocked_in_recovery(self):
+        tool = make_audit_tool()
+        tool.grbl_ser_port = FakeGrbl()
+        tool._grbl_recovery = 'needs_home'
+        tool.on_grbl_zero(axis='x')
+        tool.app.worker_task.emit.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
