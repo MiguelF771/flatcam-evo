@@ -458,7 +458,7 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     Apply height-map compensation to 1 line of G-code, modally tracking
     X/Y/Z/G state across calls.
 
-    Only linear cutting moves (modal G1, at or below Z0) get their Z
+    Every linear move (modal G1), at any Z, gets its Z
     height-compensated. Left untouched: rapids (G0); arcs (G2/G3,
     counted in `state['arcs']`); other members of the motion modal
     group that are never cutting moves (G31, G38.2/.3/.4/.5, G80) -
@@ -564,9 +564,6 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
         return line
 
     if state['G'] != 1:
-        return line
-
-    if state['Z'] > 0:
         return line
 
     new_z = state['Z'] + offset_fn(state['X'], state['Y'])

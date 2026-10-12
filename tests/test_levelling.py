@@ -387,12 +387,12 @@ class TestLevelGcodeLine(unittest.TestCase):
         result = level_gcode_line(line, state, self.offset_fn)
         self.assertEqual(result, line)
 
-    def test_rapid_then_positive_z_unchanged(self):
+    def test_rapid_then_positive_z_feed_is_compensated(self):
+        # every G1 move is compensated, also above Z0 (policy since 2026-10-12)
         state = new_levelling_state()
-        level_gcode_line("G00 Z2.0", state, self.offset_fn)
-        line = "G01 X1 Y1"
-        result = level_gcode_line(line, state, self.offset_fn)
-        self.assertEqual(result, line)
+        level_gcode_line("G00 Z2.0", state, lambda x, y: 0.5)
+        result = level_gcode_line("G01 X1 Y1", state, lambda x, y: 0.5)
+        self.assertEqual(result, "G01 X1 Y1 Z2.5000")
 
     def test_arc_move_unchanged_and_counted(self):
         state = new_levelling_state()

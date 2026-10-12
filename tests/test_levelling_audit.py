@@ -343,5 +343,29 @@ class TestDistanceMode(unittest.TestCase):
         self.assertTrue(any('G91' in t for t in emitted(tool)))
 
 
+class TestAllG1Compensated(unittest.TestCase):
+    def _z(self, line):
+        return float(line.split('Z')[-1])
+
+    def test_positive_z_feed_is_compensated(self):
+        state = li.new_levelling_state()
+        self.assertEqual(li.level_gcode_line('G1 X1 Y1 Z0.2', state, lambda x, y: 0.3), 'G1 X1 Y1 Z0.5000')
+
+    def test_no_discontinuity_around_zero(self):
+        for nominal in ('-0.0001', '0', '0.0001', '0.3', '0.3001'):
+            state = li.new_levelling_state()
+            out = li.level_gcode_line('G1 X1 Y1 Z' + nominal, state, lambda x, y: 0.3)
+            self.assertAlmostEqual(self._z(out), float(nominal) + 0.3, places=4)
+
+    def test_clearance_feed_keeps_its_clearance(self):
+        state = li.new_levelling_state()
+        self.assertEqual(li.level_gcode_line('G1 Z5', state, lambda x, y: -0.2), 'G1 Z4.8000')
+
+    def test_rapids_stay_untouched_at_any_z(self):
+        state = li.new_levelling_state()
+        self.assertEqual(li.level_gcode_line('G0 X1 Y1 Z0.2', state, lambda x, y: 0.3), 'G0 X1 Y1 Z0.2')
+        self.assertEqual(li.level_gcode_line('G0 X1 Y1 Z-0.2', state, lambda x, y: 0.3), 'G0 X1 Y1 Z-0.2')
+
+
 if __name__ == '__main__':
     unittest.main()

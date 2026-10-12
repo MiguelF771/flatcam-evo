@@ -362,7 +362,7 @@ def verify_levelling(tc, original_text, levelled_text, decimals, offset_fn, tol=
       - same number of lines
       - every non-cut-move line is byte-identical
       - X/Y never change anywhere
-      - every G1 cut line (modal Z <= 0) got Z = original modal Z + offset_fn(x, y)
+      - every G1 cut line (any modal Z) got Z = original modal Z + offset_fn(x, y)
       - a line with no Z word originally now has one after levelling
 
     Returns (max_abs_dz, cut_points) where cut_points is the list of
@@ -406,7 +406,7 @@ def verify_levelling(tc, original_text, levelled_text, decimals, offset_fn, tol=
         # widens the cutting-move check to include G0 is caught even at a
         # rapid whose Z happens to be <= 0.
         is_g0_line = 'G' in ow and ow['G'] == 0.0
-        is_cut_line = has_xyz and modal_g == 1.0 and modal_z <= 0.0 and not is_g0_line
+        is_cut_line = has_xyz and modal_g == 1.0 and not is_g0_line
 
         if not is_cut_line:
             tc.assertEqual(orig_line, lev_line, "line %d should be untouched: %r vs %r" % (lineno, orig_line, lev_line))
