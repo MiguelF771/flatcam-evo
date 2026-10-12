@@ -330,7 +330,7 @@ class ToolLevelling(CNCjob, AppTool):
         self.ui.zero_axs_wdg.grbl_homing_button.clicked.connect(self.on_grbl_homing)
 
         # Sender
-        self.ui.grbl_report_button.clicked.connect(lambda: self.send_grbl_command(command='?'))
+        self.ui.grbl_report_button.clicked.connect(self.on_grbl_report)
         self.ui.grbl_get_param_button.clicked.connect(
             lambda: self.on_grbl_get_parameter(param=self.ui.grbl_parameter_entry.get_value()))
         self.ui.view_h_gcode_button.clicked.connect(self.on_edit_probing_gcode)
@@ -2085,16 +2085,25 @@ class ToolLevelling(CNCjob, AppTool):
         return None
 
     def on_grbl_send_command(self):
-        cmd = self.ui.grbl_command_entry.get_value()
+        cmd = str(self.ui.grbl_command_entry.get_value() or '').strip()
+        if not cmd:
+            return
+
+        def task(op):
+            self._grbl_transact(op, cmd, timeout=30.0)
 
         # show the Shell Dock
         self.app.ui.shell_dock.show()
+        # a typed command can move the machine, so it needs a machine that is not in recovery
+        self._grbl_start_op('command', task, motion=True)
 
-        def worker_task():
-            with self.app.proc_container.new('%s...' % _("Sending")):
-                self.send_grbl_command(command=cmd)
+    def on_grbl_report(self):
+        def task(op):
+            line = self._grbl_query_status(op)
+            self.app.inform_shell[str, bool].emit(line if line else _("No answer"), False)
 
-        self.app.worker_task.emit({'fcn': worker_task, 'params': []})
+        self.app.ui.shell_dock.show()
+        self._grbl_start_op('report', task)
 
     def send_grbl_command(self, command, echo=True):
         """
@@ -2187,26 +2196,28 @@ class ToolLevelling(CNCjob, AppTool):
                         self.app.log.error("CNCJobObject.send_grbl_block() --> %s" % str(e))
 
     def on_grbl_get_parameter(self, param):
-        if '$' in param:
-            param = param.replace('$', '')
+        try:
+            number = int(str(param).replace('$', '').strip())
+        except ValueError:
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _("Not a valid GRBL parameter number."))
+            return
 
-        snd = '$$\n'
-        self.grbl_ser_port.write(snd.encode('utf-8'))
-        grbl_out = self.grbl_ser_port.readlines()
-        for line in grbl_out:
-            decoded_line = line.decode('utf-8')
-            par = '$%s' % str(param)
-            if par in decoded_line:
-                result = float(decoded_line.rpartition('=')[2])
-                self.app.shell_message("GRBL Parameter: %s = %s" % (str(param), str(result)), show=True)
-                return result
+        def task(op):
+            text, status = self._grbl_transact(op, '$$', timeout=5.0, echo=False)
+            value = parse_grbl_setting(text, number) if status == 'ok' else None
+            if value is None:
+                self.app.inform.emit('[ERROR_NOTCL] %s: $%d' % (_("GRBL did not report the parameter"), number))
+                return
+            self.app.inform_shell[str, bool].emit("GRBL Parameter: $%d = %s" % (number, str(value)), False)
+
+        self.app.ui.shell_dock.show()
+        self._grbl_start_op('parameter', task)
 
     def on_grbl_jog(self, direction=None):
         if direction is None:
             return
-        cmd = ''
 
-        step = self.ui.jog_step_entry.get_value(),
+        step = self.ui.jog_step_entry.get_value()
         feedrate = self.ui.jog_fr_entry.get_value()
         app_defaults = getattr(self.app, "defaults", None) or AppDefaults.factory_defaults
         travelz = float(
@@ -2214,29 +2225,35 @@ class ToolLevelling(CNCjob, AppTool):
                 "tools_al_grbl_travelz",
                 app_defaults.get("tools_al_grbl_travelz", AppDefaults.factory_defaults.get("tools_al_grbl_travelz")))
         )
+        units_cmd = {'IN': 'G20', 'MM': 'G21'}[self.units]
 
-        if direction == 'xplus':
-            cmd = "$J=G91 %s X%s F%s" % ({'IN': 'G20', 'MM': 'G21'}[self.units], str(step), str(feedrate))
-        if direction == 'xminus':
-            cmd = "$J=G91 %s X-%s F%s" % ({'IN': 'G20', 'MM': 'G21'}[self.units], str(step), str(feedrate))
-        if direction == 'yplus':
-            cmd = "$J=G91 %s Y%s F%s" % ({'IN': 'G20', 'MM': 'G21'}[self.units], str(step), str(feedrate))
-        if direction == 'yminus':
-            cmd = "$J=G91 %s Y-%s F%s" % ({'IN': 'G20', 'MM': 'G21'}[self.units], str(step), str(feedrate))
-
-        if direction == 'zplus':
-            cmd = "$J=G91 %s Z%s F%s" % ({'IN': 'G20', 'MM': 'G21'}[self.units], str(step), str(feedrate))
-        if direction == 'zminus':
-            cmd = "$J=G91 %s Z-%s F%s" % ({'IN': 'G20', 'MM': 'G21'}[self.units], str(step), str(feedrate))
-
+        axis_words = {
+            'xplus': 'X%s' % str(step),
+            'xminus': 'X-%s' % str(step),
+            'yplus': 'Y%s' % str(step),
+            'yminus': 'Y-%s' % str(step),
+            'zplus': 'Z%s' % str(step),
+            'zminus': 'Z-%s' % str(step),
+        }
         if direction == 'origin':
-            cmd = "$J=G90 %s Z%s F%s" % ({'IN': 'G20', 'MM': 'G21'}[self.units], str(travelz), str(feedrate))
-            self.send_grbl_command(command=cmd, echo=False)
-            cmd = "$J=G90 %s X0.0 Y0.0 F%s" % ({'IN': 'G20', 'MM': 'G21'}[self.units], str(feedrate))
-            self.send_grbl_command(command=cmd, echo=False)
+            commands = [
+                "$J=G90 %s Z%s F%s" % (units_cmd, str(travelz), str(feedrate)),
+                "$J=G90 %s X0.0 Y0.0 F%s" % (units_cmd, str(feedrate)),
+            ]
+        elif direction in axis_words:
+            commands = ["$J=G91 %s %s F%s" % (units_cmd, axis_words[direction], str(feedrate))]
+        else:
             return
 
-        self.send_grbl_command(command=cmd, echo=False)
+        def task(op):
+            for cmd in commands:
+                text, status = self._grbl_transact(op, cmd, timeout=10.0, echo=False)
+                if status != 'ok':
+                    self.app.inform.emit('[ERROR_NOTCL] %s: %s -> %s' % (
+                        _("Jog failed"), cmd, grbl_reply_error(text) or status))
+                    return
+
+        self._grbl_start_op('jog', task, motion=True)
 
     def on_grbl_zero(self, axis):
         current_mode = self.on_grbl_get_parameter('10')

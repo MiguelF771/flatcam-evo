@@ -724,5 +724,81 @@ class TestGrblRealtime(unittest.TestCase):
         self.assertTrue(any('[ERROR_NOTCL]' in t for t in emitted(tool)))
 
 
+class TestGrblCommands(unittest.TestCase):
+    def _tool(self, port=None):
+        tool = make_audit_tool()
+        tool.grbl_ser_port = port if port is not None else FakeGrbl()
+        tool.ui.jog_step_entry.get_value.return_value = 1.0
+        tool.ui.jog_fr_entry.get_value.return_value = 100.0
+        tool.app.options = {'tools_al_grbl_travelz': 2.0}
+        return tool
+
+    def test_jog_step_is_a_number(self):
+        tool = self._tool()
+        tool.on_grbl_jog(direction='xplus')
+        run_worker(tool)
+        self.assertEqual(tool.grbl_ser_port.commands(), ['$J=G91 G21 X1.0 F100.0'])
+
+    def test_jog_origin_sends_2_commands(self):
+        tool = self._tool()
+        tool.on_grbl_jog(direction='origin')
+        run_worker(tool)
+        self.assertEqual(tool.grbl_ser_port.commands(),
+                         ['$J=G90 G21 Z2.0 F100.0', '$J=G90 G21 X0.0 Y0.0 F100.0'])
+
+    def test_jog_blocked_in_recovery(self):
+        tool = self._tool()
+        tool._grbl_recovery = 'needs_home'
+        tool.on_grbl_jog(direction='xplus')
+        tool.app.worker_task.emit.assert_not_called()
+
+    def test_typed_command_runs_in_worker(self):
+        tool = self._tool()
+        tool.ui.grbl_command_entry.get_value.return_value = 'G0 X1'
+        tool.on_grbl_send_command()
+        self.assertEqual(tool.grbl_ser_port.commands(), [])
+        run_worker(tool)
+        self.assertEqual(tool.grbl_ser_port.commands(), ['G0 X1'])
+
+    def test_report_reads_status(self):
+        tool = self._tool()
+        tool.on_grbl_report()
+        run_worker(tool)
+        self.assertEqual(tool.grbl_ser_port.commands(), ['?'])
+
+    def test_parameter_tolerates_bad_bytes(self):
+        port = make_port([b'\xff\xfe junk\r\n', b'$10=1\r\n', b'ok\r\n'])
+        tool = self._tool(port)
+        tool.on_grbl_get_parameter('$10')
+        run_worker(tool)
+        shell_texts = [c.args[0] for c in tool.app.inform_shell.__getitem__.return_value.emit.call_args_list]
+        self.assertTrue(any('$10 = 1.0' in t for t in shell_texts))
+
+    def test_bad_parameter_number_starts_nothing(self):
+        tool = self._tool()
+        tool.on_grbl_get_parameter('abc')
+        tool.app.worker_task.emit.assert_not_called()
+
+    def test_busy_port_blocks_every_command(self):
+        tool = self._tool()
+        tool._grbl_reserve('probe', motion=True)
+        tool.ui.grbl_command_entry.get_value.return_value = '?'
+        tool.on_grbl_jog(direction='xplus')
+        tool.on_grbl_send_command()
+        tool.on_grbl_report()
+        tool.on_grbl_get_parameter('$10')
+        tool.app.worker_task.emit.assert_not_called()
+        self.assertEqual(tool.grbl_ser_port.commands(), [])
+
+    def test_no_port_blocks_every_command(self):
+        tool = make_audit_tool()
+        tool.ui.grbl_command_entry.get_value.return_value = '?'
+        tool.on_grbl_jog(direction='xplus')
+        tool.on_grbl_send_command()
+        tool.on_grbl_report()
+        tool.on_grbl_get_parameter('$10')
+        tool.app.worker_task.emit.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
