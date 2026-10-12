@@ -232,6 +232,7 @@ def run_set_tool_ui(storage, heights_valid, loaded_obj=None, plot_points=False, 
     tool.show_probing_geo = MagicMock()
     tool.on_avoid_exc_holes = MagicMock()
     tool.mouse_events_connected = False
+    tool.probing_shapes = None
     if owner is not None:
         tool._al_target_name, tool._al_target_obj = owner
     ui = MagicMock()
@@ -1443,6 +1444,34 @@ class TestSignalsOnce(unittest.TestCase):
         with patch('appPlugins.ToolLevelling.QtWidgets.QApplication.instance', return_value=qt_app):
             tool.connect_signals_at_init()
         qt_app.aboutToQuit.connect.assert_called_once_with(tool._grbl_force_close)
+
+
+class TestProbingShapes(unittest.TestCase):
+    def test_old_shapes_are_cleared(self):
+        tool = make_audit_tool()
+        old = MagicMock()
+        tool.probing_shapes = old
+        with patch('appPlugins.ToolLevelling.ShapeCollection') as shape_cls:
+            tool._new_probing_shapes('job')
+        old.clear.assert_called_once_with(update=True)
+        self.assertIs(tool.probing_shapes, shape_cls.return_value)
+
+    def test_legacy_engine_uses_legacy_collection(self):
+        tool = make_audit_tool()
+        tool.app.use_3d_engine = False
+        with patch('appPlugins.ToolLevelling.ShapeCollectionLegacy') as legacy_cls:
+            tool._new_probing_shapes('job')
+        self.assertEqual(legacy_cls.call_args.kwargs['name'], 'job_probing_shapes')
+
+    def test_kept_map_is_replotted_when_plotting_is_on(self):
+        storage = {1: {'point': Point(0.0, 0.0), 'geo': None, 'height': 0.2}}
+        tool = run_set_tool_ui(storage, heights_valid=True, plot_points=True)
+        tool.show_probing_geo.assert_called_once_with(state=True, reset=True)
+
+    def test_kept_map_is_not_plotted_when_plotting_is_off(self):
+        storage = {1: {'point': Point(0.0, 0.0), 'geo': None, 'height': 0.2}}
+        tool = run_set_tool_ui(storage, heights_valid=True, plot_points=False)
+        tool.show_probing_geo.assert_not_called()
 
 
 if __name__ == '__main__':

@@ -431,18 +431,7 @@ class ToolLevelling(CNCjob, AppTool):
             name = ''
 
         # Shapes container for the Voronoi cells in Autolevelling
-        if self.app.use_3d_engine:
-            self.probing_shapes = ShapeCollection(
-                parent=self.app.plotcanvas.view.scene,
-                layers=1,
-                pool=self.app.pool
-            )
-        else:
-            self.probing_shapes = ShapeCollectionLegacy(
-                obj=self,
-                app=self.app,
-                name=name + "_probing_shapes"
-            )
+        self._new_probing_shapes(name)
 
         self.form_fields.update({
             "tools_al_probe_tip_dia":           self.ui.probe_tip_dia_entry,
@@ -534,12 +523,39 @@ class ToolLevelling(CNCjob, AppTool):
         # the table so the kept points show up again
         if self.al_heights_valid:
             self.build_al_table()
+            # the slot plots only if 'Plot probing points' is checked
+            self._on_show_probing_geo_sig(True, True)
 
         self.on_avoid_exc_holes(
             self.app.options.get(
                 "tools_al_avoid_exc_holes",
                 app_defaults.get("tools_al_avoid_exc_holes", AppDefaults.factory_defaults.get("tools_al_avoid_exc_holes")))
         )
+
+    def _new_probing_shapes(self, name):
+        """
+        Make a new container for the probe shapes. The old container is
+        cleared first, so its shapes do not stay on the canvas.
+        """
+        old_shapes = getattr(self, 'probing_shapes', None)
+        if old_shapes is not None:
+            try:
+                old_shapes.clear(update=True)
+            except Exception as err:
+                self.app.log.debug("ToolLevelling._new_probing_shapes() -> %s" % str(err))
+
+        if self.app.use_3d_engine:
+            self.probing_shapes = ShapeCollection(
+                parent=self.app.plotcanvas.view.scene,
+                layers=1,
+                pool=self.app.pool
+            )
+        else:
+            self.probing_shapes = ShapeCollectionLegacy(
+                obj=self,
+                app=self.app,
+                name=name + "_probing_shapes"
+            )
 
     def on_object_changed(self):
 
@@ -558,18 +574,7 @@ class ToolLevelling(CNCjob, AppTool):
             self.ui.al_frame.setDisabled(False)
 
             # Shapes container for the Voronoi cells in Autolevelling
-            if self.app.use_3d_engine:
-                self.probing_shapes = ShapeCollection(
-                    parent=self.app.plotcanvas.view.scene,
-                    layers=1,
-                    pool=self.app.pool
-                )
-            else:
-                self.probing_shapes = ShapeCollectionLegacy(
-                    obj=self,
-                    app=self.app,
-                    name=obj_name + "_probing_shapes"
-                )
+            self._new_probing_shapes(obj_name)
         else:
             self.ui.al_frame.setDisabled(True)
 
