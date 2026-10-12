@@ -1682,5 +1682,18 @@ class TestImportStaging(unittest.TestCase):
         self.assertEqual(params[1].target_name, 'job_b')
 
 
+class TestSupportedTarget(unittest.TestCase):
+    def test_missing_attributes_return_false(self):
+        self.assertFalse(ToolLevelling._is_supported_al_target(None))
+        self.assertFalse(ToolLevelling._is_supported_al_target(SimpleNamespace(obj_options={'type': 'Geometry'})))
+        self.assertFalse(ToolLevelling._is_supported_al_target(SimpleNamespace(is_segmented_gcode=True, obj_options={})))
+        self.assertFalse(ToolLevelling._is_supported_al_target(SimpleNamespace(is_segmented_gcode=True)))
+
+    def test_supported_types(self):
+        for kind in ('Geometry', 'Excellon'):
+            self.assertTrue(ToolLevelling._is_supported_al_target(
+                SimpleNamespace(is_segmented_gcode=True, obj_options={'type': kind})))
+
+
 if __name__ == '__main__':
     unittest.main()

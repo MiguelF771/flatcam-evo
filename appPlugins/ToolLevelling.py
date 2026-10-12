@@ -640,10 +640,12 @@ class ToolLevelling(CNCjob, AppTool):
 
     @staticmethod
     def _is_supported_al_target(target_obj):
+        if target_obj is None:
+            return False
+        obj_options = getattr(target_obj, 'obj_options', None) or {}
         return (
-                target_obj is not None and
-                target_obj.is_segmented_gcode and
-                target_obj.obj_options["type"] in ('Geometry', 'Excellon')
+                bool(getattr(target_obj, 'is_segmented_gcode', False)) and
+                obj_options.get('type') in ('Geometry', 'Excellon')
         )
 
     def _height_map_is_complete(self):
