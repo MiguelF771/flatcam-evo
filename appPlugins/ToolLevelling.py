@@ -389,6 +389,10 @@ class ToolLevelling(CNCjob, AppTool):
         self.app.cleanup.connect(self.set_tool_ui)
 
     def set_tool_ui(self):
+        # closing or resetting the tool while adding manual points must give
+        # the canvas events back to the app
+        self._release_manual_mouse_events()
+
         self.units = self.app.app_units.upper()
         self.al_heights_valid = self._height_map_is_complete()
         app_defaults = getattr(self.app, "defaults", None) or AppDefaults.factory_defaults
@@ -865,21 +869,12 @@ class ToolLevelling(CNCjob, AppTool):
     def on_add_manual_points(self):
         self.al_heights_valid = False
 
-        xmin, ymin, xmax, ymax = self.solid_geo.bounds
-        f_probe_pt = Point([xmin, xmin])
-        int_keys = [int(k) for k in self.al_voronoi_geo_storage.keys()]
-        new_id = max(int_keys) + 1 if int_keys else 1
-        new_dict = {
-            'point': f_probe_pt,
-            'geo': None,
-            'height': 0.0
-        }
-        self.al_voronoi_geo_storage[new_id] = deepcopy(new_dict)
-
-        radius = self.ui.probe_tip_dia_entry.get_value() / 2
-        fprobe_pt_buff = f_probe_pt.buffer(radius)
+        # a 2nd click on Add must not connect the handlers 2 times
+        self._release_manual_mouse_events()
 
         self.app.inform.emit(_("Click on canvas to add a Probe Point..."))
+        # keep the current selection shape setting; it is restored when the adding ends
+        self.old_selection_state = self.app.options.get('global_selection_shape', True)
         self.app.options['global_selection_shape'] = False
 
         if self.app.use_3d_engine:
@@ -903,8 +898,6 @@ class ToolLevelling(CNCjob, AppTool):
         else:
             # clear probe shapes
             self.plot_probing_geo(None, False)
-
-        self.plot_probing_geo(geometry=fprobe_pt_buff, visibility=True, custom_color="#0000FFFA")
 
     def _on_show_probing_geo_sig(self, state, reset):
         """

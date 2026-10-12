@@ -515,6 +515,7 @@ class TestToolUiState(unittest.TestCase):
         tool.change_level = MagicMock()
         tool.build_tool_ui = MagicMock()
         tool.on_avoid_exc_holes = MagicMock()
+        tool.mouse_events_connected = False
 
         with patch('appPlugins.ToolLevelling.LevelUI', return_value=MagicMock()), \
                 patch('appPlugins.ToolLevelling.ShapeCollection'):

@@ -231,6 +231,7 @@ def run_set_tool_ui(storage, heights_valid, loaded_obj=None, plot_points=False, 
     tool.build_al_table = MagicMock()
     tool.show_probing_geo = MagicMock()
     tool.on_avoid_exc_holes = MagicMock()
+    tool.mouse_events_connected = False
     if owner is not None:
         tool._al_target_name, tool._al_target_obj = owner
     ui = MagicMock()
@@ -1363,6 +1364,46 @@ class TestManualFinish(unittest.TestCase):
         tool.on_mouse_click_release(SimpleNamespace(xdata=2.0, ydata=2.0, button=1))
         self.assertEqual(len(tool.al_voronoi_geo_storage), 3)
         self.assertEqual(tool._al_generation, 1)
+
+
+class TestManualStart(unittest.TestCase):
+    def _tool(self):
+        tool = make_audit_tool()
+        tool.solid_geo = box(5.0, 10.0, 20.0, 30.0)
+        tool.app.options = {'global_selection_shape': 'USER'}
+        tool.plot_probing_geo = MagicMock()
+        tool.show_probing_geo = MagicMock()
+        return tool
+
+    def test_no_phantom_point(self):
+        tool = self._tool()
+        tool.on_add_manual_points()
+        self.assertEqual(tool.al_voronoi_geo_storage, {})
+        self.assertTrue(tool.mouse_events_connected)
+
+    def test_selection_state_is_captured_at_start(self):
+        tool = self._tool()
+        tool.on_add_manual_points()
+        self.assertEqual(tool.old_selection_state, 'USER')
+        self.assertFalse(tool.app.options['global_selection_shape'])
+
+    def test_second_add_releases_first(self):
+        tool = self._tool()
+        tool.on_add_manual_points()
+        tool.app.plotcanvas.graph_event_disconnect.reset_mock()
+        tool.on_add_manual_points()
+        disconnected = [c.args for c in tool.app.plotcanvas.graph_event_disconnect.call_args_list]
+        self.assertIn(('key_press', tool.on_key_press), disconnected)
+        self.assertEqual(tool.old_selection_state, 'USER')
+
+    def test_set_tool_ui_releases_manual_mode(self):
+        tool = self._tool()
+        tool.mouse_events_connected = True
+        tool._release_manual_mouse_events = MagicMock()
+        tool.clear_ui = MagicMock(side_effect=RuntimeError('stop here'))
+        with self.assertRaises(RuntimeError):
+            tool.set_tool_ui()
+        tool._release_manual_mouse_events.assert_called_once()
 
 
 if __name__ == '__main__':
