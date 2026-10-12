@@ -570,3 +570,95 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     new_z_str = "{0:.{1}f}".format(new_z, decimals)
 
     return _insert_z_word(line, new_z_str, z_match)
+
+
+_GRBL_ERROR_RE = re.compile(r'^\s*((?:error|ALARM)\s*:\s*\d+)', re.IGNORECASE | re.MULTILINE)
+_SETTING_RE = re.compile(r'^\s*\$(\d+)\s*=\s*([+\-]?\d*\.?\d+)', re.MULTILINE)
+_STATUS_RE = re.compile(r'^\s*<\s*([A-Za-z]+)')
+_GC_RE = re.compile(r'\[GC:([^\]]*)\]')
+
+
+def grbl_reply_error(text):
+    """
+    Find the first GRBL error or alarm line in a controller reply.
+
+    :param text: decoded reply text; it can hold more than 1 line.
+    :return: the text of the first 'error:N' or 'ALARM:N' line, or None.
+    """
+    if not text:
+        return None
+    m = _GRBL_ERROR_RE.search(text)
+    return m.group(1) if m else None
+
+
+def probe_timeout_s(travel_z, depth, feedrate, margin_s=5.0):
+    """
+    Time limit for 1 G38.2 probe move: the time to move from travel_z to
+    depth at the probe feedrate (units per minute, G94), times 1.5, plus a margin.
+
+    :return: seconds (float), never less than 10.0.
+    """
+    try:
+        distance = abs(float(travel_z) - float(depth))
+        feed = float(feedrate)
+    except (TypeError, ValueError):
+        return 10.0
+    if not math.isfinite(distance) or not math.isfinite(feed) or feed <= 0:
+        return 10.0
+    return max(10.0, distance / feed * 60.0 * 1.5 + margin_s)
+
+
+def grbl_report_scale(app_units, report_inches):
+    """
+    Factor that changes GRBL reported positions ([PRB:], $# offsets) into
+    the application units.
+
+    :param app_units: 'MM' or 'IN'.
+    :param report_inches: True if the GRBL setting $13 is 1 (reports in inches).
+    :return: 1.0, 25.4 or 1 / 25.4.
+    """
+    app_in = str(app_units).upper() == 'IN'
+    if app_in == bool(report_inches):
+        return 1.0
+    return 1.0 / 25.4 if app_in else 25.4
+
+
+def parse_grbl_setting(text, number):
+    """
+    :param text: the reply of the GRBL '$$' command.
+    :param number: the setting number (int), for example 13.
+    :return: the setting value as float, or None if it is not in the text.
+    """
+    if not text:
+        return None
+    for m in _SETTING_RE.finditer(text):
+        if int(m.group(1)) == int(number):
+            return float(m.group(2))
+    return None
+
+
+def parse_grbl_status_state(line):
+    """
+    :param line: a GRBL status report, for example '<Idle|MPos:0.000,0.000,0.000|FS:0,0>'.
+    :return: the machine state word ('Idle', 'Run', 'Hold', 'Jog', 'Alarm',
+        'Door', 'Check', 'Home', 'Sleep'), or None.
+    """
+    if not line:
+        return None
+    m = _STATUS_RE.match(line)
+    return m.group(1) if m else None
+
+
+def grbl_modes_confirmed(gc_text, units_cmd):
+    """
+    :param gc_text: the reply of the GRBL '$G' command.
+    :param units_cmd: 'G20' or 'G21'.
+    :return: True if the active modes include units_cmd, G90 and G94.
+    """
+    if not gc_text:
+        return False
+    m = _GC_RE.search(gc_text)
+    if not m:
+        return False
+    words = m.group(1).split()
+    return units_cmd in words and 'G90' in words and 'G94' in words
