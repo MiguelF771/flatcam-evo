@@ -1695,5 +1695,32 @@ class TestSupportedTarget(unittest.TestCase):
                 SimpleNamespace(is_segmented_gcode=True, obj_options={'type': kind})))
 
 
+class TestResultSignalThread(unittest.TestCase):
+    def test_result_from_worker_thread_is_published_in_gui_thread(self):
+        storage = {1: {'point': Point(0.0, 0.0), 'geo': None, 'height': 0.5}}
+        tool = make_audit_tool(storage=storage)
+        QtWidgets.QWidget.__init__(tool)          # make the QObject part valid
+        del tool.al_result_ready_sig              # use the real class signal
+        seen = []
+
+        def slot(result):
+            seen.append(threading.current_thread() is threading.main_thread())
+            tool._on_al_result_ready(result)
+
+        tool.al_result_ready_sig.connect(slot)
+        ctx = tool._al_capture_context()
+        worker = threading.Thread(target=lambda: tool.al_result_ready_sig.emit(
+            {'kind': 'import', 'context': ctx, 'heights': {1: -0.2}}))
+        worker.start()
+        worker.join()
+
+        deadline = time.monotonic() + 2.0
+        while not seen and time.monotonic() < deadline:
+            _qapp.processEvents()
+        self.assertEqual(seen, [True])
+        self.assertEqual(tool.al_voronoi_geo_storage[1]['height'], -0.2)
+        self.assertTrue(tool.al_heights_valid)
+
+
 if __name__ == '__main__':
     unittest.main()
