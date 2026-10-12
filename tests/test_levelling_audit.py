@@ -411,5 +411,141 @@ class TestGrblHelpers(unittest.TestCase):
         self.assertFalse(li.grbl_modes_confirmed('ok', 'G21'))
 
 
+class TestGrblSession(unittest.TestCase):
+    def _tool(self, port=None):
+        tool = make_audit_tool()
+        tool.grbl_ser_port = port if port is not None else FakeGrbl()
+        return tool
+
+    def test_reserve_needs_open_port(self):
+        tool = make_audit_tool()
+        self.assertIsNone(tool._grbl_reserve('x'))
+        self.assertTrue(any('[ERROR_NOTCL]' in t for t in emitted(tool)))
+
+    def test_only_one_operation(self):
+        tool = self._tool()
+        op = tool._grbl_reserve('first')
+        self.assertIsNotNone(op)
+        self.assertIsNone(tool._grbl_reserve('second'))
+        tool._grbl_release(op)
+        self.assertIsNotNone(tool._grbl_reserve('third'))
+
+    def test_recovery_blocks_motion_only(self):
+        tool = self._tool()
+        tool._grbl_recovery = 'needs_reset'
+        self.assertIsNone(tool._grbl_reserve('jog', motion=True))
+        self.assertIsNotNone(tool._grbl_reserve('param', motion=False))
+
+    def test_recovery_operation_only_when_needs_home(self):
+        tool = self._tool()
+        tool._grbl_recovery = 'needs_reset'
+        self.assertIsNone(tool._grbl_reserve('home', motion=True, allow_in_recovery=True))
+        tool._grbl_recovery = 'needs_home'
+        self.assertIsNotNone(tool._grbl_reserve('home', motion=True, allow_in_recovery=True))
+
+    def test_transact_reads_until_ok(self):
+        tool = self._tool()
+        op = tool._grbl_reserve('t')
+        text, status = tool._grbl_transact(op, '$$', timeout=1.0)
+        self.assertEqual(status, 'ok')
+        self.assertIn('$13=0', text)
+
+    def test_transact_drops_stale_input(self):
+        fake = FakeGrbl()
+        fake.rx.append(b'[PRB:9.000,9.000,9.000:1]\r\n')
+        tool = self._tool(fake)
+        op = tool._grbl_reserve('t')
+        text, status = tool._grbl_transact(op, 'G0 Z2', timeout=1.0)
+        self.assertEqual(status, 'ok')
+        self.assertNotIn('PRB', text)
+
+    def test_transact_error_and_alarm(self):
+        fake = FakeGrbl(replies={'G0 Z2': ['error:9'], 'G38.2': ['ALARM:5']})
+        tool = self._tool(fake)
+        op = tool._grbl_reserve('t')
+        self.assertEqual(tool._grbl_transact(op, 'G0 Z2', timeout=1.0)[1], 'error')
+        self.assertEqual(tool._grbl_transact(op, 'G38.2 Z-1 F50', timeout=1.0)[1], 'error')
+
+    def test_transact_joins_partial_lines(self):
+        port = make_port([b'[PR', b'B:1.0,2.0,-0.5:1]\r\n', b'o', b'k\r\n'])
+        tool = self._tool(port)
+        op = tool._grbl_reserve('t')
+        text, status = tool._grbl_transact(op, 'G38.2 Z-1 F50', timeout=1.0)
+        self.assertEqual(status, 'ok')
+        self.assertIn('[PRB:1.0,2.0,-0.5:1]', text)
+
+    def test_transact_timeout(self):
+        tool = self._tool(make_port([]))
+        op = tool._grbl_reserve('t')
+        self.assertEqual(tool._grbl_transact(op, 'G38.2 Z-1 F50', timeout=0.2)[1], 'timeout')
+
+    def test_pre_cancelled_transact_does_no_io(self):
+        port = make_port([b'ok\r\n'])
+        tool = self._tool(port)
+        op = tool._grbl_reserve('t')
+        op.cancel.set()
+        self.assertEqual(tool._grbl_transact(op, 'G0 Z2', timeout=1.0)[1], 'cancelled')
+        port.reset_input_buffer.assert_not_called()
+        port.write.assert_not_called()
+
+    def test_released_operation_does_no_io(self):
+        port = make_port([b'ok\r\n'])
+        tool = self._tool(port)
+        op = tool._grbl_reserve('t')
+        tool._grbl_release(op)
+        self.assertEqual(tool._grbl_transact(op, 'G0 Z2', timeout=1.0)[1], 'cancelled')
+        port.write.assert_not_called()
+
+    def test_cancel_during_read(self):
+        port = make_port([])
+        tool = self._tool(port)
+        op = tool._grbl_reserve('t')
+
+        def readline():
+            op.cancel.set()
+            return b''
+        port.readline.side_effect = readline
+        self.assertEqual(tool._grbl_transact(op, 'G0 Z2', timeout=5.0)[1], 'cancelled')
+
+    def test_port_error_does_not_touch_replacement_port(self):
+        port = make_port([])
+        new_port = make_port([])
+        tool = self._tool(port)
+        op = tool._grbl_reserve('t')
+
+        def readline():
+            tool.grbl_ser_port = new_port
+            raise serial.SerialException('gone')
+        port.readline.side_effect = readline
+        self.assertEqual(tool._grbl_transact(op, 'G0 Z2', timeout=1.0)[1], 'port_error')
+        new_port.write.assert_not_called()
+        new_port.readline.assert_not_called()
+
+    def test_query_status(self):
+        tool = self._tool(FakeGrbl(state='Alarm'))
+        op = tool._grbl_reserve('t')
+        line = tool._grbl_query_status(op)
+        self.assertEqual(li.parse_grbl_status_state(line), 'Alarm')
+
+    def test_start_op_reserves_before_worker_and_releases_after(self):
+        tool = self._tool()
+        ran = []
+        self.assertTrue(tool._grbl_start_op('x', lambda op: ran.append(op)))
+        self.assertIsNotNone(tool._grbl_op)
+        run_worker(tool)
+        self.assertEqual(len(ran), 1)
+        self.assertIsNone(tool._grbl_op)
+
+    def test_start_op_releases_after_port_exception(self):
+        tool = self._tool()
+
+        def boom(op):
+            raise serial.SerialException('gone')
+        tool._grbl_start_op('x', boom)
+        run_worker(tool)
+        self.assertIsNone(tool._grbl_op)
+        self.assertTrue(any('[ERROR_NOTCL]' in t for t in emitted(tool)))
+
+
 if __name__ == '__main__':
     unittest.main()

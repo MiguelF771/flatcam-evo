@@ -66,9 +66,16 @@ from appPlugins.levelling_interp import (
     new_levelling_state,
     level_gcode_line,
     parse_height_map_line,
+    grbl_reply_error,
+    probe_timeout_s,
+    grbl_report_scale,
+    parse_grbl_setting,
+    parse_grbl_status_state,
+    grbl_modes_confirmed,
 )
 
 import time
+import threading
 import serial
 import glob
 import random
@@ -99,6 +106,22 @@ if '_' not in builtins.__dict__:
     _ = gettext.gettext
 
 log = logging.getLogger('base')
+
+
+class _GrblOperation:
+    """
+    1 operation that sends commands to GRBL and reads the replies. While it
+    exists, it owns the serial port: no other operation can start.
+
+    :param name:   short name for messages, for example 'probe' or 'jog'.
+    :param motion: True if the operation can move the machine; it then needs
+                   a machine that is not in recovery.
+    """
+
+    def __init__(self, name, motion=False):
+        self.name = name
+        self.motion = motion
+        self.cancel = threading.Event()
 
 
 class ToolLevelling(CNCjob, AppTool):
@@ -148,6 +171,14 @@ class ToolLevelling(CNCjob, AppTool):
 
         # busy guard for apply_autolevel() (creates the new '_levelled' CNCJob object)
         self._al_apply_running = False
+
+        # serial session: 1 operation that reads GRBL replies at a time
+        self._grbl_op_lock = threading.Lock()
+        self._grbl_op = None
+        # None, 'needs_reset' or 'needs_home'; motion is blocked until it is None again
+        self._grbl_recovery = None
+        # True if a disconnect waits for the running operation to stop
+        self._grbl_close_pending = False
 
         '''
         dictionary of dictionaries to store the information's for the autolevelling
@@ -1787,6 +1818,184 @@ class ToolLevelling(CNCjob, AppTool):
         self.grbl_ser_port.reset_input_buffer()
 
         return grbl_out
+
+    def _grbl_port_ready(self):
+        """:return: True if a serial port is open."""
+        port = getattr(self, 'grbl_ser_port', None)
+        return port is not None and bool(getattr(port, 'is_open', False))
+
+    def _grbl_recovery_text(self):
+        if self._grbl_recovery == 'needs_reset':
+            return _("GRBL needs recovery. Press Reset, then Home.")
+        return _("GRBL needs recovery. Press Home.")
+
+    def _grbl_reserve(self, name, motion=False, allow_in_recovery=False):
+        """
+        Reserve the serial port for 1 operation. Call it in the GUI thread,
+        before the worker task is scheduled.
+
+        :param name:              short name of the operation.
+        :param motion:            True if the operation can move the machine.
+        :param allow_in_recovery: True only for the home cycle, which ends the recovery.
+        :return: a _GrblOperation, or None (the user was told why).
+        """
+        if not self._grbl_port_ready() or self._grbl_close_pending:
+            self.app.inform.emit('[ERROR_NOTCL] %s' % _("Not connected to a GRBL controller."))
+            return None
+
+        with self._grbl_op_lock:
+            if self._grbl_op is not None:
+                self.app.inform.emit('[WARNING_NOTCL] %s: %s. %s' % (
+                    _("GRBL is busy"), self._grbl_op.name, _("Wait, or press Stop.")))
+                return None
+            if motion and self._grbl_recovery is not None and not (
+                    allow_in_recovery and self._grbl_recovery == 'needs_home'):
+                self.app.inform.emit('[ERROR_NOTCL] %s' % self._grbl_recovery_text())
+                return None
+            op = _GrblOperation(name, motion)
+            self._grbl_op = op
+            return op
+
+    def _grbl_release(self, op):
+        """Free the serial port after the operation `op` ended."""
+        with self._grbl_op_lock:
+            if self._grbl_op is op:
+                self._grbl_op = None
+
+    def _grbl_start_op(self, name, fn, motion=False, allow_in_recovery=False):
+        """
+        Reserve the port now (GUI thread) and run fn(op) in a worker thread.
+        The port is released when fn ends, also after an exception.
+
+        :return: True if the worker task was scheduled.
+        """
+        op = self._grbl_reserve(name, motion=motion, allow_in_recovery=allow_in_recovery)
+        if op is None:
+            return False
+
+        def worker_task():
+            try:
+                fn(op)
+            except (serial.SerialException, OSError) as err:
+                self.app.log.error("ToolLevelling._grbl_start_op(%s) -> %s" % (name, str(err)))
+                self.app.inform.emit('[ERROR_NOTCL] %s: %s' % (_("The serial port failed"), str(err)))
+            finally:
+                self._grbl_release(op)
+
+        self.app.worker_task.emit({'fcn': worker_task, 'params': []})
+        return True
+
+    def _grbl_write_realtime_locked(self, data):
+        """
+        Write a GRBL real-time command (1 byte, no newline, no reply read).
+        The caller must hold self._grbl_op_lock.
+
+        :return: True if the byte was written.
+        """
+        if not self._grbl_port_ready():
+            return False
+        try:
+            self.grbl_ser_port.write(data)
+        except (serial.SerialException, OSError) as err:
+            self.app.log.error("ToolLevelling._grbl_write_realtime_locked() -> %s" % str(err))
+            return False
+        return True
+
+    def _grbl_transact(self, op, command, timeout=10.0, echo=True):
+        """
+        Send 1 line to GRBL for the operation `op`, and read the reply until
+        'ok', 'error:N' or 'ALARM:N', the time limit, a stop of `op`, or a port error.
+
+        The stop request is checked before any I/O, under the same lock that
+        on_grbl_stop() uses, so no command is written after a stop. The input
+        buffer is flushed before the write, so old data is not read as this reply.
+        The read uses the port that was written to, never a replacement port.
+
+        :return: (text, status). text: the decoded reply lines joined by '\\n'.
+            status: 'ok', 'error', 'timeout', 'cancelled' or 'port_error'.
+        """
+        cmd = command.strip()
+        with self._grbl_op_lock:
+            if op.cancel.is_set() or self._grbl_op is not op or not self._grbl_port_ready():
+                return '', 'cancelled'
+            port = self.grbl_ser_port
+            try:
+                port.reset_input_buffer()
+                port.write((cmd + '\n').encode('utf-8'))
+            except (serial.SerialException, OSError) as err:
+                self.app.log.error("ToolLevelling._grbl_transact() -> %s" % str(err))
+                return '', 'port_error'
+
+        if echo:
+            self.app.inform_shell[str, bool].emit(cmd, False)
+
+        decoded_lines = []
+        buffer = b''
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if op.cancel.is_set():
+                return '\n'.join(decoded_lines), 'cancelled'
+            try:
+                chunk = port.readline()
+            except (serial.SerialException, OSError) as err:
+                self.app.log.error("ToolLevelling._grbl_transact() -> %s" % str(err))
+                return '\n'.join(decoded_lines), 'port_error'
+            if not chunk:
+                continue
+
+            # readline() with the port timeout can return a partial line;
+            # keep the bytes until the '\n' arrives
+            buffer += chunk
+            while b'\n' in buffer:
+                raw_line, buffer = buffer.split(b'\n', 1)
+                decoded_line = raw_line.decode('utf-8', errors='replace').strip()
+                if not decoded_line:
+                    continue
+                decoded_lines.append(decoded_line)
+                if echo:
+                    self.app.inform_shell.emit('\t\t\t: ' + decoded_line.upper())
+
+                lowered = decoded_line.lower()
+                if lowered == 'ok':
+                    return '\n'.join(decoded_lines), 'ok'
+                if lowered.startswith('error:') or lowered.startswith('alarm:'):
+                    return '\n'.join(decoded_lines), 'error'
+
+        return '\n'.join(decoded_lines), 'timeout'
+
+    def _grbl_query_status(self, op, timeout=2.0):
+        """
+        Send the real-time status request '?' for the operation `op`.
+
+        :return: the status report line, for example '<Idle|MPos:...|FS:0,0>', or None.
+        """
+        with self._grbl_op_lock:
+            if op.cancel.is_set() or self._grbl_op is not op or not self._grbl_port_ready():
+                return None
+            port = self.grbl_ser_port
+            try:
+                port.reset_input_buffer()
+                port.write(b'?')
+            except (serial.SerialException, OSError) as err:
+                self.app.log.error("ToolLevelling._grbl_query_status() -> %s" % str(err))
+                return None
+
+        buffer = b''
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if op.cancel.is_set():
+                return None
+            try:
+                chunk = port.readline()
+            except (serial.SerialException, OSError):
+                return None
+            buffer += chunk or b''
+            while b'\n' in buffer:
+                raw_line, buffer = buffer.split(b'\n', 1)
+                line = raw_line.decode('utf-8', errors='replace').strip()
+                if line.startswith('<'):
+                    return line
+        return None
 
     def on_grbl_send_command(self):
         cmd = self.ui.grbl_command_entry.get_value()
