@@ -1628,5 +1628,59 @@ class TestPolygonsAndAdd(unittest.TestCase):
         self.assertEqual(tool._al_generation, 1)
 
 
+class TestImportStaging(unittest.TestCase):
+    def _file(self, text):
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            f.write(text)
+            name = f.name
+        self.addCleanup(lambda: os.unlink(name))
+        return name
+
+    def _tool(self, heights_valid=True):
+        storage = {
+            1: {'point': Point(0.0, 0.0), 'geo': None, 'height': 0.5},
+            2: {'point': Point(10.0, 0.0), 'geo': None, 'height': 0.5},
+        }
+        tool = make_audit_tool(storage=storage, heights_valid=heights_valid)
+        return tool
+
+    def test_missing_row_leaves_no_partial_map(self):
+        tool = self._tool()
+        tool.import_height_map(self._file('0.0,0.0,0.1\n'))
+        self.assertEqual(tool.al_voronoi_geo_storage[1]['height'], 0.5)
+        self.assertFalse(tool.al_heights_valid)
+
+    def test_complete_import_is_published(self):
+        tool = self._tool(heights_valid=False)
+        tool.import_height_map(self._file('0.0,0.0,0.1\n10.0,0.0,0.2\n'))
+        self.assertEqual(tool.al_voronoi_geo_storage[2]['height'], 0.2)
+        self.assertTrue(tool.al_heights_valid)
+
+    def test_stale_import_is_discarded(self):
+        tool = self._tool(heights_valid=False)
+        ctx = tool._al_capture_context()
+        points = {1: (0.0, 0.0), 2: (10.0, 0.0)}
+        tool._al_bump_generation()
+        tool.import_height_map(self._file('0.0,0.0,0.1\n10.0,0.0,0.2\n'), ctx, points)
+        self.assertEqual(tool.al_voronoi_geo_storage[2]['height'], 0.5)
+        self.assertFalse(tool.al_heights_valid)
+
+    def test_gui_entry_sets_owner_and_passes_context(self):
+        tool = self._tool()
+        target = SimpleNamespace(obj_options={'name': 'job_b'})
+        tool.ui.object_combo.get_value.return_value = 'job_b'
+        tool.app.collection.get_by_name.return_value = target
+        tool.app.get_last_folder.return_value = ''
+        with patch('appPlugins.ToolLevelling.QtWidgets.QFileDialog.getOpenFileName',
+                   return_value=('C:/map.txt', '')):
+            tool.on_import_height_map()
+        self.assertEqual(tool._al_target_name, 'job_b')
+        self.assertIs(tool._al_target_obj, target)
+        self.assertEqual(tool.al_voronoi_geo_storage, {})
+        params = tool.app.worker_task.emit.call_args.args[0]['params']
+        self.assertEqual(params[0], 'C:/map.txt')
+        self.assertEqual(params[1].target_name, 'job_b')
+
+
 if __name__ == '__main__':
     unittest.main()

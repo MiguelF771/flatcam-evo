@@ -2676,31 +2676,45 @@ class ToolLevelling(CNCjob, AppTool):
         if filename == '':
             self.app.inform.emit('[WARNING_NOTCL] %s' % _("Cancelled."))
         else:
-            self.app.worker_task.emit({'fcn': self.import_height_map, 'params': [filename]})
+            # the imported map belongs to the object selected now
+            current_name = self.ui.object_combo.get_value()
+            current_obj = self.app.collection.get_by_name(current_name)
+            if current_name != getattr(self, '_al_target_name', None) or \
+                    current_obj is not getattr(self, '_al_target_obj', None):
+                self._clear_probe_data()
+                self._al_target_name = current_name
+                self._al_target_obj = current_obj
+            context = self._al_capture_context()
+            points = {key: (v['point'].x, v['point'].y) for key, v in self.al_voronoi_geo_storage.items()}
+            self.app.worker_task.emit({'fcn': self.import_height_map, 'params': [filename, context, points]})
 
-    def import_height_map(self, filename):
+    def import_height_map(self, filename, context=None, points=None):
         """
+        Read a height map file (worker thread). The result goes to the GUI thread
+        through al_result_ready_sig, as a whole; nothing is written here.
 
-        :param filename:
-        :type filename:
-        :return:
-        :rtype:
+        :param filename: path of the height map file.
+        :param context:  _AlContext captured by the caller; None means 'now'.
+        :param points:   {key: (x, y)} of the probe points captured by the caller; None means 'now'.
         """
-        # self.units is only ever (re)set in set_ui(); refresh it here (same
-        # reasoning as apply_autolevel()) so _al_match_tolerance()'s unit-aware
-        # cap and the later units check in _al_prepare_interp() use the app's
-        # current units, not a stale value.
+        # self.units is only ever (re)set in set_ui(); refresh it here so that
+        # _al_match_tolerance() uses the app's current units
         self.units = self.app.app_units.upper()
+        if context is None:
+            context = self._al_capture_context()
+        if points is None:
+            points = {key: (v['point'].x, v['point'].y) for key, v in self.al_voronoi_geo_storage.items()}
+        failed = {'kind': 'failed', 'context': context}
 
         try:
-            if filename:
-                with open(filename, 'r') as f:
-                    stream = f.readlines()
-            else:
+            if not filename:
                 return
+            with open(filename, 'r') as f:
+                stream = f.readlines()
         except IOError:
             self.app.log.error("Failed to open height map file: %s" % filename)
             self.app.inform.emit('[ERROR_NOTCL] %s: %s' % (_("Failed to open height map file"), filename))
+            self.al_result_ready_sig.emit(failed)
             return
 
         rows = []
@@ -2716,46 +2730,38 @@ class ToolLevelling(CNCjob, AppTool):
 
         if not rows:
             self.app.inform.emit('[ERROR_NOTCL] %s' % _("The height map file has no valid rows."))
-            self.al_heights_valid = False
+            self.al_result_ready_sig.emit(failed)
             return
 
-        storage = self.al_voronoi_geo_storage
-        if storage:
-            points_xy = {key: (v['point'].x, v['point'].y) for key, v in storage.items()}
-            tol = self._al_match_tolerance(list(points_xy.values()))
+        if not points:
+            self.al_result_ready_sig.emit({'kind': 'import_points', 'context': context, 'points': rows})
+            return
 
-            matched_keys = set()
-            unmatched_rows = 0
-            for x, y, z in rows:
-                key = match_nearest_point(points_xy, x, y, tol)
-                if key is None:
-                    unmatched_rows += 1
-                    continue
-                storage[key]['height'] = z
-                matched_keys.add(key)
+        tol = self._al_match_tolerance(list(points.values()))
+        heights = {}
+        unmatched_rows = 0
+        for x, y, z in rows:
+            key = match_nearest_point(points, x, y, tol)
+            if key is None:
+                unmatched_rows += 1
+                continue
+            heights[key] = z
 
-            if unmatched_rows:
-                self.app.inform.emit(
-                    '[WARNING_NOTCL] %s: %d' %
-                    (_("Height map rows could not be matched to a probe point"), unmatched_rows)
-                )
+        if unmatched_rows:
+            self.app.inform.emit(
+                '[WARNING_NOTCL] %s: %d' %
+                (_("Height map rows could not be matched to a probe point"), unmatched_rows)
+            )
 
-            missing = set(storage.keys()) - matched_keys
-            if missing:
-                self.app.inform.emit(
-                    '[ERROR_NOTCL] %s' %
-                    _("Some probe points have no matching row in the height map file.")
-                )
-                self.al_heights_valid = False
-                return
-        else:
-            for idx, (x, y, z) in enumerate(rows, start=1):
-                storage[idx] = {'point': Point((x, y)), 'geo': None, 'height': z}
+        if set(heights) != set(points):
+            self.app.inform.emit(
+                '[ERROR_NOTCL] %s' %
+                _("Some probe points have no matching row in the height map file.")
+            )
+            self.al_result_ready_sig.emit(failed)
+            return
 
-        self.al_heights_valid = True
-        self.build_al_table_sig.emit()
-        # the slot reads the 'Plot probing points' checkbox in the GUI thread
-        self.show_probing_geo_sig.emit(True, True)
+        self.al_result_ready_sig.emit({'kind': 'import', 'context': context, 'heights': heights})
 
     def _al_read_probe_inputs(self):
         """
