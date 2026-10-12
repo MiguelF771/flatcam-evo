@@ -197,7 +197,7 @@ class ToolLevelling(CNCjob, AppTool):
         self.grbl_probe_result = ''
         self.grbl_work_offset = (0.0, 0.0, 0.0)
 
-        # True only right after a successful probing pass (parse_grbl_probe_result())
+        # True only right after a successful probing pass (_on_al_result_ready())
         # or a successful height-map import; False whenever probe points are
         # (re)created or cleared, since their 'height' is then just a placeholder.
         self.al_heights_valid = False
@@ -1217,6 +1217,67 @@ class ToolLevelling(CNCjob, AppTool):
         if VORONOI_ENABLED is True:
             self.generate_voronoi_geometry(pts=[Point((pt[0], pt[1])) for pt in pts])
 
+    def _release_manual_mouse_events(self):
+        """
+        Give the canvas mouse and key events back to the app, and restore the
+        selection shape setting. Does nothing if manual adding is not active.
+        """
+        if not getattr(self, 'mouse_events_connected', False):
+            return
+        self.mouse_events_connected = False
+
+        if self.app.use_3d_engine:
+            self.app.plotcanvas.graph_event_disconnect('key_press', self.on_key_press)
+            self.app.plotcanvas.graph_event_disconnect('mouse_release', self.on_mouse_click_release)
+            self.app.plotcanvas.graph_event_disconnect('mouse_move', self.on_mouse_move)
+        else:
+            self.app.plotcanvas.graph_event_disconnect(self.kp)
+            self.app.plotcanvas.graph_event_disconnect(self.mr)
+            self.app.plotcanvas.graph_event_disconnect(self.mm)
+        self.kp = None
+        self.mr = None
+        self.mm = None
+
+        self.app.kp = self.app.plotcanvas.graph_event_connect('key_press', self.app.ui.keyPressEvent)
+        self.app.mp = self.app.plotcanvas.graph_event_connect('mouse_press', self.app.on_mouse_click_over_plot)
+        self.app.mr = self.app.plotcanvas.graph_event_connect('mouse_release',
+                                                              self.app.on_mouse_click_release_over_plot)
+
+        # restore selection
+        self.app.options['global_selection_shape'] = self.old_selection_state
+
+    def _finish_manual_points(self):
+        """
+        Build the cells and the probing G-code for the manual probe points,
+        then refresh the table and the plot. Right click and Escape use it.
+        """
+        pts_list = [value['point'] for value in self.al_voronoi_geo_storage.values()]
+        if not pts_list:
+            self.probing_gcode_text = ''
+            self.build_al_table_sig.emit()
+            return
+
+        al_method = self.ui.al_method_radio.get_value()
+        if al_method == 'v':
+            if VORONOI_ENABLED is True:
+                self.generate_voronoi_geometry(pts=pts_list)
+                self.probing_gcode_text = self.probing_gcode(self.al_voronoi_geo_storage)
+            else:
+                self.app.inform.emit('[ERROR_NOTCL] %s' % _("Voronoi function can not be loaded.\n"
+                                                            "Shapely >= 1.8 is required"))
+        else:
+            self.generate_bilinear_geometry(pts=[(pt.x, pt.y, 0.0) for pt in pts_list])
+            self.probing_gcode_text = self.probing_gcode(storage=self.al_bilinear_geo_storage)
+
+        # rebuild the al table
+        self.build_al_table_sig.emit()
+
+        if self.ui.plot_probing_pts_cb.get_value():
+            self.show_probing_geo(state=True, reset=True)
+        else:
+            # clear probe shapes
+            self.plot_probing_geo(None, False)
+
     def on_mouse_move(self, event):
         """
         Callback for the mouse motion event over the plot.
@@ -1292,6 +1353,7 @@ class ToolLevelling(CNCjob, AppTool):
             }
             self.al_voronoi_geo_storage[new_id] = deepcopy(new_dict)
             self.al_heights_valid = False
+            self._al_bump_generation()
 
             # rebuild the al table
             self.build_al_table_sig.emit()
@@ -1305,49 +1367,9 @@ class ToolLevelling(CNCjob, AppTool):
 
         # if RMB then we exit
         elif event.button == right_button and self.mouse_is_dragging is False:
-            if self.app.use_3d_engine:
-                self.app.plotcanvas.graph_event_disconnect('key_press', self.on_key_press)
-                self.app.plotcanvas.graph_event_disconnect('mouse_release', self.on_mouse_click_release)
-                self.app.plotcanvas.graph_event_disconnect('mouse_move', self.on_mouse_move)
-            else:
-                self.app.plotcanvas.graph_event_disconnect(self.kp)
-                self.app.plotcanvas.graph_event_disconnect(self.mr)
-                self.app.plotcanvas.graph_event_disconnect(self.mm)
-
-            self.app.kp = self.app.plotcanvas.graph_event_connect('key_press', self.app.ui.keyPressEvent)
-            self.app.mp = self.app.plotcanvas.graph_event_connect('mouse_press', self.app.on_mouse_click_over_plot)
-            self.app.mr = self.app.plotcanvas.graph_event_connect('mouse_release',
-                                                                  self.app.on_mouse_click_release_over_plot)
-
-            # signal that the mouse events are disconnected from local methods
-            self.mouse_events_connected = False
-
-            # restore selection
-            self.app.options['global_selection_shape'] = self.old_selection_state
-
+            self._release_manual_mouse_events()
             self.app.inform.emit(_("Finished adding Probe Points..."))
-
-            al_method = self.ui.al_method_radio.get_value()
-            if al_method == 'v':
-                if VORONOI_ENABLED is True:
-                    pts_list = []
-                    for k in self.al_voronoi_geo_storage:
-                        pts_list.append(self.al_voronoi_geo_storage[k]['point'])
-                    self.generate_voronoi_geometry(pts=pts_list)
-
-                    self.probing_gcode_text = self.probing_gcode(self.al_voronoi_geo_storage)
-                else:
-                    self.app.inform.emit('[ERROR_NOTCL] %s' % _("Voronoi function can not be loaded.\n"
-                                                                "Shapely >= 1.8 is required"))
-
-            # rebuild the al table
-            self.build_al_table_sig.emit()
-
-            if self.ui.plot_probing_pts_cb.get_value():
-                self.show_probing_geo(state=True, reset=True)
-            else:
-                # clear probe shapes
-                self.plot_probing_geo(None, False)
+            self._finish_manual_points()
 
     def on_key_press(self, event):
         # events out of the self.app.collection view (it's about Project Tab) are of type int
@@ -1381,24 +1403,12 @@ class ToolLevelling(CNCjob, AppTool):
         else:
             key = event.key
 
-        # Escape = Deselect All
+        # Escape = finish adding probe points (same as a right click)
         if key == QtCore.Qt.Key.Key_Escape or key == 'Escape':
             if self.mouse_events_connected is True:
-                self.mouse_events_connected = False
-                if self.app.use_3d_engine:
-                    self.app.plotcanvas.graph_event_disconnect('key_press', self.on_key_press)
-                    self.app.plotcanvas.graph_event_disconnect('mouse_release', self.on_mouse_click_release)
-                    self.app.plotcanvas.graph_event_disconnect('mouse_move', self.on_mouse_move)
-                else:
-                    self.app.plotcanvas.graph_event_disconnect(self.kp)
-                    self.app.plotcanvas.graph_event_disconnect(self.mr)
-
-                self.app.kp = self.app.plotcanvas.graph_event_connect('key_press', self.app.ui.keyPressEvent)
-                self.app.mp = self.app.plotcanvas.graph_event_connect('mouse_press', self.app.on_mouse_click_over_plot)
-                self.app.mr = self.app.plotcanvas.graph_event_connect('mouse_release',
-                                                                      self.app.on_mouse_click_release_over_plot)
-                # restore selection
-                self.app.options['global_selection_shape'] = self.old_selection_state
+                self._release_manual_mouse_events()
+                self.app.inform.emit(_("Finished adding Probe Points..."))
+                self._finish_manual_points()
 
         # Grid toggle
         if key == QtCore.Qt.Key.Key_G or key == 'G':

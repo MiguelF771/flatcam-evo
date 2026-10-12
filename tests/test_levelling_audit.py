@@ -1290,5 +1290,80 @@ class TestGrblProbeRun(unittest.TestCase):
         self.assertTrue(tool.al_heights_valid)
 
 
+class TestManualFinish(unittest.TestCase):
+    def _tool(self, method):
+        storage = {
+            1: {'point': Point(1.0, 1.0), 'geo': None, 'height': 0.0},
+            2: {'point': Point(5.0, 1.0), 'geo': None, 'height': 0.0},
+        }
+        tool = make_audit_tool(storage=storage)
+        tool.app.use_3d_engine = False
+        tool.app.options = {'global_selection_shape': False}
+        tool.old_selection_state = 'OLD'
+        tool.mouse_events_connected = True
+        tool.kp, tool.mr, tool.mm = 11, 12, 13
+        tool.ui.al_method_radio.get_value.return_value = method
+        tool.probing_gcode = MagicMock(return_value='GCODE')
+        tool.generate_voronoi_geometry = MagicMock()
+        tool.generate_bilinear_geometry = MagicMock(
+            side_effect=lambda pts: setattr(tool, 'al_bilinear_geo_storage', pts))
+        tool.plot_probing_geo = MagicMock()
+        tool.show_probing_geo = MagicMock()
+        return tool
+
+    def _check_released(self, tool):
+        disconnected = [c.args for c in tool.app.plotcanvas.graph_event_disconnect.call_args_list]
+        self.assertIn((11,), disconnected)
+        self.assertIn((12,), disconnected)
+        self.assertIn((13,), disconnected)
+        self.assertFalse(tool.mouse_events_connected)
+        self.assertEqual(tool.app.options['global_selection_shape'], 'OLD')
+
+    def test_right_click_bilinear_builds_probing_gcode(self):
+        tool = self._tool('b')
+        tool.on_mouse_click_release(SimpleNamespace(xdata=0.0, ydata=0.0, button=3))
+        self._check_released(tool)
+        self.assertEqual(tool.al_bilinear_geo_storage, [(1.0, 1.0, 0.0), (5.0, 1.0, 0.0)])
+        self.assertEqual(tool.probing_gcode_text, 'GCODE')
+        tool.probing_gcode.assert_called_once_with(storage=tool.al_bilinear_geo_storage)
+
+    def test_right_click_voronoi_builds_probing_gcode(self):
+        tool = self._tool('v')
+        tool.on_mouse_click_release(SimpleNamespace(xdata=0.0, ydata=0.0, button=3))
+        self._check_released(tool)
+        self.assertEqual(tool.probing_gcode_text, 'GCODE')
+
+    def test_escape_finishes_like_right_click(self):
+        tool = self._tool('b')
+        tool.on_key_press(SimpleNamespace(key='Escape'))
+        self._check_released(tool)
+        self.assertEqual(tool.probing_gcode_text, 'GCODE')
+
+    def test_finish_with_no_points_clears_gcode(self):
+        tool = self._tool('v')
+        tool.al_voronoi_geo_storage.clear()
+        tool.probing_gcode_text = 'OLD GCODE'
+        tool._finish_manual_points()
+        self.assertEqual(tool.probing_gcode_text, '')
+        tool.probing_gcode.assert_not_called()
+
+    def test_release_does_nothing_when_not_connected(self):
+        tool = self._tool('v')
+        tool.mouse_events_connected = False
+        tool._release_manual_mouse_events()
+        tool.app.plotcanvas.graph_event_disconnect.assert_not_called()
+
+    def test_left_click_add_bumps_generation(self):
+        tool = self._tool('v')
+        tool.solid_geo = box(0.0, 0.0, 10.0, 10.0)
+        tool.ui.avoid_exc_holes_cb.get_value.return_value = False
+        tool.ui.probe_tip_dia_entry.get_value.return_value = 0.5
+        tool.app.plotcanvas.translate_coords.return_value = (2.0, 2.0)
+        tool.app.geo_editor.snap.return_value = (2.0, 2.0)
+        tool.on_mouse_click_release(SimpleNamespace(xdata=2.0, ydata=2.0, button=1))
+        self.assertEqual(len(tool.al_voronoi_geo_storage), 3)
+        self.assertEqual(tool._al_generation, 1)
+
+
 if __name__ == '__main__':
     unittest.main()
