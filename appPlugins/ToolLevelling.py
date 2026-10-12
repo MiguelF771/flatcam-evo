@@ -1996,14 +1996,17 @@ class ToolLevelling(CNCjob, AppTool):
             if error is not None:
                 self.app.log.error("ToolLevelling._grbl_connect_finish() -> %s" % str(error))
             buffered = self._grbl_rx_buffer if self._grbl_rx_port is port else b''
-            lines = [text.strip() for text in (buffered + b''.join(answer)).decode(
-                'utf-8', errors='replace').splitlines()]
+            # Only complete records are classified. A fragment stays buffered so the
+            # transaction reader can finish it, for example the rest of an ALARM line.
+            complete, _sep, suffix = (buffered + b''.join(answer)).rpartition(b'\n')
+            lines = [text.strip() for text in complete.decode('utf-8', errors='replace').splitlines()]
             alarm = any(text.lower().startswith('alarm:') or parse_grbl_status_state(text) == 'Alarm'
                         for text in lines)
             banner = any(text.lower().startswith('grbl ') for text in lines)
             self._grbl_failure_locked(None, 'handshake', '\n'.join(lines))
-            if alarm and self._grbl_rx_port is port:
-                self._grbl_rx_buffer = b''  # this alarm was classified and recovery remains latched
+            # unclassified old records stay buffered, a classified alarm does not
+            self._grbl_rx_buffer = (b'' if alarm else buffered[:buffered.rfind(b'\n') + 1]) + suffix
+            self._grbl_rx_port = port
             if banner or any(text.lower() == 'ok' for text in lines):
                 # Only a startup banner confirms reset; DTR and ok do not.
                 if (banner and not alarm and self._grbl_recovery == 'needs_reset'
@@ -2011,8 +2014,7 @@ class ToolLevelling(CNCjob, AppTool):
                     self._grbl_recovery = 'needs_home'
                     self._grbl_reset_pending = False
                     self._grbl_reply_pending = False
-                    self._grbl_rx_port = port
-                    self._grbl_rx_buffer = b''
+                    self._grbl_rx_buffer = suffix  # drop the classified part, keep the fragment
                 self._grbl_connected = True
                 self._grbl_set_ui_connected(True)
                 self.app.inform.emit("%s: %s" % (_("Port connected"), port_name))
@@ -2681,6 +2683,16 @@ class ToolLevelling(CNCjob, AppTool):
             op = self._grbl_op
             if op is not None:
                 op.cancel.set()
+            # Receive boundary: everything received before the reset byte belongs to the old
+            # controller epoch, so an old banner cannot confirm this reset.
+            port = self.grbl_ser_port
+            self._grbl_rx_buffer = b''
+            self._grbl_rx_port = port
+            if port is not None:
+                try:
+                    port.reset_input_buffer()
+                except (serial.SerialException, OSError) as err:
+                    self.app.log.error("ToolLevelling.on_grbl_reset() -> %s" % str(err))
             written = self._grbl_write_realtime_locked(b'\x18')
             self._grbl_reset_pending = written
             # The byte request is not proof of reset, even when the machine looked Idle.

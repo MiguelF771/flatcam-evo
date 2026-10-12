@@ -909,3 +909,33 @@ def test_typed_alarm_uses_shared_recovery():
     run_worker(tool)
     assert tool._grbl_recovery == 'needs_reset'
     assert tool._grbl_op is None
+
+
+def test_buffered_banner_before_reset_cannot_confirm_it():
+    fake = ResetConfirmationGrbl()
+    tool = reset_confirmation_tool(fake)
+    tool._grbl_rx_buffer = ResetConfirmationGrbl.BANNER
+    tool._grbl_rx_port = fake
+    tool.on_grbl_reset()
+    run_reset_home(tool)
+    assert '$H' not in fake.commands()
+    assert tool._grbl_recovery == 'needs_reset'
+
+
+def test_unread_banner_before_reset_cannot_confirm_it():
+    fake = ResetConfirmationGrbl()
+    tool = reset_confirmation_tool(fake)
+    fake.rx.append(ResetConfirmationGrbl.BANNER)
+    tool.on_grbl_reset()
+    run_reset_home(tool)
+    assert '$H' not in fake.commands()
+    assert tool._grbl_recovery == 'needs_reset'
+
+
+def test_double_reset_is_confirmed_by_the_latest_banner():
+    fake = ResetConfirmationGrbl(reset_lines=[ResetConfirmationGrbl.BANNER])
+    tool = reset_confirmation_tool(fake)
+    tool.on_grbl_reset()
+    run_reset_home(tool)
+    assert '$H' in fake.commands()
+    assert tool._grbl_recovery is None

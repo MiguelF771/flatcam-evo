@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from test_levelling_audit import FakeGrbl, make_audit_tool, tl_module
+from test_levelling_audit import FakeGrbl, make_audit_tool, run_worker, tl_module
 
 
 class ConnectionPort(FakeGrbl):
@@ -234,6 +234,47 @@ class TestConnectionRed:
         assert tool.grbl_ser_port is None
         assert tool._grbl_recovery == 'needs_reset'
         assert port.close_count == 1
+
+
+def run_home(tool):
+    tool.on_grbl_homing()
+    ticks = iter(range(10000))
+    with patch('appPlugins.ToolLevelling.time.monotonic', side_effect=lambda: next(ticks)), \
+            patch('appPlugins.ToolLevelling.time.sleep'):
+        run_worker(tool)
+
+
+class TestFragmentedHandshake:
+    BANNER = b"Grbl 1.1h ['$' for help]\r\n"
+
+    def test_fragmented_alarm_after_banner_blocks_home(self):
+        tool = make_audit_tool()
+        tool._grbl_recovery = 'needs_reset'
+        port = ConnectionPort([self.BANNER, b'AL'])
+        callbacks = []
+        connect(tool, port, callbacks)
+        callbacks[0]()
+        assert tool._grbl_rx_buffer == b'AL'
+        assert tool._grbl_rx_port is port
+        port.handshake = []
+        port.rx.append(b'ARM:9\r\n')
+        run_home(tool)
+        assert '$H' not in port.commands()
+        assert tool._grbl_recovery == 'needs_reset'
+
+    def test_complete_banner_without_suffix_still_homes(self):
+        tool = make_audit_tool()
+        tool._grbl_recovery = 'needs_reset'
+        port = ConnectionPort([self.BANNER])
+        callbacks = []
+        connect(tool, port, callbacks)
+        callbacks[0]()
+        assert tool._grbl_recovery == 'needs_home'
+        assert tool._grbl_rx_buffer == b''
+        port.handshake = []
+        run_home(tool)
+        assert '$H' in port.commands()
+        assert tool._grbl_recovery is None
 
 
 class TestConnectionCompatibility:
