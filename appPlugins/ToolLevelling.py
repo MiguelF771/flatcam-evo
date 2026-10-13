@@ -1692,8 +1692,16 @@ class ToolLevelling(CNCjob, AppTool):
         if not self._al_prepare_interp(target_obj, al_method, snapshot=snapshot):
             return None
 
+        # the bounds of the probe points: a Z zero after a contact probe inside them
+        # re-references the map to the probed point
+        map_points = getattr(self, '_al_points', None) or []
+        map_bounds = None
+        if map_points:
+            map_bounds = (min(p[0] for p in map_points), min(p[1] for p in map_points),
+                          max(p[0] for p in map_points), max(p[1] for p in map_points))
         state = new_levelling_state(arc_segment=self._al_arc_segment(target_obj),
-                                    units=getattr(target_obj, 'units', None))
+                                    units=getattr(target_obj, 'units', None),
+                                    map_bounds=map_bounds)
         result = {}
         for tooluid in target_obj.tools.keys():
             tool_gcode = target_obj.tools[tooluid].get('gcode') or ''
@@ -1733,7 +1741,15 @@ class ToolLevelling(CNCjob, AppTool):
         if state['frame'] > 0:
             self.app.inform.emit(
                 '[WARNING_NOTCL] %s: %d' %
-                (_("Moves in another coordinate system or units were not height-compensated"), state['frame'])
+                (_("Moves in another coordinate system or units, or after a change of the work origin "
+                   "or of the Z zero, a subprogram call or a G word that can not be read, "
+                   "were not height-compensated"), state['frame'])
+            )
+
+        if state['cycles'] > 0:
+            self.app.inform.emit(
+                '[WARNING_NOTCL] %s: %d' %
+                (_("Canned cycle moves (G73, G76, G81..G89) were not height-compensated"), state['cycles'])
             )
 
         if state['cutter'] > 0:

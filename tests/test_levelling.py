@@ -480,9 +480,10 @@ class TestLevelGcodeLine(unittest.TestCase):
     def test_toolchange_probe_mach3_sequence(self):
         # mirrors preprocessors/Toolchange_Probe_MACH3.py's toolchange
         # G-code: probe (G31), zero the probed axis (G92), rapid clear
-        # (G00), then a real cut move (G01) that must still be levelled
-        # from its own original Z, not from anything G92 wrote.
-        state = new_levelling_state()
+        # (G00), then a real cut move (G01). The probe touched the work at
+        # (1, 1), so after G92 Z0 the map is re-referenced to that point:
+        # the offset is offset_fn(x, y) - offset_fn(1, 1).
+        state = new_levelling_state(map_bounds=(-10, -10, 10, 10))
         # no default start position: position X/Y/Z first
         level_gcode_line("G00 X0 Y0 Z5", state, self.offset_fn)
 
@@ -510,14 +511,22 @@ class TestLevelGcodeLine(unittest.TestCase):
         self.assertEqual(state['G'], 0)
 
         r6 = level_gcode_line("G01 Z-0.1", state, self.offset_fn)
-        expected_z6 = -0.1 + self.offset_fn(1.0, 1.0)
-        self.assertEqual(r6, "G01 Z{0:.4f}".format(expected_z6))
+        self.assertEqual(r6, "G01 Z{0:.4f}".format(-0.1))
         self.assertEqual(state['Z'], -0.1)
 
         r7 = level_gcode_line("G01 X2 Y2", state, self.offset_fn)
-        expected_z7 = -0.1 + self.offset_fn(2.0, 2.0)
+        expected_z7 = -0.1 + self.offset_fn(2.0, 2.0) - self.offset_fn(1.0, 1.0)
         self.assertEqual(r7, "G01 X2 Y2 Z{0:.4f}".format(expected_z7))
         self.assertEqual(state['Z'], -0.1)
+
+    def test_toolchange_probe_mach3_sequence_without_map_bounds(self):
+        # without the bounds of the map the probe point can not be checked:
+        # the Z reference is lost and the cut is not compensated
+        state = new_levelling_state()
+        for line in ("G00 X1 Y1 Z5", "G31 Z-5 F50", "G92 Z0", "G00 Z2"):
+            level_gcode_line(line, state, self.offset_fn)
+        self.assertEqual(level_gcode_line("G01 Z-0.1", state, self.offset_fn), "G01 Z-0.1")
+        self.assertEqual(state['frame'], 1)
 
     def test_g92_1_loses_the_work_position(self):
         state = new_levelling_state()

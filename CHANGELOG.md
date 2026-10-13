@@ -53,13 +53,20 @@ levelling_interp:
 - a change of units or of the work coordinate system makes the position unknown
 - the position is unknown at the start of the program (no 0.0 default): a cut is compensated only after X, Y and Z are set
 - a units or work coordinate system word after the first possible move never declares the frame of the height map, also when G28, G53 or an unknown line made the position unknown; nonmoving setup headers do not count as moves
-- a line that moves the X/Y work origin (G92 or G10 L20 with X/Y, G10 L2 with X/Y/R, G92.1/G92.2/G92.3) puts the rest of the program out of the frame of the height map, also with unresolved expressions or parameters; Z-only shifts keep it
+- a line that moves the X/Y work origin (G92 or G10 L20 with X/Y, G10 L2 with X/Y/R, G92.1/G92.2/G92.3) puts the rest of the program out of the frame of the height map, also with unresolved expressions or parameters; for a Z-only shift see the Z zero line below
 - G10 invalidates the map only when its P target is the map work coordinate system or cannot be established safely: P0 is the active system and P1..9 are G54..G59.3; a write to the map system also invalidates it while another system is active
 - G52 with X/Y (local offset), G51 (scale) and G68 (rotation) also put the rest of the program out of the frame of the height map
 - a line with a G word that is not read (lower case "g20", "g92.1", "G[92]", "G#1") can be any G code, so the rest of the program is out of the frame of the height map
 - a subprogram call or flow control (an O-word with call, sub, while, if, repeat, ...; M98; G65) puts the rest of the program out of the frame of the height map; a plain program number (O1234) does not
 - G1 moves under cutter radius compensation (G41/G42 until G40) are not compensated, because the tool is off the programmed X/Y; arcs are not split; the moves are reported in a warning
 - a comment at the start of a line ("(c) G41 D1") no longer hides the commands after it; a new Z word goes after the last word of the line, and the G word of an unsplit arc goes after a leading comment
+- a Z zero change (G92 Z, G10 L20 Z) right after a contact probe (G38.2, G31) at a known X/Y inside the map, with the probe and the zero in the units and the WCS of the map, re-references the height map to the probed point, so the Toolchange_Probe_MACH3 tool change keeps a correct compensation (before, the error was the map height at the tool change point); any other Z zero change of the map coordinate system (also G10 L2 Z, G52 Z) puts the rest of the program out of the frame of the height map
+- Mach3 "G59 P<n>" and Fanuc "G54.1 P<n>" are separate work coordinate systems; G70/G71 (ISEL, Siemens) are units words
+- G51.1 (mirror), G16 (polar coordinates) and G7 (diameter mode) also put the rest of the program out of the frame of the height map
+- canned cycle moves (G73, G76, G81..G89, also the holes under a modal cycle) are not compensated and are reported in a warning
+- a G code that the tool does not know (NCCAD9 G77, Mach3 G12/G13, G5 splines, ...) makes the position and the motion mode unknown; G76 (NCCAD9 reference travel) makes the position unknown
+- an axis word of a line that is not a G0..G3 move (a probe stop, G43.1 Z) is not taken as a position, and G43/G49 make Z unknown: before, "G43.1 Z1" then "G1 X1 Y1" moved the tool up to the compensated Z1
+- the warning for moves outside the frame of the height map also names a change of the work origin or of the Z zero, a subprogram call and a G word that can not be read
 
 19.09.2026
 

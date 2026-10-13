@@ -390,12 +390,27 @@ _NON_MODAL_G_CODES = (10.0, 28.0, 30.0, 53.0, 92.0, 92.1, 92.2, 92.3)
 # command: "G90 X1 Y1" under a modal G1 is still a G1 move.
 _MODAL_SETTING_G_CODES = (17.0, 18.0, 19.0, 20.0, 21.0, 40.0, 49.0, 54.0, 55.0, 56.0, 57.0,
                           58.0, 59.0, 59.1, 59.2, 59.3, 61.0, 64.0, 90.0, 90.1, 91.0, 91.1,
-                          93.0, 94.0, 41.0, 41.1, 42.0, 42.1)
-# The units words (G20 inch, G21 mm) and the work coordinate system words
-# (G54..G59.3). The height map is valid only in the frame of the probing
-# (the units and the coordinate system), see _note_frame_words().
-_UNITS_G_CODES = (20.0, 21.0)
+                          93.0, 94.0, 41.0, 41.1, 42.0, 42.1, 54.1, 70.0, 71.0)
+# The units words (G20/G70 inch, G21/G71 mm; G70/G71 in ISEL, Siemens and
+# Heidenhain dialects) and the work coordinate system words (G54..G59.3; also
+# Mach3 "G59 P<n>" and Fanuc "G54.1 P<n>"). The height map is valid only in the
+# frame of the probing (the units and the coordinate system), see _note_frame_words().
+_UNITS_BY_G = {20.0: 20, 21.0: 21, 70.0: 20, 71.0: 21}
 _WCS_G_CODES = (54.0, 55.0, 56.0, 57.0, 58.0, 59.0, 59.1, 59.2, 59.3)
+# Canned cycles (peck, drill, tap, bore; LinuxCNC G76 threading): their Z and R
+# words are not compensated, and the Z after the cycle is the retract level.
+_CANNED_CYCLE_G_CODES = (73.0, 76.0, 81.0, 82.0, 83.0, 84.0, 85.0, 86.0, 87.0, 88.0, 89.0)
+# G codes that do not move the machine and that need nothing more than their
+# own rules: dwell, stored positions, tool length, offsets, scale, rotation,
+# subprogram call, exact path, feed and spindle modes, canned cycle return level.
+_KNOWN_STILL_G_CODES = (4.0, 28.1, 30.1, 43.0, 43.1, 43.2, 50.0, 51.0, 51.1, 52.0, 61.1, 65.0,
+                        68.0, 69.0, 95.0, 96.0, 97.0, 98.0, 99.0, 7.0, 8.0, 15.0, 16.0)
+# Codes that change the meaning of X/Y for the rest of the program: scale (G51),
+# mirror (G51.1), rotation (G68), polar coordinates (G16), lathe diameter mode (G7).
+_FRAME_CHANGE_G_CODES = (7.0, 16.0, 51.0, 51.1, 68.0)
+# Probe moves that stop at a contact with the work: LinuxCNC/GRBL G38.2 (an error
+# if there is no contact) and Mach3 G31 (Toolchange_Probe_MACH3).
+_CONTACT_PROBE_G_CODES = (31.0, 38.2)
 # Frame value that no word can ever equal: the frame of the probing is not known
 # by name and an optional line made the current frame unknown.
 _FRAME_UNKNOWN = 'unknown'
@@ -416,7 +431,7 @@ _ARC_FULL_CIRCLE_EPS = 5e-7
 # Modal keys that an optional (block delete) line can change; after such a line
 # each changed key is unknown (None), because the controller may skip the line.
 _BLOCK_DELETE_MODAL_KEYS = ('abs', 'plane', 'arc_abs', 'inverse_feed', 'G', 'units', 'wcs',
-                            'cutter_comp')
+                            'cutter_comp', 'cycle')
 # Cutter radius compensation on (G41/G42, dynamic G41.1/G42.1): the tool moves
 # off the programmed X/Y by its radius, so the map is read at the wrong point.
 _CUTTER_COMP_G_CODES = (41.0, 41.1, 42.0, 42.1)
@@ -428,7 +443,7 @@ _SUBPROGRAM_CALL_RE = re.compile(
     r'|REPEAT|ENDREPEAT|BREAK|CONTINUE)\b|(?<![A-Z])M\s*0*98(?![\d.]))')
 
 
-def new_levelling_state(arc_segment=1.0, units=None):
+def new_levelling_state(arc_segment=1.0, units=None, map_bounds=None):
     """
     Create a fresh modal G-code state for use with level_gcode_line.
 
@@ -446,6 +461,9 @@ def new_levelling_state(arc_segment=1.0, units=None):
     :param units: the units of the job and of the height map: 'MM', 'IN'
         (any case) or None if they are not known. The program is taken to run
         in these units until a G20/G21 word says otherwise.
+    :param map_bounds: (xmin, ymin, xmax, ymax) of the probe points, or None.
+        A Z zero change after a contact probe inside these bounds re-references
+        the map to the probed point (see _note_z_zero()); with None it can not.
     :return: dict with modal X/Y/Z position, modal motion G code, and the
         counters `arcs` (arc moves that were not compensated),
         `relative` (G91 G1 moves that were not compensated),
@@ -454,7 +472,9 @@ def new_levelling_state(arc_segment=1.0, units=None):
         `unknown` (cutting moves that were not compensated because the
         position, the distance mode or the motion mode was unknown) and
         `frame` (G1 moves that were not compensated because they are in
-        another WCS or in other units), so the caller can warn/report on them.
+        another WCS or in other units, or after a change of the work origin),
+        `cutter` (G1 moves under G41/G42) and `cycles` (canned cycle moves),
+        so the caller can warn/report on them.
     :raises ValueError: if `arc_segment` is not > 0.
     """
     if not arc_segment > 0:
@@ -482,12 +502,19 @@ def new_levelling_state(arc_segment=1.0, units=None):
     #   of the frame of the map
     # cutter_comp: True under G41/G42 (None when unknown); cutter: G1 moves not
     #   compensated because of it
+    # cycle: True while a canned cycle is the motion mode (None when unknown)
+    # z_ref: the map height of the point where a Z zero change set the Z reference
+    #   (minus the new Z value), subtracted from every offset; 0.0 at the start
+    # probe_xy: the X/Y of the last contact probe move, until the next line that moves
+    # map_bounds: (xmin, ymin, xmax, ymax) of the probe points, or None
     return {'X': None, 'Y': None, 'Z': None, 'G': 0, 'arcs': 0, 'abs': True, 'relative': 0,
             'plane': 17, 'arc_abs': False, 'inverse_feed': False, 'applied': 0.0,
             'known': set(), 'arc_segment': float(arc_segment), 'arcs_split': 0, 'unparsed': 0,
             'unknown': 0, 'g_unknown': False, 'frame': 0,
             'home_units': home_units, 'units': home_units, 'home_wcs': None, 'wcs': None,
-            'moved': False, 'shifted': False, 'cutter_comp': False, 'cutter': 0}
+            'moved': False, 'shifted': False, 'cutter_comp': False, 'cutter': 0,
+            'cycle': False, 'cycles': 0, 'z_ref': 0.0, 'probe_xy': None,
+            'map_bounds': tuple(map_bounds) if map_bounds is not None else None}
 
 
 def _mask_comments(line):
@@ -631,19 +658,77 @@ def _note_frame_word(state, key, value):
     state[key] = value
 
 
-def _note_frame_words(state, g_words):
+def _note_frame_words(state, g_words, p_word=None, p_seen=False, p_known=True):
     """
     Update the units and the work coordinate system of `state` from the
     G words of a line.
 
+    Mach3 "G59 P<n>" and Fanuc "G54.1 P<n>" select more coordinate systems:
+    each P value is its own WCS. If the P value can not be read, the WCS is
+    a new value that no other word can equal.
+
     :param state: modal state dict; mutated in place.
     :param g_words: the G numbers of the line, in order.
+    :param p_word: the value of the P word of the line, or None.
+    :param p_seen: True if the line has a P letter.
+    :param p_known: False if the line is not understood (the P value can be an
+        expression).
     """
     for g in g_words:
-        if g in _UNITS_G_CODES:
-            _note_frame_word(state, 'units', int(g))
+        if g in _UNITS_BY_G:
+            _note_frame_word(state, 'units', _UNITS_BY_G[g])
+        elif g == 54.1 or (g == 59.0 and p_seen):
+            value = (g, p_word) if p_known and p_word is not None else (g, object())
+            _note_frame_word(state, 'wcs', value)
         elif g in _WCS_G_CODES:
             _note_frame_word(state, 'wcs', g)
+
+
+def _in_map(state, point):
+    """
+    :return: True if `point` (x, y) is inside the bounds of the probe points.
+    """
+    bounds = state['map_bounds']
+    if bounds is None:
+        return False
+    xmin, ymin, xmax, ymax = bounds
+    eps = 1e-9 * max(1.0, abs(xmax - xmin), abs(ymax - ymin))
+    return xmin - eps <= point[0] <= xmax + eps and ymin - eps <= point[1] <= ymax + eps
+
+
+def _referenced(offset_fn, z_ref):
+    """
+    :return: the height map `offset_fn` minus `z_ref` (see _note_z_zero()).
+    """
+    def referenced(x, y):
+        return offset_fn(x, y) - z_ref
+    return referenced
+
+
+def _note_z_zero(state, z_value, offset_fn):
+    """
+    Apply a Z zero change: the Z position now in effect becomes `z_value`
+    (G92 Z, G10 L20 Z).
+
+    If the change comes right after a contact probe move (G38.2, G31) at a
+    known X/Y inside the map, the probe touched the work surface at that point,
+    whose map height is offset_fn(point). From now on a point of the surface is
+    at offset_fn(x, y) - offset_fn(point) + z_value, so `state['z_ref']` gets
+    offset_fn(point) - z_value. Else the Z reference of the map is lost and the
+    rest of the program is out of the frame of the map.
+
+    :param state: modal state dict; mutated in place.
+    :param z_value: the new Z value, or None if it can not be read.
+    :param offset_fn: the height map, not re-referenced.
+    """
+    point = state['probe_xy']
+    # the probe and the zero must be in the units and the WCS of the map: "G20 G92 Z2"
+    # sets 2 inch, and G92 on another WCS gives an unknown Z offset to the map WCS
+    if (z_value is not None and point is not None and _in_map(state, point)
+            and _in_frame(state)):
+        state['z_ref'] = offset_fn(point[0], point[1]) - z_value
+    else:
+        state['shifted'] = True
 
 
 def _in_frame(state):
@@ -958,7 +1043,14 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     known_before = set(state['known'])
     applied_before = state['applied']
     g_unknown_before = state['g_unknown']
+    z_ref_before = state['z_ref']
+    probe_xy_before = state['probe_xy']
     out = _level_line(line, state, offset_fn, decimals)
+    if state['z_ref'] != z_ref_before:
+        # a skipped Z zero change: the Z reference of the map is not known
+        state['shifted'] = True
+    if state['probe_xy'] != probe_xy_before:
+        state['probe_xy'] = None
     for key, value in modes_before.items():
         if state[key] != value:
             state[key] = None
@@ -998,7 +1090,17 @@ def _level_line(line, state, offset_fn, decimals):
     G word that is not read (lower case, expression: it can be any G code)
     and a subprogram call or flow control (O-word keyword, M98, G65). Under cutter radius
     compensation (G41/G42 until G40) a G1 move is not changed and is counted
-    in `state['cutter']`, and an arc is not split. A G1 move with X/Y/Z
+    in `state['cutter']`, and an arc is not split. A Z zero change (G92 Z,
+    G10 L20 Z) right after a contact probe (G38.2, G31) at a known X/Y inside
+    the map re-references the map to the probed point (`state['z_ref']`, see
+    _note_z_zero()); any other Z zero change of the map WCS (also G10 L2 Z and
+    G52 Z) puts the rest of the program out of the frame. G70/G71 are units
+    words, Mach3 "G59 P<n>" and Fanuc "G54.1 P<n>" are coordinate systems. A
+    canned cycle move (G73, G76, G81..G89, also a bare hole under a modal cycle)
+    is not changed and is counted in `state['cycles']`. A G code that the tool
+    does not know makes the position and the motion mode unknown. An axis word
+    of a line that is not a G0..G3 move (a probe, G43.1 Z, ...) makes its axis
+    unknown, and G43/G49 make Z unknown. A G1 move with X/Y/Z
     words in another frame (absolute or relative) is not changed and is
     counted in `state['frame']`; an absolute one with a Z word sets the Z
     offset in effect (`state['applied']`) to 0, the machine goes to the
@@ -1057,6 +1159,10 @@ def _level_line(line, state, offset_fn, decimals):
         # a comment line; a leading comment can not hide commands ("(c) G41 D1")
         return line
 
+    raw_fn = offset_fn
+    if state['z_ref']:
+        offset_fn = _referenced(raw_fn, state['z_ref'])
+
     x_val = y_val = z_val = None
     z_match = None
     g_words = []
@@ -1082,23 +1188,34 @@ def _level_line(line, state, offset_fn, decimals):
     has_xyz = x_val is not None or y_val is not None or z_val is not None
 
     _note_modal_settings(state, g_words)
-    # also on a line that is not understood: its G words still apply
-    _note_frame_words(state, g_words)
     unparsed = _unparsed_text(masked)
+    # also on a line that is not understood: its G words still apply
+    _note_frame_words(state, g_words, info['words'].get('P'), 'P' in masked.upper(), not unparsed)
     non_modal_gs = [g for g in g_words if g in _NON_MODAL_G_CODES]
+    # G codes that the tool does not know: they can move the machine (NCCAD9 G77,
+    # Mach3 G12/G13 circle pocket, LinuxCNC G5 spline, G33 spindle synchronized, ...)
+    unknown_gs = [g for g in g_words
+                  if g not in _MOTION_G_CODES and g not in _MOTION_NO_LEVEL_G_CODES
+                  and g not in _MODAL_SETTING_G_CODES and g not in _NON_MODAL_G_CODES
+                  and g not in _KNOWN_STILL_G_CODES]
     setup_gs = (4.0, 10.0, 92.0, 92.1, 92.2, 92.3)
     is_setup = (any(g in setup_gs for g in g_words)
                 and all(g in setup_gs or g in _MODAL_SETTING_G_CODES for g in g_words))
     # after the frame words: a WCS word on the first move still declares the frame
     if not is_setup and (has_xyz or any(letter in info['words'] for letter in 'IJKR')
-                         or 28.0 in g_words or 30.0 in g_words or unparsed):
+                         or 28.0 in g_words or 30.0 in g_words or 76.0 in g_words
+                         or unknown_gs or unparsed):
         state['moved'] = True
 
     # Inspect origin changes before the unparsed return: restoring absolute
     # positions cannot restore the original map after an unresolved shift.
     xy_word = any(letter in masked.upper() for letter in 'XY')
+    z_word = 'Z' in masked.upper()
     if any(g in non_modal_gs for g in (92.1, 92.2, 92.3)) or (92.0 in non_modal_gs and xy_word):
         state['shifted'] = True
+    elif 92.0 in non_modal_gs and z_word:
+        # G92 Z<v>: the Z position now in effect becomes v
+        _note_z_zero(state, None if unparsed else z_val, raw_fn)
     if 10.0 in non_modal_gs:
         setup_words = {}
         for m in _WORD_RE.finditer(masked):
@@ -1116,13 +1233,23 @@ def _level_line(line, state, offset_fn, decimals):
             target_wcs = state['wcs']
         elif p_word is not None and p_word.is_integer() and 1 <= p_word <= len(_WCS_G_CODES):
             target_wcs = _WCS_G_CODES[int(p_word) - 1]
+        map_target = (target_wcs is None or state['home_wcs'] not in _WCS_G_CODES
+                      or target_wcs == state['home_wcs'])
         if (l_word in (None, 2.0, 20.0)
                 and (xy_word or (l_word in (None, 2.0) and 'R' in masked.upper()))
-                and (target_wcs is None or state['home_wcs'] not in _WCS_G_CODES
-                     or target_wcs == state['home_wcs'])):
+                and map_target):
             state['shifted'] = True
-    # G52 (local offset), G51 (scale) and G68 (rotation) also move the X/Y work frame
-    if (52.0 in g_words and xy_word) or 51.0 in g_words or 68.0 in g_words:
+        elif l_word in (None, 2.0, 20.0) and z_word and map_target:
+            # G10 L20 on the active WCS: the Z position now in effect becomes Z<v>;
+            # G10 L2 sets an offset by value, so the Z reference of the map is lost
+            active = p_word == 0.0 or (target_wcs is not None and target_wcs == state['wcs'])
+            if l_word == 20.0 and active and not unparsed:
+                _note_z_zero(state, z_val, raw_fn)
+            else:
+                state['shifted'] = True
+    # G52 (local offset, also in Z) and scale, mirror, rotation, polar or diameter mode
+    if ((52.0 in g_words and (xy_word or z_word))
+            or any(g in _FRAME_CHANGE_G_CODES for g in g_words)):
         state['shifted'] = True
     if unparsed and masked.upper().count('G') > len(g_words):
         # A G word that is not read (lower case "g92.1", "G[92]", "G#1") can be any
@@ -1138,6 +1265,20 @@ def _level_line(line, state, offset_fn, decimals):
             state['cutter_comp'] = True
         elif g == 40.0:
             state['cutter_comp'] = False
+    if any(g in (43.0, 43.1, 43.2, 49.0) for g in g_words):
+        # a tool length offset change: the machine does not move, but the Z of the
+        # tool tip in work coordinates changes
+        _lose_axes(state, ['Z'])
+    # the X/Y of a contact probe move (the Z zero change comes on a later line);
+    # any other line that can move or change the frame ends it, also a units or
+    # WCS word that leaves the frame of the map
+    if (any(g in _CONTACT_PROBE_G_CODES for g in g_words) and x_val is None and y_val is None
+            and not unparsed and not unknown_gs and _in_frame(state)
+            and {'X', 'Y'} <= state['known'] and state['X'] is not None and state['Y'] is not None):
+        state['probe_xy'] = (state['X'], state['Y'])
+    elif (has_xyz or unparsed or not _in_frame(state)
+          or any(g not in _MODAL_SETTING_G_CODES for g in g_words)):
+        state['probe_xy'] = None
 
     if unparsed:
         # Part of the line is not understood (it can hold an axis word), so
@@ -1192,12 +1333,42 @@ def _level_line(line, state, offset_fn, decimals):
         state['g_unknown'] = False
     if motion_gs:
         state['G'] = int(motion_gs[-1])
+        state['cycle'] = False
     elif no_level_gs:
         state['G'] = None
+        state['cycle'] = no_level_gs[-1] in _CANNED_CYCLE_G_CODES
         is_non_motion_cmd = True
     elif other_gs:
         is_non_motion_cmd = True
     # else: no G word at all - keep the previous modal G unchanged.
+
+    if unknown_gs or 76.0 in no_level_gs:
+        # The machine can be anywhere after it (G76: LinuxCNC threading, NCCAD9
+        # reference travel). An unknown code can also be a motion mode.
+        _lose_axes(state, ['X', 'Y', 'Z'])
+        state['applied'] = None
+        if unknown_gs:
+            state['G'] = None
+            state['g_unknown'] = True
+        if has_xyz or any(letter in info['words'] for letter in 'IJKR'):
+            if state['cycle'] is not False:
+                state['cycles'] += 1
+            else:
+                state['unknown'] += 1
+        return line
+
+    if state['cycle'] is not False and not motion_gs and (has_xyz or 'R' in info['words']):
+        # A canned cycle (also a bare "X5 Y5" hole under a modal G81): its depth is
+        # not compensated, and the Z after it is the retract level.
+        state['cycles'] += 1
+        for axis, value in (('X', x_val), ('Y', y_val)):
+            if value is not None and state['abs'] is True:
+                state[axis] = value
+            elif value is not None:
+                _lose_axes(state, [axis])
+        _lose_axes(state, ['Z'])
+        state['applied'] = None
+        return line
 
     absolute = state.get('abs', True)
     start = (state['X'], state['Y'], state['Z'])
@@ -1205,18 +1376,17 @@ def _level_line(line, state, offset_fn, decimals):
     is_motion = state['G'] in _MOTION_G_CODES and not is_non_motion_cmd
     for axis, value in [('X', x_val), ('Y', y_val), ('Z', z_val)]:
         if value is not None:
-            if absolute is None:
-                # unknown distance mode: the word can be a position or a delta
+            if absolute is None or not is_motion:
+                # unknown distance mode: the word can be a position or a delta;
+                # not a G0..G3 move: the word is not a work position (G43.1 Z is a
+                # tool length, a probe stops at an unknown point, ...)
                 _lose_axes(state, [axis])
                 continue
             if absolute:
                 state[axis] = value
+                state['known'].add(axis)
             elif state[axis] is not None:
                 state[axis] += value
-            if not is_motion:
-                state['known'].discard(axis)
-            elif absolute:
-                state['known'].add(axis)
 
     if (state['G'] in (2, 3) and not is_non_motion_cmd
             and (has_xyz or any(letter in info['words'] for letter in 'IJR'))):

@@ -385,7 +385,9 @@ class TestToolPassesTheUnits(unittest.TestCase):
         tool, target = self.tool_and_target('G21\nG0 X0 Y0 Z5\nG55\nG1 X1 Y1 Z-1\nG1 X2 Y2 Z-1\n')
         result = tool.autolevell_gcode(target, 'v')
         self.assertIn('G1 X1 Y1 Z-1', result[1])
-        self.assertTrue(any('Moves in another coordinate system or units were not height-compensated: 2'
+        self.assertTrue(any('Moves in another coordinate system or units, or after a change of the work '
+                            'origin or of the Z zero, a subprogram call or a G word that can not be read, '
+                            'were not height-compensated: 2'
                             in m and m.startswith('[WARNING_NOTCL]') for m in emitted(tool)))
 
     def test_no_frame_warning_in_the_frame(self):
@@ -497,17 +499,21 @@ class TestWorkOriginShift(unittest.TestCase):
         self.assertNotIn('\n', out[-1])
         self.assertEqual(state['arcs'], 1)
 
-    def test_z_only_shift_keeps_the_frame(self):
-        # Toolchange_Probe_MACH3 re-zeroes Z with 'G92 Z0' after a tool length probe
-        state = fresh('MM')
-        out = run(state, 'G92 Z0', 'G0 X1 Y1 Z5', 'G1 Z-1')
-        self.assertEqual(out[-1], 'G1 Z-0.5000')
-        self.assertEqual(state['frame'], 0)
+    def test_z_zero_without_a_probe_ends_the_frame(self):
+        # the Z reference of the map is lost: no later word can restore it
+        for shift in ('G92 Z0', 'G10 L2 P1 Z-3', 'G10 L20 P0 Z0', 'G52 Z1'):
+            with self.subTest(shift=shift):
+                state = fresh('MM', 'G54')
+                out = run(state, shift, 'G54', 'G0 X1 Y1 Z5', 'G1 Z-1')
+                self.assertEqual(out[-1], 'G1 Z-1')
+                self.assertTrue(state['shifted'])
+                self.assertEqual(state['frame'], 1)
 
-    def test_g10_l2_z_only_keeps_the_frame(self):
-        state = fresh('MM')
-        out = run(state, 'G10 L2 P1 Z-3', 'G0 X1 Y1 Z5', 'G1 Z-1')
+    def test_z_zero_on_another_wcs_keeps_the_frame(self):
+        state = fresh('MM', 'G54')
+        out = run(state, 'G10 L2 P2 Z-3', 'G10 L20 P3 Z0', 'G0 X1 Y1 Z5', 'G1 Z-1')
         self.assertEqual(out[-1], 'G1 Z-0.5000')
+        self.assertFalse(state['shifted'])
 
     def test_optional_shift_also_stops_compensation(self):
         state = fresh('MM')
@@ -535,8 +541,8 @@ class TestFrameAuditRegressions(unittest.TestCase):
                 self.assertEqual(state['unparsed'], 1)
 
     def test_nonmoving_header_does_not_block_first_wcs(self):
-        for header in ('G10 L2 P1 Z-3', 'G10 L20 P0 Z0', 'G92 Z0', 'G92 Z[0]',
-                       'G10 L1 P1 X5', 'G10 L10 P1 Z0', 'G4 P1'):
+        # a Z zero header (G92 Z0, G10 L20 P0 Z0, ...) ends the frame, see TestZZero
+        for header in ('G10 L1 P1 X5', 'G10 L10 P1 Z0', 'G4 P1'):
             with self.subTest(header=header):
                 state = new_levelling_state(units='MM')
                 self.assertEqual(level_gcode_line(header, state, spatial, DEC), header)
@@ -598,15 +604,18 @@ class TestFrameAuditRegressions(unittest.TestCase):
                 self.assertEqual(level_gcode_line('G1 Z-1', state, spatial, DEC), 'G1 Z-1')
                 self.assertTrue(state['shifted'])
 
-    def test_expression_z_only_shift_keeps_map(self):
+    def test_expression_z_zero_ends_the_frame(self):
+        # the new Z value can not be read, so the map can not be re-referenced
         for shift in ('G92 Z[0]', 'G10 L2 P1 Z#1', 'G10 L20 P0 Z[0]'):
             with self.subTest(shift=shift):
-                state = fresh('MM', 'G54')
+                # the probe is inside the map, so only the expression stops the re-reference
+                state = new_levelling_state(units='MM', map_bounds=(0, 0, 20, 20))
+                run(state, 'G54', 'G0 X10 Y10 Z5', 'G38.2 Z-5')
                 out = [level_gcode_line(line, state, spatial, DEC)
                        for line in (shift, 'G0 X10 Y10 Z5', 'G1 Z-1')]
                 self.assertEqual(out[0], shift)
-                self.assertEqual(out[-1], 'G1 Z0.5000')
-                self.assertFalse(state['shifted'])
+                self.assertEqual(out[-1], 'G1 Z-1')
+                self.assertTrue(state['shifted'])
 
     def test_local_offset_scale_and_rotation_shift_the_frame(self):
         for shift in ('G52 X10 Y10', 'G52 Y5', 'G68 X0 Y0 R30', 'G68 R30', 'G51 X0 Y0 P2', 'G51 P2'):
@@ -618,11 +627,11 @@ class TestFrameAuditRegressions(unittest.TestCase):
                 self.assertTrue(state['shifted'])
                 self.assertEqual(state['frame'], 1)
 
-    def test_z_only_local_offset_keeps_the_frame(self):
+    def test_z_only_local_offset_ends_the_frame(self):
         state = fresh('MM', 'G54')
         out = run(state, 'G52 Z1', 'G0 X10 Y10 Z5', 'G1 Z-1')
-        self.assertEqual(out[-1], 'G1 Z-0.5000')
-        self.assertFalse(state['shifted'])
+        self.assertEqual(out[-1], 'G1 Z-1')
+        self.assertTrue(state['shifted'])
 
 
 class TestHiddenGWords(unittest.TestCase):
@@ -643,7 +652,7 @@ class TestHiddenGWords(unittest.TestCase):
                 self.assertEqual(state['unparsed'], 1)
 
     def test_unparsed_line_without_a_hidden_g_word_keeps_the_frame(self):
-        for line in ('X[5]', '#1=5', 'G0 X[5]', 'G1 F[100]', 'G92 Z[0]'):
+        for line in ('X[5]', '#1=5', 'G0 X[5]', 'G1 F[100]'):
             with self.subTest(line=line):
                 state = fresh('MM', 'G21 G54')
                 out = run(state, line, 'G0 X10 Y10 Z5', 'G1 Z-1')
@@ -814,6 +823,283 @@ class TestSlashInComment(unittest.TestCase):
         out = run(state, 'G0 X10 Y0 Z-1', 'G3 X0 Y10 I-10 J0 G41 D1', '(a / b) X-10 Y0 I0 J-10')
         self.assertEqual(out[-1], '(a / b) G3 X-10 Y0 I0 J-10')
         self.assertEqual(state['known'], {'X', 'Y', 'Z'})
+
+
+def slope(x, y):
+    """A sloped map: h(0,0) = 0, h(5,0) = 0.1, h(10,10) = 0.5."""
+    return 0.02 * x + 0.03 * y
+
+
+def run_on(fn, state, *lines):
+    return [level_gcode_line(line, state, fn, DEC) for line in lines]
+
+
+def mapped(*lines):
+    """A state with a 20 x 20 map, in G54, at X0 Y0 Z5."""
+    state = new_levelling_state(units='MM', map_bounds=(0, 0, 20, 20))
+    run_on(slope, state, 'G21 G54', 'G0 X0 Y0 Z5', *lines)
+    return state
+
+
+class TestZZero(unittest.TestCase):
+    """A Z zero change after a contact probe re-references the map to the probed point."""
+
+    def test_mach3_toolchange_probe(self):
+        state = mapped()
+        out = run_on(slope, state, 'G00 X5 Y0', 'M0', 'F100', 'G31 Z-10', 'G92 Z0', 'G00 Z1',
+                     'G31 Z-10', 'G92 Z0', 'G00 Z2', 'G00 X10 Y10', 'G01 Z-0.1', 'G01 X0 Y0')
+        # -0.1 + h(10,10) - h(5,0) and -0.1 + h(0,0) - h(5,0)
+        self.assertEqual(out[-2:], ['G01 Z0.3000', 'G01 X0 Y0 Z-0.2000'])
+        self.assertAlmostEqual(state['z_ref'], 0.1)
+        self.assertEqual(state['frame'], 0)
+
+    def test_grbl_probe_and_g10_l20(self):
+        for zero in ('G10 L20 P0 Z0', 'G10 L20 P1 Z0', 'G92 Z0'):
+            with self.subTest(zero=zero):
+                state = mapped()
+                out = run_on(slope, state, 'G0 X5 Y0', 'G38.2 Z-10 F50', zero, 'G0 Z2',
+                             'G0 X10 Y10', 'G1 Z-0.1')
+                self.assertEqual(out[-1], 'G1 Z0.3000')
+
+    def test_new_z_value_is_taken_into_account(self):
+        # the touched surface becomes Z2: the surface at (10,10) is at 0.5 - 0.1 + 2
+        state = mapped()
+        out = run_on(slope, state, 'G0 X5 Y0', 'G38.2 Z-10', 'G92 Z2', 'G0 Z5', 'G0 X10 Y10', 'G1 Z-0.1')
+        self.assertEqual(out[-1], 'G1 Z2.3000')
+
+    def test_a_later_zero_replaces_the_reference(self):
+        state = mapped()
+        run_on(slope, state, 'G0 X5 Y0', 'G38.2 Z-10', 'G92 Z0', 'G0 Z5',
+               'G0 X10 Y0', 'G38.2 Z-10', 'G92 Z0', 'G0 Z5')
+        self.assertAlmostEqual(state['z_ref'], 0.2)
+        out = run_on(slope, state, 'G0 X10 Y10', 'G1 Z-0.1')
+        self.assertEqual(out[-1], 'G1 Z0.2000')
+
+    def test_split_arc_and_relative_move_use_the_reference(self):
+        state = mapped()
+        run_on(slope, state, 'G0 X5 Y0', 'G38.2 Z-10', 'G92 Z0', 'G0 Z5', 'G0 X10 Y0', 'G1 Z-1')
+        arc = level_gcode_line('G3 X0 Y10 I-10 J0', state, slope, DEC).split('\n')
+        # -1 + h(0,10) - h(5,0)
+        self.assertEqual(arc[-1], 'G1 X0.0000 Y10.0000 Z-0.8000')
+        out = run_on(slope, state, 'G91 G1 X10 Z0')
+        # from (0,10) to (10,10): the offset grows by 0.2
+        self.assertEqual(out[-1], 'G91 G1 X10 Z0.2000')
+
+    def test_no_reference_ends_the_frame(self):
+        cases = {
+            'probe outside the map': ('G0 X30 Y0', 'G38.2 Z-10', 'G92 Z0'),
+            'probe with X/Y words': ('G0 X5 Y0', 'G38.2 X6 Z-10', 'G92 Z0'),
+            'a move after the probe': ('G0 X5 Y0', 'G38.2 Z-10', 'G0 Z1', 'G92 Z0'),
+            'probe without a contact check': ('G0 X5 Y0', 'G38.3 Z-10', 'G92 Z0'),
+            'no probe': ('G0 X5 Y0', 'G92 Z0'),
+            'G10 L2 sets the offset by value': ('G0 X5 Y0', 'G38.2 Z-10', 'G10 L2 P1 Z-3'),
+            'optional zero': ('G0 X5 Y0', 'G38.2 Z-10', '/G92 Z0'),
+            'optional probe': ('G0 X5 Y0', '/G38.2 Z-10', 'G92 Z0'),
+            'probe at an unknown X/Y': ('G28', 'G38.2 Z-10', 'G92 Z0'),
+        }
+        for name, lines in cases.items():
+            with self.subTest(name):
+                state = mapped()
+                out = run_on(slope, state, *lines, 'G0 Z5', 'G0 X10 Y10 Z5', 'G1 Z-0.1')
+                self.assertEqual(out[-1], 'G1 Z-0.1')
+                self.assertTrue(state['shifted'])
+
+    def test_mach3_preprocessor_output(self):
+        # the real start code and tool change code of Toolchange_Probe_MACH3
+        from camlib import AttrDict
+        from preprocessors.Toolchange_Probe_MACH3 import Toolchange_Probe_MACH3
+        p = AttrDict(
+            units='MM', decimals=4, coords_decimals=4, fr_decimals=2, tool=2, toolC=0.1,
+            xy_toolchange=(5.0, 0.0), z_toolchange=15.0, startz=None, z_end=15.0, xy_end=None,
+            z_move=2.0, z_p_depth=-10.0, feedrate_probe=100.0, f_plunge=False, toolchange=True,
+            feedrate=100.0, z_feedrate=50.0, feedrate_rapid=500.0, z_cut=-0.1, multidepth=False,
+            steps_per_circle=16, pp_geometry_name='Toolchange_Probe_MACH3', spindlespeed=10000,
+            obj_options={'type': 'Geometry', 'tool_dia': 0.1, 'xmin': 0.0, 'xmax': 20.0,
+                         'ymin': 0.0, 'ymax': 20.0})
+        pp = Toolchange_Probe_MACH3()
+        code = pp.start_code(p) + pp.toolchange_code(p)
+        self.assertIn('G31 Z-10.0000', code)
+        self.assertIn('G92 Z0', code)
+        state = new_levelling_state(units='MM', map_bounds=(0, 0, 20, 20))
+        run_on(slope, state, *code.splitlines())
+        out = run_on(slope, state, 'G00 X10 Y10', 'G01 Z-0.1', 'G01 X0 Y0')
+        # the probe touched the surface at (5, 0): -0.1 + h(x, y) - h(5, 0)
+        self.assertEqual(out[1:], ['G01 Z0.3000', 'G01 X0 Y0 Z-0.2000'])
+        self.assertEqual((state['frame'], state['shifted']), (0, False))
+
+    def test_zero_in_another_frame_ends_the_frame(self):
+        # "G20 G92 Z2" sets 2 inch, not 2 mm; G92 on G55 gives an unknown Z offset to G54
+        cases = {
+            'inch zero': ('G20', 'G92 Z2', 'G21'),
+            'inch zero on the same line': ('G20 G92 Z2', 'G21'),
+            'zero on another WCS': ('G55', 'G92 Z0', 'G54'),
+            'G10 L20 P1 from another WCS': ('G55', 'G10 L20 P1 Z0', 'G54'),
+            # a frame change after the probe ends the probe, also if the frame comes back
+            'units change and back': ('G20', 'G21', 'G92 Z0'),
+            'WCS change and back': ('G55', 'G54', 'G92 Z0'),
+        }
+        for name, lines in cases.items():
+            with self.subTest(name):
+                state = mapped()
+                out = run_on(slope, state, 'G0 X5 Y0', 'G38.2 Z-10', *lines,
+                             'G0 X10 Y10 Z5', 'G1 Z-0.1')
+                self.assertEqual(out[-1], 'G1 Z-0.1')
+                self.assertEqual(state['z_ref'], 0.0)
+                self.assertTrue(state['shifted'])
+
+    def test_no_map_bounds_no_reference(self):
+        state = new_levelling_state(units='MM')
+        out = run_on(slope, state, 'G0 X5 Y0 Z5', 'G38.2 Z-10', 'G92 Z0', 'G0 X10 Y10 Z5', 'G1 Z-0.1')
+        self.assertEqual(out[-1], 'G1 Z-0.1')
+        self.assertTrue(state['shifted'])
+
+    def test_zero_on_another_wcs_changes_nothing(self):
+        state = mapped()
+        out = run_on(slope, state, 'G10 L20 P2 Z0', 'G0 X10 Y10 Z5', 'G1 Z-0.1')
+        self.assertEqual(out[-1], 'G1 Z0.4000')
+        self.assertEqual(state['z_ref'], 0.0)
+        self.assertFalse(state['shifted'])
+
+    def test_tool_passes_the_map_bounds(self):
+        from tests.test_levelling_audit import tl_module
+        tool, target = TestToolPassesTheUnits().tool_and_target('G0 X0 Y0 Z5\n')
+        tool._al_points = [(0.0, 1.0, 0.5), (4.0, -2.0, 0.1), (2.0, 3.0, 0.2)]
+        with patch.object(tl_module, 'new_levelling_state', wraps=li.new_levelling_state) as spy:
+            tool.autolevell_gcode(target, 'v')
+        self.assertEqual(spy.call_args.kwargs['map_bounds'], (0.0, -2.0, 4.0, 3.0))
+
+
+class TestExtraWcs(unittest.TestCase):
+    """Mach3 "G59 P<n>" and Fanuc "G54.1 P<n>": each P value is its own coordinate system."""
+
+    def test_each_p_value_is_a_wcs(self):
+        for home, other in (('G59 P7', 'G59 P8'), ('G54.1 P1', 'G54.1 P2'), ('G59', 'G59 P7'),
+                            ('G59 P7', 'G59')):
+            with self.subTest(home=home, other=other):
+                state = fresh('MM', home)
+                out = run(state, 'G1 Z-1', other, 'G0 X0 Y0 Z5', 'G1 Z-1', home, 'G0 X0 Y0 Z5', 'G1 Z-1')
+                self.assertEqual(out[0], 'G1 Z-0.5000')
+                self.assertEqual(out[3], 'G1 Z-1')
+                self.assertEqual(out[-1], 'G1 Z-0.5000')
+                self.assertEqual(state['frame'], 1)
+
+    def test_p_value_that_can_not_be_read(self):
+        state = fresh('MM', 'G59 P7')
+        out = run(state, 'G59 P[7]', 'G59 P7', 'G0 X0 Y0 Z5', 'G1 Z-1')
+        self.assertEqual(out[-1], 'G1 Z-0.5000')
+        state = fresh('MM', 'G59 P7')
+        out = run(state, 'G59 P[7]', 'G0 X0 Y0 Z5', 'G1 Z-1')
+        self.assertEqual(out[-1], 'G1 Z-1')
+
+    def test_g10_on_an_extra_wcs_is_conservative(self):
+        state = fresh('MM', 'G59 P7')
+        out = run(state, 'G10 L2 P7 X5', 'G0 X0 Y0 Z5', 'G1 Z-1')
+        self.assertEqual(out[-1], 'G1 Z-1')
+        self.assertTrue(state['shifted'])
+
+
+class TestCannedCycles(unittest.TestCase):
+    """Canned cycle moves are not compensated and are reported."""
+
+    def test_cycle_moves_are_counted(self):
+        for cycle in ('G81', 'G82', 'G83', 'G73', 'G84', 'G85', 'G89', 'G98 G81', 'G99 G83'):
+            with self.subTest(cycle=cycle):
+                state = fresh('MM', 'G21 G54')
+                out = run(state, cycle + ' X1 Y1 Z-1 R1 F100', 'X2 Y2', 'Y3', 'G80', 'G0 X4 Y4 Z5',
+                          'G1 Z-1')
+                self.assertEqual(out[:3], [cycle + ' X1 Y1 Z-1 R1 F100', 'X2 Y2', 'Y3'])
+                self.assertEqual(out[-1], 'G1 Z-0.5000')
+                self.assertEqual(state['cycles'], 3)
+                self.assertEqual(state['unknown'], 0)
+
+    def test_z_is_unknown_after_a_cycle(self):
+        state = fresh('MM', 'G21 G54')
+        out = run(state, 'G81 X1 Y1 Z-1 R1', 'G80', 'G1 X2 Y2')
+        self.assertEqual(out[-1], 'G1 X2 Y2')
+        self.assertEqual(state['unknown'], 1)
+        self.assertEqual((state['X'], state['Y']), (2.0, 2.0))
+
+    def test_optional_cycle_makes_the_mode_unknown(self):
+        state = fresh('MM', 'G21 G54')
+        out = run(state, 'G0 X1 Y1 Z5', '/G81 X1 Y1 Z-1 R1', 'X2 Y2')
+        self.assertEqual(out[-1], 'X2 Y2')
+        self.assertIsNone(state['cycle'])
+        self.assertEqual(state['cycles'], 2)
+
+    def test_tool_warns(self):
+        from tests.test_levelling_audit import emitted
+        tool, target = TestToolPassesTheUnits().tool_and_target(
+            'G21\nG0 X0 Y0 Z5\nG81 X1 Y1 Z-1 R1\nX2 Y2\nG80\n')
+        tool.autolevell_gcode(target, 'v')
+        self.assertTrue(any('Canned cycle moves (G73, G76, G81..G89) were not height-compensated: 2' in m
+                            for m in emitted(tool)))
+
+
+class TestUnknownGCodes(unittest.TestCase):
+    """A G code that the tool does not know can move the machine."""
+
+    def test_unknown_code_makes_the_position_unknown(self):
+        for code in ('G77', 'G76', 'G12 I5', 'G13 I5', 'G5 X1 Y1 I1 J1 P1 Q1', 'G33 Z-1 K1',
+                     'G5.2 X1 Y1', 'G123'):
+            with self.subTest(code=code):
+                state = fresh('MM', 'G21 G54')
+                out = run(state, 'G1 Z-1', code, 'G1 Z-1', 'G0 X1 Y1 Z5', 'G1 Z-1')
+                self.assertEqual(out[0], 'G1 Z-0.5000')
+                self.assertEqual(out[2], 'G1 Z-1')
+                self.assertEqual(out[-1], 'G1 Z-0.5000')
+
+    def test_bare_move_after_an_unknown_code_is_counted(self):
+        state = fresh('MM', 'G21 G54')
+        out = run(state, 'G1 Z-1', 'G77', 'X1 Y1 Z-1')
+        self.assertEqual(out[-1], 'X1 Y1 Z-1')
+        self.assertEqual(state['unknown'], 1)
+
+    def test_unknown_code_with_axis_words_is_counted(self):
+        state = fresh('MM', 'G21 G54')
+        run(state, 'G12 I5', 'G5 X1 Y1 I1 J1 P1 Q1')
+        self.assertEqual(state['unknown'], 2)
+
+    def test_known_codes_that_do_not_move_keep_the_position(self):
+        for code in ('G4 P1', 'G98', 'G99', 'G61.1', 'G97 S1000',
+                     'G96 S100', 'G95', 'G69', 'G15', 'G28.1', 'G30.1', 'G50', 'G8'):
+            with self.subTest(code=code):
+                state = fresh('MM', 'G21 G54')
+                out = run(state, 'G1 Z-1', code, 'G1 X1 Y1')
+                self.assertEqual(out[-1], 'G1 X1 Y1 Z-0.5000')
+                self.assertEqual(state['unknown'], 0)
+
+    def test_tool_length_offset_makes_z_unknown(self):
+        # G43.1 Z1 is a tool length, not a position: before the fix it gave 'G1 X1 Y1 Z1.5000'
+        for code in ('G43 H1', 'G43.1 Z1', 'G43.2 H2', 'G49'):
+            with self.subTest(code=code):
+                state = fresh('MM', 'G21 G54')
+                out = run(state, 'G1 Z-1', code, 'G1 X1 Y1', 'G0 Z5', 'G1 Z-1')
+                self.assertEqual(out[2], 'G1 X1 Y1')
+                self.assertEqual(state['unknown'], 1)
+                self.assertEqual(out[-1], 'G1 Z-0.5000')
+
+    def test_probe_stop_is_not_a_position(self):
+        # before the fix, 'G1 X1 Y1' after 'G38.2 Z-10' gave 'G1 X1 Y1 Z-9.5000'
+        state = fresh('MM', 'G21 G54')
+        out = run(state, 'G38.2 Z-10', 'G1 X1 Y1')
+        self.assertEqual(out[-1], 'G1 X1 Y1')
+        self.assertIsNone(state['Z'])
+
+    def test_codes_that_change_the_meaning_of_x_y_end_the_frame(self):
+        for code in ('G16', 'G7', 'G51.1 X0', 'G51 P2', 'G68 R30'):
+            with self.subTest(code=code):
+                state = fresh('MM', 'G21 G54')
+                out = run(state, code, 'G0 X1 Y1 Z5', 'G1 Z-1')
+                self.assertEqual(out[-1], 'G1 Z-1')
+                self.assertTrue(state['shifted'])
+
+    def test_g70_g71_are_units_words(self):
+        # ISEL_CNC writes G71 (mm) in its header
+        state = fresh('MM', 'G71')
+        out = run(state, 'G1 Z-1', 'G70', 'G0 X0 Y0 Z5', 'G1 Z-1')
+        self.assertEqual(out[0], 'G1 Z-0.5000')
+        self.assertEqual(out[-1], 'G1 Z-1')
+        self.assertEqual(state['frame'], 1)
 
 
 if __name__ == '__main__':

@@ -748,7 +748,8 @@ class TestCoordinateSystemLoss(unittest.TestCase):
         run(state, plane, 'G92 Z0', 'G91')
         line = 'G1 X1 Y1 Z-1'
         self.assertEqual(level_gcode_line(line, state, plane, DEC), line)
-        self.assertEqual(state['relative'], 1)
+        # a G92 Z0 with no probe before it ends the frame of the map (see test_levelling_frame)
+        self.assertEqual(state['frame'], 1)
 
     def test_arc_after_g92_is_not_split(self):
         state, _ = prime(10, 0, -1, plane)
