@@ -1736,6 +1736,13 @@ class ToolLevelling(CNCjob, AppTool):
                 (_("Moves in another coordinate system or units were not height-compensated"), state['frame'])
             )
 
+        if state['cutter'] > 0:
+            self.app.inform.emit(
+                '[WARNING_NOTCL] %s: %d' %
+                (_("Moves with cutter radius compensation (G41/G42) were not height-compensated"),
+                 state['cutter'])
+            )
+
         if state['arcs_split'] > 0:
             self.app.inform.emit("%s: %d" % (_("Arc moves split into line moves"), state['arcs_split']))
 

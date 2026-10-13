@@ -52,6 +52,14 @@ levelling_interp:
 - the height map is valid only in its frame (the job units and the first work coordinate system that the program selects before its first move); a G1 move in other units or in another G54..G59.3 system is not compensated and is reported in a warning
 - a change of units or of the work coordinate system makes the position unknown
 - the position is unknown at the start of the program (no 0.0 default): a cut is compensated only after X, Y and Z are set
+- a units or work coordinate system word after the first possible move never declares the frame of the height map, also when G28, G53 or an unknown line made the position unknown; nonmoving setup headers do not count as moves
+- a line that moves the X/Y work origin (G92 or G10 L20 with X/Y, G10 L2 with X/Y/R, G92.1/G92.2/G92.3) puts the rest of the program out of the frame of the height map, also with unresolved expressions or parameters; Z-only shifts keep it
+- G10 invalidates the map only when its P target is the map work coordinate system or cannot be established safely: P0 is the active system and P1..9 are G54..G59.3; a write to the map system also invalidates it while another system is active
+- G52 with X/Y (local offset), G51 (scale) and G68 (rotation) also put the rest of the program out of the frame of the height map
+- a line with a G word that is not read (lower case "g20", "g92.1", "G[92]", "G#1") can be any G code, so the rest of the program is out of the frame of the height map
+- a subprogram call or flow control (an O-word with call, sub, while, if, repeat, ...; M98; G65) puts the rest of the program out of the frame of the height map; a plain program number (O1234) does not
+- G1 moves under cutter radius compensation (G41/G42 until G40) are not compensated, because the tool is off the programmed X/Y; arcs are not split; the moves are reported in a warning
+- a comment at the start of a line ("(c) G41 D1") no longer hides the commands after it; a new Z word goes after the last word of the line, and the G word of an unsplit arc goes after a leading comment
 
 19.09.2026
 

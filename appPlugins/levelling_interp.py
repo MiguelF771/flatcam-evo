@@ -390,7 +390,7 @@ _NON_MODAL_G_CODES = (10.0, 28.0, 30.0, 53.0, 92.0, 92.1, 92.2, 92.3)
 # command: "G90 X1 Y1" under a modal G1 is still a G1 move.
 _MODAL_SETTING_G_CODES = (17.0, 18.0, 19.0, 20.0, 21.0, 40.0, 49.0, 54.0, 55.0, 56.0, 57.0,
                           58.0, 59.0, 59.1, 59.2, 59.3, 61.0, 64.0, 90.0, 90.1, 91.0, 91.1,
-                          93.0, 94.0)
+                          93.0, 94.0, 41.0, 41.1, 42.0, 42.1)
 # The units words (G20 inch, G21 mm) and the work coordinate system words
 # (G54..G59.3). The height map is valid only in the frame of the probing
 # (the units and the coordinate system), see _note_frame_words().
@@ -401,8 +401,11 @@ _WCS_G_CODES = (54.0, 55.0, 56.0, 57.0, 58.0, 59.0, 59.1, 59.2, 59.3)
 _FRAME_UNKNOWN = 'unknown'
 _WORD_RE = re.compile(r'([A-Z])\s*([+\-]?(?:\d+\.?\d*|\.\d+))')
 # Start of a line that must stay in front of any G word: whitespace, a block
-# delete "/" and a line number "N<digits>" (RS274NGC wants N first).
-_LINE_LEAD_RE = re.compile(r'\s*(?:/\s*)?(?:N\s*\d+\s*)?')
+# delete "/", leading comments and a line number "N<digits>" (RS274NGC wants N first).
+_LINE_LEAD_RE = re.compile(r'\s*(?:/\s*)?(?:\([^)]*\)\s*)*(?:N\s*\d+\s*)?')
+# A block delete line: "/" is the first character that is not a space (a "/" in
+# a comment is not one).
+_BLOCK_DELETE_RE = re.compile(r'\s*/')
 # Letters an arc line may carry and still be split into line moves.
 _ARC_SPLIT_LETTERS = frozenset('GXYZIJKRFP')
 # Largest angle of 1 arc segment, and the largest number of segments of 1 arc.
@@ -412,7 +415,17 @@ _ARC_MAX_SEGMENTS = 10000
 _ARC_FULL_CIRCLE_EPS = 5e-7
 # Modal keys that an optional (block delete) line can change; after such a line
 # each changed key is unknown (None), because the controller may skip the line.
-_BLOCK_DELETE_MODAL_KEYS = ('abs', 'plane', 'arc_abs', 'inverse_feed', 'G', 'units', 'wcs')
+_BLOCK_DELETE_MODAL_KEYS = ('abs', 'plane', 'arc_abs', 'inverse_feed', 'G', 'units', 'wcs',
+                            'cutter_comp')
+# Cutter radius compensation on (G41/G42, dynamic G41.1/G42.1): the tool moves
+# off the programmed X/Y by its radius, so the map is read at the wrong point.
+_CUTTER_COMP_G_CODES = (41.0, 41.1, 42.0, 42.1)
+# A subprogram call or flow control: a LinuxCNC O-word with a keyword ("O100 call",
+# "O<name> sub", "O101 while", ...) or Mach3/Fanuc "M98". The lines of the file do not
+# then run once in their order. A plain program number ("O1234") is not one.
+_SUBPROGRAM_CALL_RE = re.compile(
+    r'(?:\bO\s*(?:\d+|<[^>]*>)\s*(?:CALL|SUB|ENDSUB|RETURN|WHILE|ENDWHILE|DO|IF|ELSEIF|ELSE|ENDIF'
+    r'|REPEAT|ENDREPEAT|BREAK|CONTINUE)\b|(?<![A-Z])M\s*0*98(?![\d.]))')
 
 
 def new_levelling_state(arc_segment=1.0, units=None):
@@ -462,11 +475,19 @@ def new_levelling_state(arc_segment=1.0, units=None):
     # home_units/home_wcs: the units and the WCS of the height map; None when not known
     #   by name (then the first word before any move declares it, see _note_frame_words)
     # units/wcs: now in effect; None when unknown (after an optional line that changes them)
+    # moved: True after the first line that can move the machine; after it no word
+    #   can declare the frame of the map
+    # shifted: True after a line that moves the X/Y work origin (G92, G10 L2/L20, ...),
+    #   a G word that is not read or a subprogram call; the rest of the program is out
+    #   of the frame of the map
+    # cutter_comp: True under G41/G42 (None when unknown); cutter: G1 moves not
+    #   compensated because of it
     return {'X': None, 'Y': None, 'Z': None, 'G': 0, 'arcs': 0, 'abs': True, 'relative': 0,
             'plane': 17, 'arc_abs': False, 'inverse_feed': False, 'applied': 0.0,
             'known': set(), 'arc_segment': float(arc_segment), 'arcs_split': 0, 'unparsed': 0,
             'unknown': 0, 'g_unknown': False, 'frame': 0,
-            'home_units': home_units, 'units': home_units, 'home_wcs': None, 'wcs': None}
+            'home_units': home_units, 'units': home_units, 'home_wcs': None, 'wcs': None,
+            'moved': False, 'shifted': False, 'cutter_comp': False, 'cutter': 0}
 
 
 def _mask_comments(line):
@@ -519,8 +540,8 @@ def _fmt(value, decimals):
 def _insert_z_word(line, new_z_str, z_match):
     """
     Write `new_z_str` into `line`: replace the existing Z word's number
-    if there is one, else append a new " Z<value>" word before any
-    inline comment, or at the end of the line if there is none.
+    if there is one, else append a new " Z<value>" word after the last word
+    of the line (before a trailing comment, after a leading comment).
 
     :param line: original line text (with its original comment, if
         any, untouched).
@@ -534,17 +555,12 @@ def _insert_z_word(line, new_z_str, z_match):
         start, end = z_match.span(2)
         return line[:start] + new_z_str + line[end:]
 
-    paren_idx = line.find('(')
-    semi_idx = line.find(';')
-    candidates = [i for i in (paren_idx, semi_idx) if i != -1]
-    comment_idx = min(candidates) if candidates else None
-
-    if comment_idx is not None:
-        prefix = line[:comment_idx].rstrip()
-        suffix = line[comment_idx:]
-        return prefix + " Z" + new_z_str + " " + suffix
-
-    return line.rstrip() + " Z" + new_z_str
+    # after the last word, before a trailing comment; a leading comment stays in front
+    end = len(_mask_comments(line).rstrip())
+    suffix = line[end:]
+    if suffix.strip():
+        return line[:end] + " Z" + new_z_str + " " + suffix.lstrip()
+    return line[:end] + " Z" + new_z_str
 
 
 def _note_modal_settings(state, g_words):
@@ -598,15 +614,17 @@ def _note_frame_word(state, key, value):
     Apply 1 units word or WCS word to the frame of `state`.
 
     A first word before any move, when the frame of the map is not known by
-    name, declares the frame of the map. A word that changes the frame makes
-    all work positions unknown.
+    name, declares the frame of the map. A word after a move never declares
+    it, also when the position is lost (G28, G53, ...): the moves before the
+    word were in the frame that is active at the start. A word that changes
+    the frame makes all work positions unknown.
 
     :param state: modal state dict; mutated in place.
     :param key: 'units' or 'wcs'.
     :param value: the new units (20/21) or WCS (G number) in effect.
     """
     home_key = 'home_' + key
-    if state[home_key] is None and state[key] is None and not state['known']:
+    if state[home_key] is None and state[key] is None and not state['moved']:
         state[home_key] = value
     if value != state[key]:
         _lose_axes(state, ['X', 'Y', 'Z'])
@@ -630,9 +648,11 @@ def _note_frame_words(state, g_words):
 
 def _in_frame(state):
     """
-    :return: True if the units and the WCS in effect are those of the height map.
+    :return: True if the units and the WCS in effect are those of the height map
+        and no line moved the X/Y work origin.
     """
-    return state['units'] == state['home_units'] and state['wcs'] == state['home_wcs']
+    return (state['units'] == state['home_units'] and state['wcs'] == state['home_wcs']
+            and not state['shifted'])
 
 
 def _arc_centre(start, end, words, clockwise, arc_abs, decimals):
@@ -784,7 +804,7 @@ def _arc_splittable(info, state):
     :param state: modal state dict.
     :return: True if the arc may be split.
     """
-    if not _in_frame(state):
+    if not _in_frame(state) or state['cutter_comp'] is not False:
         return False
     # an unknown (None) arc distance mode or feed mode blocks the split too
     if (state['plane'] != 17 or state['inverse_feed'] is not False or state['arc_abs'] is None
@@ -850,7 +870,7 @@ def _level_arc(line, info, state, offset_fn, decimals, start, was_known, absolut
     comment = _comment_text(line)
     if comment:
         lines[0] += ' ' + comment
-    if '/' in _LINE_LEAD_RE.match(line).group():
+    if _BLOCK_DELETE_RE.match(line):
         # a block deleted arc: all of its segments are block deleted
         lines = ['/' + text for text in lines]
     return '\n'.join(lines)
@@ -930,7 +950,7 @@ def level_gcode_line(line, state, offset_fn, decimals=4):
     :return: the (possibly modified) line, without a trailing newline; a
         split arc is several lines joined with a newline.
     """
-    if '/' not in _LINE_LEAD_RE.match(line).group():
+    if not _BLOCK_DELETE_RE.match(line):
         return _level_line(line, state, offset_fn, decimals)
 
     modes_before = {key: state[key] for key in _BLOCK_DELETE_MODAL_KEYS}
@@ -968,7 +988,17 @@ def _level_line(line, state, offset_fn, decimals):
     its Z height-compensated, if it is in the frame of the height map: the
     units and the work coordinate system (WCS) of the probing. The frame
     follows the G20/G21 and G54..G59.3 words (see _note_frame_words()); each
-    word that changes it makes all 3 axes unknown. A G1 move with X/Y/Z
+    word that changes it makes all 3 axes unknown. A line that moves the X/Y
+    work origin (G92 or G10 L20 with an X/Y word, G10 L2 with an X/Y/R word,
+    G92.1/G92.2/G92.3) puts the rest of the program out of the frame
+    (`state['shifted']`), also with unresolved expressions. G10 only
+    invalidates the map if its P target is the map WCS or is unknown;
+    a Z-only shift (a tool length re-zero) does not. G52 with an X/Y word,
+    G51 and G68 shift the frame too, and so do a not understood line with a
+    G word that is not read (lower case, expression: it can be any G code)
+    and a subprogram call or flow control (O-word keyword, M98, G65). Under cutter radius
+    compensation (G41/G42 until G40) a G1 move is not changed and is counted
+    in `state['cutter']`, and an arc is not split. A G1 move with X/Y/Z
     words in another frame (absolute or relative) is not changed and is
     counted in `state['frame']`; an absolute one with a Z word sets the Z
     offset in effect (`state['applied']`) to 0, the machine goes to the
@@ -1019,10 +1049,13 @@ def _level_line(line, state, offset_fn, decimals):
         split arc is several lines joined with a newline.
     """
     stripped = line.strip()
-    if not stripped or stripped == '%' or stripped.startswith('(') or stripped.startswith(';'):
+    if not stripped or stripped == '%':
         return line
 
     masked = _mask_comments(line)
+    if not masked.strip():
+        # a comment line; a leading comment can not hide commands ("(c) G41 D1")
+        return line
 
     x_val = y_val = z_val = None
     z_match = None
@@ -1051,8 +1084,62 @@ def _level_line(line, state, offset_fn, decimals):
     _note_modal_settings(state, g_words)
     # also on a line that is not understood: its G words still apply
     _note_frame_words(state, g_words)
+    unparsed = _unparsed_text(masked)
+    non_modal_gs = [g for g in g_words if g in _NON_MODAL_G_CODES]
+    setup_gs = (4.0, 10.0, 92.0, 92.1, 92.2, 92.3)
+    is_setup = (any(g in setup_gs for g in g_words)
+                and all(g in setup_gs or g in _MODAL_SETTING_G_CODES for g in g_words))
+    # after the frame words: a WCS word on the first move still declares the frame
+    if not is_setup and (has_xyz or any(letter in info['words'] for letter in 'IJKR')
+                         or 28.0 in g_words or 30.0 in g_words or unparsed):
+        state['moved'] = True
 
-    if _unparsed_text(masked):
+    # Inspect origin changes before the unparsed return: restoring absolute
+    # positions cannot restore the original map after an unresolved shift.
+    xy_word = any(letter in masked.upper() for letter in 'XY')
+    if any(g in non_modal_gs for g in (92.1, 92.2, 92.3)) or (92.0 in non_modal_gs and xy_word):
+        state['shifted'] = True
+    if 10.0 in non_modal_gs:
+        setup_words = {}
+        for m in _WORD_RE.finditer(masked):
+            letter = m.group(1)
+            if letter not in 'LP' or masked.upper().count(letter) != 1:
+                continue
+            tail = masked[m.end():].lstrip()
+            # A numeric prefix of an expression is not a literal L/P value.
+            if not tail or 'A' <= tail[0] <= 'Z':
+                setup_words[letter] = float(m.group(2))
+        l_word = setup_words.get('L')
+        p_word = setup_words.get('P')
+        target_wcs = None
+        if p_word == 0.0:
+            target_wcs = state['wcs']
+        elif p_word is not None and p_word.is_integer() and 1 <= p_word <= len(_WCS_G_CODES):
+            target_wcs = _WCS_G_CODES[int(p_word) - 1]
+        if (l_word in (None, 2.0, 20.0)
+                and (xy_word or (l_word in (None, 2.0) and 'R' in masked.upper()))
+                and (target_wcs is None or state['home_wcs'] not in _WCS_G_CODES
+                     or target_wcs == state['home_wcs'])):
+            state['shifted'] = True
+    # G52 (local offset), G51 (scale) and G68 (rotation) also move the X/Y work frame
+    if (52.0 in g_words and xy_word) or 51.0 in g_words or 68.0 in g_words:
+        state['shifted'] = True
+    if unparsed and masked.upper().count('G') > len(g_words):
+        # A G word that is not read (lower case "g92.1", "G[92]", "G#1") can be any
+        # G code: a units or WCS change, or an origin reset without an X/Y word
+        # (G92.1/.2/.3). A later explicit word can not undo it.
+        state['shifted'] = True
+    if 65.0 in g_words or _SUBPROGRAM_CALL_RE.search(masked.upper()):
+        # The tool does not see the codes of a subprogram (O-word call, M98, G65), and
+        # the lines of an O-word block (sub, while, if, repeat) run 0 or many times.
+        state['shifted'] = True
+    for g in g_words:
+        if g in _CUTTER_COMP_G_CODES:
+            state['cutter_comp'] = True
+        elif g == 40.0:
+            state['cutter_comp'] = False
+
+    if unparsed:
         # Part of the line is not understood (it can hold an axis word), so
         # nothing after it can trust the tracked position or motion mode.
         state['unparsed'] += 1
@@ -1061,7 +1148,6 @@ def _level_line(line, state, offset_fn, decimals):
         _lose_axes(state, ['X', 'Y', 'Z'])
         return line
 
-    non_modal_gs = [g for g in g_words if g in _NON_MODAL_G_CODES]
     if non_modal_gs:
         # One-shot code: X/Y/Z here are not work-coordinate moves.
         moved = [axis for axis, value in [('X', x_val), ('Y', y_val), ('Z', z_val)]
@@ -1087,7 +1173,7 @@ def _level_line(line, state, offset_fn, decimals):
         elif 10.0 in non_modal_gs:
             l_word = info['words'].get('L')
             if l_word == 2.0:
-                # G10 L2 can change the offset of the active coordinate system.
+                # Keep position tracking conservative for coordinate-system writes.
                 _lose_axes(state, ['X', 'Y', 'Z'])
             elif l_word == 20.0:
                 _lose_axes(state, moved)
@@ -1160,6 +1246,13 @@ def _level_line(line, state, offset_fn, decimals):
     if state['G'] == 1 and not _in_frame(state):
         # another WCS or other units than those of the height map
         state['frame'] += 1
+        if absolute and z_val is not None:
+            state['applied'] = 0.0
+        return line
+
+    if state['G'] == 1 and state['cutter_comp'] is not False:
+        # G41/G42: the tool is off the programmed X/Y, the map would be read at the wrong point
+        state['cutter'] += 1
         if absolute and z_val is not None:
             state['applied'] = 0.0
         return line
