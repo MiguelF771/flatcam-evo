@@ -1267,6 +1267,7 @@ SIGNAL_ACTIONS = {
         "menufileopenexcellon menufileopengcode menufileopenproject menufileopenconfig menufilenewscript "
         "menufileopenscript menufileopenscriptexample menufilerunscript menufileimportsvg "
         "menufileimportsvg_as_gerber menufileimportdxf menufileimportdxf_as_gerber menufileimport_hpgl2_as_geo "
+        "menufileimportpcbdoc "
         "menufileexportsvg menufileexportpng menufileexportexcellon menufileexportgerber menufileexportdxf "
         "menufile_print menufilesaveproject menufilesaveprojectas menufilesavedefaults menufileexportpref "
         "menufileimportpref"
@@ -1338,6 +1339,7 @@ SIGNAL_EXPECTED_CALLS = {
     "menufileimportdxf": expected_call("f_handlers", "on_file_import_dxf", "geometry"),
     "menufileimportdxf_as_gerber": expected_call("f_handlers", "on_file_import_dxf", "gerber"),
     "menufileimport_hpgl2_as_geo": expected_call("f_handlers", "on_file_open_hpgl2"),
+    "menufileimportpcbdoc": expected_call("f_handlers", "on_file_import_pcbdoc"),
     "menufileexportsvg": expected_call("f_handlers", "on_file_export_svg"),
     "menufileexportpng": expected_call("f_handlers", "on_file_export_png"),
     "menufileexportexcellon": expected_call("f_handlers", "on_file_export_excellon"),
@@ -1492,6 +1494,7 @@ class TestSignalConnector(AppTestCase):
         "on_file_new_click on_file_open_gerber on_file_open_excellon on_file_open_gcode on_file_open_project "
         "on_file_open_config on_file_new_script on_file_open_script on_file_open_script_example on_file_run_script "
         "on_file_import_svg on_file_import_dxf on_file_open_hpgl2 on_file_export_svg on_file_export_png "
+        "on_file_import_pcbdoc "
         "on_file_export_excellon on_file_export_gerber on_file_export_dxf on_file_save_objects_pdf "
         "on_file_save_project on_file_save_project_as on_file_save_defaults on_export_preferences on_import_preferences "
         "on_file_new_project"

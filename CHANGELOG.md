@@ -8,6 +8,11 @@ CHANGELOG for FlatCAM Evo beta
 
 =================================================
 
+14.10.2026
+
+- fixed a bug when changing colors for objects
+- new feature: Altium .pcbdoc import in File -> Import -> Altium PCB directly to Gerbers and Excellons
+
 13.10.2026
 
 Paint / NCC / camlib:

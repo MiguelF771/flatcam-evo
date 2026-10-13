@@ -36,6 +36,7 @@ svg.path>=4.0
 svglib
 fontTools
 ezdxf>=0.16.0,<2.0.0
+olefile>=0.47
 
 reportlab>=3.5
 pyserial>=3.4

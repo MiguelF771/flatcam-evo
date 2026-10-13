@@ -322,7 +322,7 @@ class AppPlotManager(QtCore.QObject):
 
         clicked_action = self.sender()
 
-        assert isinstance(clicked_action, QtWidgets.QAction), "Expected a QAction, got %s" % type(clicked_action)
+        assert isinstance(clicked_action, QtGui.QAction), "Expected a QAction, got %s" % type(clicked_action)
         act_name = clicked_action.text()
         sel_obj_list = self.collection.get_selected()
 

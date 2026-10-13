@@ -1910,8 +1910,9 @@ class ToolIsolation(Gerber, AppTool):
                         extra_geo = []
                         for apid in isolated_obj.tools:
                             for t_geo_dict in isolated_obj.tools[apid]['geometry']:
-                                if isinstance(t_geo_dict['follow'], Point):
-                                    extra_geo.append(t_geo_dict['solid'])
+                                if 'follow' in t_geo_dict:
+                                    if isinstance(t_geo_dict['follow'], Point):
+                                        extra_geo.append(t_geo_dict['solid'])
 
                         for nr_pass in range(i, use_extra_passes + i):
                             pad_pass_geo = []

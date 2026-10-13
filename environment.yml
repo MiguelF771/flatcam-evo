@@ -12,6 +12,7 @@ dependencies:
 - lxml
 - matplotlib>=3.5.0
 - numpy==1.26.4
+- olefile>=0.47
 - pikepdf>=2.0
 - pip
 - pre-commit

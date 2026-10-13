@@ -286,6 +286,12 @@ class MainGUI(QtWidgets.QMainWindow):
         self.menufileimport.addAction(self.menufileimport_hpgl2_as_geo)
         self.menufileimport.addSeparator()
 
+        self.menufileimportpcbdoc = QtGui.QAction(
+            QtGui.QIcon(self.app.resource_location + '/import.png'),
+            '%s...' % _('Altium PCB (.PcbDoc)'), self)
+        self.menufileimport.addAction(self.menufileimportpcbdoc)
+        self.menufileimport.addSeparator()
+
         # Export ...
         self.menufileexport = self.menufile.addMenu(
             QtGui.QIcon(self.app.resource_location + '/export.png'), _('Export'))

@@ -25,6 +25,9 @@ import os
 from copy import deepcopy
 import re
 import math
+from shapely.affinity import scale
+from shapely.geometry import Polygon
+from shapely.ops import unary_union
 
 import numpy as np
 try:
@@ -60,6 +63,9 @@ if '_' not in builtins.__dict__:
 
 
 class appIO(QtCore.QObject):
+    pcbdoc_parsed = QtCore.pyqtSignal(str, object)
+    pcbdoc_outputs_ready = QtCore.pyqtSignal(str)
+
     def __init__(self, app):
         """
         A class that holds all the menu -> file handlers
@@ -76,6 +82,157 @@ class appIO(QtCore.QObject):
         self.pagesize = {}
 
         self.app.new_project_signal.connect(self.on_new_project_house_keeping)
+        self.pcbdoc_parsed.connect(self.on_pcbdoc_parsed, Qt.ConnectionType.QueuedConnection)
+        self.pcbdoc_outputs_ready.connect(self.on_pcbdoc_outputs_ready, Qt.ConnectionType.QueuedConnection)
+
+    def on_file_import_pcbdoc(self, name=None):
+        if name is None:
+            name, _filter = QtWidgets.QFileDialog.getOpenFileName(
+                parent=self.app.ui, caption=_("Import Altium PCB"),
+                directory=self.app.get_last_folder(), filter='Altium PCB (*.PcbDoc *.pcbdoc)')
+        if name:
+            self.worker_task.emit({'fcn': self.parse_pcbdoc, 'params': [name]})
+
+    def parse_pcbdoc(self, filename):
+        if self.app.abort_flag:
+            return
+        try:
+            from appParsers.ParsePcbDoc import PcbDocParser, PcbDocParseError
+            parsed = PcbDocParser(app=self.app).parse_file(filename)
+        except Exception as error:
+            self.log.error('Altium PCB import: %s', error)
+            self.inform.emit('[ERROR_NOTCL] %s: %s' % (_('Import failed.'), error))
+            return 'fail'
+        if not self.app.abort_flag:
+            self.pcbdoc_parsed.emit(filename, parsed)
+
+    @QtCore.pyqtSlot(str, object)
+    def on_pcbdoc_parsed(self, filename, parsed):
+        if self.app.abort_flag:
+            return
+        dialog = QtWidgets.QDialog(self.app.ui)
+        dialog.setWindowTitle(_('Import Altium PCB'))
+        layout = QtWidgets.QVBoxLayout(dialog)
+        layout.addWidget(QtWidgets.QLabel(_('Select layers and drill groups to import:')))
+        scroll = QtWidgets.QScrollArea(dialog)
+        scroll.setWidgetResizable(True)
+        content = QtWidgets.QWidget()
+        choices = QtWidgets.QVBoxLayout(content)
+        layers, drills = {}, {}
+        for layer_id, layer in parsed.layers.items():
+            if not any(not geo.is_empty for geo in layer['solid_geometry']):
+                continue
+            checkbox = QtWidgets.QCheckBox('%s (%s)' % (layer['name'], layer_id))
+            checkbox.setChecked(True)
+            choices.addWidget(checkbox)
+            layers[layer_id] = checkbox
+        for group, tools in parsed.drill_groups.items():
+            if not any(tool.get('drills') or tool.get('slots') for tool in tools.values()):
+                continue
+            checkbox = QtWidgets.QCheckBox(group)
+            checkbox.setChecked(True)
+            choices.addWidget(checkbox)
+            drills[group] = checkbox
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+        if parsed.warnings:
+            warning = QtWidgets.QLabel('\n'.join(parsed.warnings))
+            warning.setWordWrap(True)
+            layout.addWidget(warning)
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.resize(460, 500)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted or self.app.abort_flag:
+            return
+        selected_layers = [key for key, checkbox in layers.items() if checkbox.isChecked()]
+        selected_drills = [key for key, checkbox in drills.items() if checkbox.isChecked()]
+        if selected_layers or selected_drills:
+            self.worker_task.emit({'fcn': self.import_pcbdoc_objects,
+                                   'params': [filename, parsed, selected_layers, selected_drills]})
+
+    def import_pcbdoc_objects(self, filename, parsed, selected_layers, selected_drills):
+        if self.app.abort_flag or not (selected_layers or selected_drills):
+            return
+        units = self.app.app_units.upper()
+        factor = 1 / 25.4 if units == 'IN' else 1
+
+        def converted(value):
+            if isinstance(value, dict):
+                return {key: (item * factor if key in ('size', 'width', 'height', 'diam', 'tooldia')
+                              and isinstance(item, (int, float)) else converted(item))
+                        for key, item in value.items()}
+            if isinstance(value, (list, tuple)):
+                return type(value)(converted(item) for item in value)
+            if hasattr(value, 'geom_type'):
+                return scale(value, xfact=factor, yfact=factor, origin=(0, 0))
+            return deepcopy(value)
+
+        created = False
+        failed = False
+        try:
+            for kind, keys in (('gerber', selected_layers), ('excellon', selected_drills)):
+                for key in keys:
+                    if self.app.abort_flag:
+                        return
+                    if kind == 'gerber':
+                        data = parsed.layers[key]
+                        if not any(not geo.is_empty for geo in data['solid_geometry']):
+                            continue
+                        label = '%s_%s' % (key, data['name'])
+                    else:
+                        data = parsed.drill_groups[key]
+                        if not any(tool.get('drills') or tool.get('slots') for tool in data.values()):
+                            continue
+                        label = key
+                    name = '%s_%s' % (os.path.splitext(os.path.basename(filename))[0], label)
+
+                    def initialize(obj, app, object_kind=kind, source=data, object_name=name):
+                        if app.abort_flag:
+                            return 'fail'
+                        obj.units = units
+                        obj.obj_options['pcbdoc_import'] = True
+                        if object_kind == 'gerber':
+                            obj.tools = converted(source['tools'])
+                            obj.solid_geometry = converted(source['solid_geometry'])
+                            obj.follow_geometry = converted(source['follow_geometry'])
+                            obj.source_file = self.export_gerber(
+                                object_name, filename=None, local_use=obj, use_thread=False)
+                        else:
+                            obj.tools = converted(source)
+                            if obj.create_geometry() == 'fail':
+                                return 'fail'
+                            obj.source_file = self.export_excellon(
+                                object_name, filename=None, local_use=obj, use_thread=False)
+                        if not obj.source_file or obj.source_file == 'fail' or app.abort_flag:
+                            return 'fail'
+
+                    result = self.app.app_obj.new_object(kind, name, initialize, plot=False, autoselected=False)
+                    if result is None or result == 'fail':
+                        failed = True
+                        break
+                    created = True
+                if failed:
+                    break
+        except Exception as error:
+            self.log.error('Altium PCB object import: %s', error)
+            failed = True
+        finally:
+            if created:
+                if not self.app.abort_flag:
+                    self.pcbdoc_outputs_ready.emit(filename)
+                self.worker_task.emit({'fcn': self.app.plot_all, 'params': [True, False, True], 'priority': 'low'})
+        if failed:
+            self.inform.emit('[ERROR_NOTCL] %s' % _('Import failed.'))
+            return 'fail'
+
+    @QtCore.pyqtSlot(str)
+    def on_pcbdoc_outputs_ready(self, filename):
+        if self.app.abort_flag:
+            return
+        self.app.file_opened.emit('pcbdoc', filename)
 
     def on_file_open_gerber(self, name=None):
         """
@@ -1614,7 +1771,7 @@ class appIO(QtCore.QObject):
         e_format = self.app.options.get("excellon_exp_format", self.app.defaults.get("excellon_exp_format", self.app.defaults.factory_defaults.get("excellon_exp_format")))
         slot_type = self.app.options.get("excellon_exp_slot_type", self.app.defaults.get("excellon_exp_slot_type", self.app.defaults.factory_defaults.get("excellon_exp_slot_type")))
 
-        fc_units = self.app_units.upper()
+        fc_units = (obj.units if obj.obj_options.get('pcbdoc_import', False) else self.app_units).upper()
         if fc_units == 'MM':
             factor = 1 if e_units == 'METRIC' else 0.03937
         else:
@@ -1698,11 +1855,15 @@ class appIO(QtCore.QObject):
                                            "Most likely another app is holding the file open and not accessible."))
                         return 'fail'
 
+                    if obj.obj_options.get('pcbdoc_import', False):
+                        obj.source_file = exported_excellon
                     if self.app.options.get("global_open_style", self.app.defaults.get("global_open_style", self.app.defaults.factory_defaults.get("global_open_style"))) is False:
                         self.app.file_opened.emit("Excellon", filename)
                     self.app.file_saved.emit("Excellon", filename)
                     self.inform.emit('[success] %s: %s' % (_("Excellon file exported to"), filename))
                 else:
+                    if obj.obj_options.get('pcbdoc_import', False):
+                        obj.source_file = exported_excellon
                     return exported_excellon
             except Exception as e:
                 self.log.error("App.export_excellon.make_excellon() --> %s" % str(e))
@@ -1760,7 +1921,7 @@ class appIO(QtCore.QObject):
         g_fract = self.app.options.get("gerber_exp_decimals", self.app.defaults.get("gerber_exp_decimals", self.app.defaults.factory_defaults.get("gerber_exp_decimals")))
         g_zeros = self.app.options.get("gerber_exp_zeros", self.app.defaults.get("gerber_exp_zeros", self.app.defaults.factory_defaults.get("gerber_exp_zeros")))
 
-        fc_units = self.app_units.upper()
+        fc_units = (obj.units if obj.obj_options.get('pcbdoc_import', False) else self.app_units).upper()
         if fc_units == 'MM':
             factor = 1 if g_units == 'MM' else 0.03937
         else:
@@ -1818,7 +1979,28 @@ class appIO(QtCore.QObject):
 
                 footer = 'M02*\n'
 
-                gerber_code = obj.export_gerber(g_whole, g_fract, g_zeros=g_zeros, factor=factor)
+                tools = obj.tools
+                try:
+                    if obj.obj_options.get('pcbdoc_import', False):
+                        # Union overlaps so region holes don't clear other solids. Draw islands last.
+                        solid = unary_union(obj.solid_geometry)
+                        polygons = [solid] if solid.geom_type == 'Polygon' else list(solid.geoms)
+                        obj.tools = {0: {'type': 'REG', 'size': 0, 'geometry': [
+                            {'solid': geo} for geo in sorted(polygons, key=lambda geo: Polygon(geo.exterior).area,
+                                                           reverse=True)]}}
+                        gerber_code = obj.export_gerber(g_whole, g_fract, g_zeros='L', factor=factor)
+                        if g_zeros == 'T':
+                            # Pad the magnitude, not the sign, for valid negative region coordinates.
+                            gerber_code = re.sub(
+                                r'([XY])(-?)(\d+)',
+                                lambda match: '%s%s%s' % (match[1], match[2], match[3].zfill(g_whole + g_fract)),
+                                gerber_code)
+                    else:
+                        gerber_code = obj.export_gerber(g_whole, g_fract, g_zeros=g_zeros, factor=factor)
+                finally:
+                    obj.tools = tools
+                if obj.obj_options.get('pcbdoc_import', False) and (not gerber_code or gerber_code == 'fail'):
+                    return 'fail'
 
                 exported_gerber = header
                 exported_gerber += gerber_code
@@ -1834,11 +2016,15 @@ class appIO(QtCore.QObject):
                                            "Most likely another app is holding the file open and not accessible."))
                         return 'fail'
 
+                    if obj.obj_options.get('pcbdoc_import', False):
+                        obj.source_file = exported_gerber
                     if self.app.options.get("global_open_style", self.app.defaults.get("global_open_style", self.app.defaults.factory_defaults.get("global_open_style"))) is False:
                         self.app.file_opened.emit("Gerber", filename)
                     self.app.file_saved.emit("Gerber", filename)
                     self.inform.emit('[success] %s: %s' % (_("Gerber file exported to"), filename))
                 else:
+                    if obj.obj_options.get('pcbdoc_import', False):
+                        obj.source_file = exported_gerber
                     return exported_gerber
             except Exception as e:
                 self.log.error("App.export_gerber.make_gerber() --> %s" % str(e))
