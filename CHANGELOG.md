@@ -8,6 +8,16 @@ CHANGELOG for FlatCAM Evo beta
 
 =================================================
 
+13.10.2026
+
+Paint / NCC / camlib:
+
+- the joining of paths in Paint and NCC (paint_connect) is about 4 times faster on large jobs; the output is the same
+- the clearing methods (Standard, Seed, Lines, trace filling) use the circle steps setting as the number of segments of a full circle
+- a connecting move between 2 paths is checked against the real tool radius, with a small tolerance for paths at exactly 1 tool radius from the edge
+- Lines mode and the trace filling keep the last scan line next to the edge (before, it was always removed)
+- the check of drill points against the exclusion areas uses the exact distance
+
 12.10.2026
 
 Levelling Tool:

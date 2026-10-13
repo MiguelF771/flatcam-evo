@@ -1483,6 +1483,9 @@ class Geometry(object):
 
         # log.debug("camlib.clear_polygon_shrink()")
 
+        # Shapely uses segments per quadrant, not per full circle.
+        quad_segs = circle_quad_segs(steps_per_circle)
+
         # The toolpaths
         # Index first and last points in paths
         def get_pts(o):
@@ -1493,7 +1496,7 @@ class Geometry(object):
 
         # Can only result in a Polygon or MultiPolygon
         # NOTE: The resulting polygon can be "empty".
-        current = polygon.buffer((-tooldia / 2), int(steps_per_circle))
+        current = polygon.buffer((-tooldia / 2), quad_segs=quad_segs)
         current = flatten_shapely_geometry(current)
 
         for p in current:
@@ -1509,7 +1512,7 @@ class Geometry(object):
                 # provide the app with a way to process the GUI events when in a blocking loop
                 QtWidgets.QApplication.processEvents()
 
-                cl_pol = cl_pol.buffer(-tooldia * (1 - overlap), int(steps_per_circle))
+                cl_pol = cl_pol.buffer(-tooldia * (1 - overlap), quad_segs=quad_segs)
                 cl_pol_list = flatten_shapely_geometry(cl_pol)
 
                 added_flag = False
@@ -1613,6 +1616,9 @@ class Geometry(object):
 
         # log.debug("camlib.clear_polygon_seed()")
 
+        # Shapely uses segments per quadrant, not per full circle.
+        quad_segs = circle_quad_segs(steps_per_circle)
+
         # Current buffer radius
         radius = tooldia / 2 * (1 - overlap)
 
@@ -1625,7 +1631,7 @@ class Geometry(object):
         geom_elems.get_points = get_pts
 
         # Path margin
-        path_margin = polygon_to_clear.buffer(-tooldia / 2, int(steps_per_circle))
+        path_margin = polygon_to_clear.buffer(-tooldia / 2, quad_segs=quad_segs)
         path_margin = flatten_shapely_geometry(path_margin, simplify_tolerance=simplify_tol)
         path_margin = MultiPolygon(path_margin)
 
@@ -1646,7 +1652,7 @@ class Geometry(object):
             # provide the app with a way to process the GUI events when in a blocking loop
             QtWidgets.QApplication.processEvents()
 
-            path = Point(seedpoint).buffer(radius, int(steps_per_circle)).exterior
+            path = Point(seedpoint).buffer(radius, quad_segs=quad_segs).exterior
             path = path.simplify(simplify_tol)
             path = path.intersection(path_margin)
 
@@ -1668,7 +1674,7 @@ class Geometry(object):
 
         # Clean inside edges (contours) of the original polygon
         if contour:
-            buffered_poly = autolist(polygon_to_clear.buffer(-tooldia / 2, int(steps_per_circle)))
+            buffered_poly = autolist(polygon_to_clear.buffer(-tooldia / 2, quad_segs=quad_segs))
             buffered_poly: list[Polygon] = [x.simplify(simplify_tol) for x in buffered_poly]
             outer_edges = [x.exterior for x in buffered_poly]
 
@@ -1732,6 +1738,11 @@ class Geometry(object):
         """
 
         # log.debug("camlib.clear_polygon_lines()")
+        quad_segs = circle_quad_segs(steps_per_circle)
+        # The distance of the margin from the boundary and the distance of the first and last scan line from the
+        # edge of the bounding box. The scan lines at the edge must lie inside the margin, so they use the same value.
+        margin_dist = tooldia / 1.99999999
+        edge_dist = tooldia / 1.999999999
         if not isinstance(polygon, Polygon):
             self.app.log.debug("camlib.Geometry.clear_polygon_lines() --> Not a Polygon but %s" % str(type(polygon)))
             return None
@@ -1750,7 +1761,7 @@ class Geometry(object):
         left, bot, right, top = polygon.bounds
 
         try:
-            margin_poly = polygon.buffer(-tooldia / 1.99999999, (int(steps_per_circle)))
+            margin_poly = polygon.buffer(-margin_dist, quad_segs=quad_segs)
             margin_poly = margin_poly.simplify(simplify_tol)
         except Exception:
             self.app.log.debug("camlib.Geometry.clear_polygon_lines() --> Could not buffer the Polygon")
@@ -1760,8 +1771,8 @@ class Geometry(object):
         if abs(left - right) >= abs(top - bot):
             # First line
             try:
-                y = top - tooldia / 1.99999999
-                while y > bot + tooldia / 1.999999999:
+                y = top - margin_dist
+                while y > bot + edge_dist:
                     if self.app.abort_flag:
                         # graceful abort requested by the user
                         raise grace
@@ -1779,7 +1790,7 @@ class Geometry(object):
                         self.temp_shapes.redraw()
 
                 # Last line
-                y = bot + tooldia / 2
+                y = bot + margin_dist
                 line = LineString([(left, y), (right, y)])
                 line = line.intersection(margin_poly)
 
@@ -1794,8 +1805,8 @@ class Geometry(object):
         else:
             # First line
             try:
-                x = left + tooldia / 1.99999999
-                while x < right - tooldia / 1.999999999:
+                x = left + margin_dist
+                while x < right - edge_dist:
                     if self.app.abort_flag:
                         # graceful abort requested by the user
                         raise grace
@@ -1813,7 +1824,7 @@ class Geometry(object):
                         self.temp_shapes.redraw()
 
                 # Last line
-                x = right + tooldia / 2
+                x = right - margin_dist
                 line = LineString([(x, top), (x, bot)])
                 line = line.intersection(margin_poly)
 
@@ -1888,6 +1899,7 @@ class Geometry(object):
         """
 
         # log.debug("camlib.fill_with_lines()")
+        quad_segs = circle_quad_segs(steps_per_circle)
         if not isinstance(line, LineString):
             self.app.log.debug(
                 "camlib.Geometry.fill_with_lines() --> Not a LineString/MultiLineString but %s" % str(type(line)))
@@ -1931,7 +1943,7 @@ class Geometry(object):
 
         lines_trimmed = []
 
-        polygon = line.buffer(aperture_size / 2.0, int(steps_per_circle))
+        polygon = line.buffer(aperture_size / 2.0, quad_segs=quad_segs)
         if isinstance(line, LineString):
             line_coords = list(line.coords)
         else:
@@ -1971,7 +1983,8 @@ class Geometry(object):
             prepared_line = prepared_line.simplify(0)
         # ##########################################################################
         try:
-            margin_poly: BaseGeometry | list[BaseGeometry] = polygon.buffer(-tooldia / 2.0, int(steps_per_circle))
+            margin_poly: BaseGeometry | list[BaseGeometry] = polygon.buffer(
+                -tooldia / 2.0, quad_segs=quad_segs)
         except Exception:
             self.app.log.debug(
                 "camlib.Geometry.fill_with_lines() --> Could not buffer the Polygon, tool diameter too high")
@@ -1988,7 +2001,7 @@ class Geometry(object):
                 # provide the app with a way to process the GUI events when in a blocking loop
                 QtWidgets.QApplication.processEvents()
 
-                new_line = prepared_line.parallel_offset(distance=delta, side='left', resolution=int(steps_per_circle))
+                new_line = prepared_line.parallel_offset(distance=delta, side='left', resolution=quad_segs)
                 new_line = new_line.intersection(margin_poly)
                 lines_trimmed.append(new_line) if not new_line.is_empty else None
 
@@ -1997,7 +2010,7 @@ class Geometry(object):
                     self.plot_temp_shapes(new_line)
                     self.temp_shapes.redraw()
 
-                new_line = prepared_line.parallel_offset(distance=delta, side='right', resolution=int(steps_per_circle))
+                new_line = prepared_line.parallel_offset(distance=delta, side='right', resolution=quad_segs)
                 new_line = new_line.intersection(margin_poly)
                 lines_trimmed.append(new_line) if not new_line.is_empty else None
 
@@ -2007,9 +2020,10 @@ class Geometry(object):
                     self.temp_shapes.redraw()
 
             # Last line
-            delta = (aperture_size / 2) - (tooldia / 2.00000001)
+            # The last line must lie inside the margin, so it uses the margin distance.
+            delta = (aperture_size / 2) - (tooldia / 1.99999999)
 
-            new_line = prepared_line.parallel_offset(distance=delta, side='left', resolution=int(steps_per_circle))
+            new_line = prepared_line.parallel_offset(distance=delta, side='left', resolution=quad_segs)
             new_line = new_line.intersection(margin_poly)
         except Exception as e:
             self.app.log.error('camlib.Geometry.fill_with_lines() Processing poly --> %s' % str(e))
@@ -2027,7 +2041,7 @@ class Geometry(object):
                 if prog_plot:
                     self.plot_temp_shapes(lines_geometry)
 
-        new_line = prepared_line.parallel_offset(distance=delta, side='right', resolution=int(steps_per_circle))
+        new_line = prepared_line.parallel_offset(distance=delta, side='right', resolution=quad_segs)
         new_line = new_line.intersection(margin_poly)
 
         if new_line and not new_line.is_empty:
@@ -2147,6 +2161,7 @@ class Geometry(object):
         # If max_walk is not specified, the maximum allowed is
         # 10 times the tool diameter
         max_walk = max_walk or 10 * tooldia
+        quad_segs = circle_quad_segs(steps_per_circle)
 
         # Assuming geo list is a flat list of flat elements
 
@@ -2178,8 +2193,10 @@ class Geometry(object):
 
         storage.remove(geo)
 
-        geo = LineString(geo)
-        current_pt = geo.coords[-1]
+        # ponytail: accumulate coordinates; materialize once per completed path.
+        geo_coords = list(geo.coords)
+        current_pt = geo_coords[-1]
+        boundary_edge = boundary.boundary
         try:
             while True:
                 path_count += 1
@@ -2188,50 +2205,46 @@ class Geometry(object):
                 pt, candidate = storage.nearest(current_pt)
                 storage.remove(candidate)
 
-                candidate = LineString(candidate)
+                candidate_coords = list(candidate.coords)
 
                 # If last point in geometry is the nearest
                 # then reverse coordinates.
                 # but prefer the first one if last == first
-                if pt != candidate.coords[0] and pt == candidate.coords[-1]:
-                    # in place coordinates update deprecated in Shapely 2.0
-                    # candidate.coords = list(candidate.coords)[::-1]
-                    candidate = LineString(list(candidate.coords)[::-1])
+                if pt != candidate_coords[0] and pt == candidate_coords[-1]:
+                    candidate_coords.reverse()
 
                 # Straight line from current_pt to pt.
                 # Is the toolpath inside the geometry?
                 walk_path = LineString([current_pt, pt])
-                walk_cut = walk_path.buffer(tooldia / 2, int(steps_per_circle))
+                walk_cut = walk_path.buffer(tooldia / 2, quad_segs=quad_segs)
 
-                if walk_cut.within(boundary) and walk_path.length < max_walk:
+                # The polygonal buffer is inscribed: also check the real tool radius,
+                # so fewer circle steps cannot admit a walk across a boundary or hole.
+                # The paths of the first pass are at exactly the tool radius from the
+                # boundary, so a rounding error must not reject the walk.
+                if (walk_path.length < max_walk and walk_cut.within(boundary)
+                        and walk_path.distance(boundary_edge) >= tooldia / 2 - 1e-9):
                     # log.debug("Walk to path #%d is inside. Joining." % path_count)
 
                     # Completely inside. Append...
-                    # in place coordinates update deprecated in Shapely 2.0
-                    # geo.coords = list(geo.coords) + list(candidate.coords)
-                    geo = LineString(list(geo.coords) + list(candidate.coords))
-                    # try:
-                    #     last = optimized_paths[-1]
-                    #     last.coords = list(last.coords) + list(geo.coords)
-                    # except IndexError:
-                    #     optimized_paths.append(geo)
+                    geo_coords.extend(candidate_coords)
 
                 else:
 
                     # Have to lift tool. End path.
                     # log.debug("Path #%d not within boundary. Next." % path_count)
                     # optimized_paths.append(geo)
-                    optimized_paths.insert(geo)
-                    geo = candidate
+                    optimized_paths.insert(LineString(geo_coords))
+                    geo_coords = candidate_coords
 
-                current_pt = geo.coords[-1]
+                current_pt = geo_coords[-1]
 
                 # Next
                 # pt, geo = storage.nearest(current_pt)
 
         except StopIteration:  # Nothing left in storage.
             # pass
-            optimized_paths.insert(geo)
+            optimized_paths.insert(LineString(geo_coords))
 
         return optimized_paths
 
@@ -4409,11 +4422,12 @@ class CNCjob(Geometry):
 
         # check if there are drill points in the exclusion areas.
         # If we find any within the exclusion areas return 'fail'
+        # The drill touches the area if the distance from its center is not more than the tool radius. This is exact;
+        # a polygonal circle (a buffer) is inside the true circle and can miss a touch.
         for tool in points:
             for pt in points[tool]:
                 for area in self.app.exc_areas.exclusion_areas_storage:
-                    pt_buf = pt.buffer(self.exc_tools[tool]['tooldia'] / 2.0)
-                    if pt_buf.within(area['shape']) or pt_buf.intersects(area['shape']):
+                    if pt.distance(area['shape']) <= self.exc_tools[tool]['tooldia'] / 2.0:
                         self.app.inform.emit("[ERROR_NOTCL] %s" % _("Failed. Drill points inside the exclusion zones."))
                         return 'fail'
 
@@ -8107,6 +8121,14 @@ def flatten_shapely_geometry(
 
     flatten(geometry)
     return flat_list
+
+
+def circle_quad_segs(steps_per_circle) -> int:
+    """
+    :param steps_per_circle:    the number of segments of a full circle
+    :return:                    the Shapely buffer quad_segs (segments of a quarter circle)
+    """
+    return max(1, math.ceil(int(steps_per_circle) / 4))
 
 
 def get_bounds(geometry_list: list) -> list:
