@@ -18,6 +18,10 @@ Paint / NCC / camlib:
 - Lines mode and the trace filling keep the last scan line next to the edge (before, it was always removed)
 - the check of drill points against the exclusion areas uses the exact distance
 
+Isolation Tool:
+
+- the Simplification option is on by default, with a tolerance of 0.001 mm (before: off, 0.01 mm); the isolation ring of a round pad has 64 G-code lines in place of 128, and the path moves less than 1 um toward the copper
+
 12.10.2026
 
 Levelling Tool:
