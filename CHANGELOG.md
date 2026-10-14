@@ -23,6 +23,7 @@ Other:
 - fixed a bug when changing colors for objects
 - new feature: Altium .pcbdoc import in File -> Import -> Altium PCB directly to Gerbers and Excellons
 - tests: pytest options (for example -q or -x) do not stop the tests that import appMain any more (new tests/conftest.py)
+- fixed a crash when the Space key toggles the plot of the selected objects: the default Properties tab deleted the UI of an object; now the UI is kept, and if a UI is deleted it is rebuilt
 
 13.10.2026
 

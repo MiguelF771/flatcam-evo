@@ -3365,7 +3365,19 @@ class MainGUI(QtWidgets.QMainWindow):
                 # Space = Toggle Active/Inactive
                 if key == QtCore.Qt.Key.Key_Space:
                     for select in selected:
-                        select.ui.plot_cb.toggle()
+                        try:
+                            select.ui.plot_cb.toggle()
+                        except RuntimeError:
+                            # the UI of the object was deleted by Qt; rebuild it, then change the option and plot
+                            # directly because not all objects connect the plot checkbox in set_ui()
+                            select.set_ui(select.ui_type(app=self.app))
+                            select.muted_ui = True
+                            select.obj_options['plot'] = not select.obj_options['plot']
+                            select.muted_ui = False
+                            if select.kind == 'cncjob':
+                                select.plot(kind=self.app.options.get("cncjob_plot_kind", "all"))
+                            else:
+                                select.plot()
                         QtWidgets.QApplication.processEvents()
                     self.app.collection.update_view()
                     self.app.delete_selection_shape()

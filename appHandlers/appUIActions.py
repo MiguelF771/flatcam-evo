@@ -1301,6 +1301,9 @@ class AppUIActions(QtCore.QObject):
         d_properties_tw.addChild(parent=canvas_cat,
                                  title=['%s:' % _("HUD"), '%s' % str(self.options.get('global_hud', self._pref('global_hud')))],
                                  column1=True)
+        # take the current widget out first: QScrollArea.setWidget() deletes the old widget and that can be the UI
+        # of an object, which the object still uses
+        self.ui.properties_scroll_area.takeWidget()
         self.ui.properties_scroll_area.setWidget(d_properties_tw)
 
     # --------------------------------------------------------------------------
