@@ -258,10 +258,9 @@ class ExcellonGenPrefGroupUI(OptionsGroupUI):
         self.optimization_time_label = FCLabel('%s:' % _('Duration'))
         self.optimization_time_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
         self.optimization_time_label.setToolTip(
-            _("When OR-Tools Metaheuristic (MH) is enabled there is a\n"
-              "maximum threshold for how much time is spent doing the\n"
-              "path optimization. This max duration is set here.\n"
-              "In seconds.")
+            _("OR-Tools MetaHeuristic and Basic stop the path\n"
+              "optimization after this time.\n"
+              "In seconds. 0 means 3 seconds.")
 
         )
 
@@ -382,7 +381,7 @@ class ExcellonGenPrefGroupUI(OptionsGroupUI):
                 self.excellon_optimization_radio.set_value('T')
                 self.excellon_optimization_radio.blockSignals(False)
 
-        if val == 'M':
+        if val in ('M', 'B'):
             self.optimization_time_label.setDisabled(False)
             self.optimization_time_entry.setDisabled(False)
         else:

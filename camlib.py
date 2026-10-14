@@ -3081,42 +3081,54 @@ class CNCjob(Geometry):
                 text = text.replace(match, str(value))
             return text
 
-    # Distance callback
-    class CreateDistanceCallback(object):
-        """Create callback to calculate distances between points."""
+    # OR-Tools needs integer arc costs. The distances are multiplied by this factor before they are rounded, so
+    # 2 holes less than 1 unit (mm or inch) apart do not get a distance of 0.
+    ORTOOLS_DISTANCE_SCALE = 1000
+    # OR-Tools search time in seconds if the option is 0
+    ORTOOLS_DEFAULT_SEARCH_TIME = 3
 
-        def __init__(self, locs, manager):
-            self.manager = manager
-            self.matrix = {}
+    @staticmethod
+    def ortools_distance_matrix(locs, scale=ORTOOLS_DISTANCE_SCALE):
+        """
+        Distance matrix of the locations for OR-Tools ``RegisterTransitMatrix``: the Euclidean distances multiplied
+        by ``scale`` and rounded to integers.
 
-            if locs:
-                # for from_counter, from_node in enumerate(locs):
-                #     self.matrix[from_counter] = {}
-                #     for to_counter, to_node in enumerate(locs):
-                #         if from_counter == to_counter:
-                #             self.matrix[from_counter][to_counter] = 0
-                #         else:
-                #             # Euclidean distance
-                #             self.matrix[from_counter][to_counter] = (int(
-                #                 math.hypot((from_node[0] - to_node[0]), (from_node[1] - to_node[1]))))
-                size = len(locs)
-                for from_node in range(size):
-                    self.matrix[from_node] = {}
-                    for to_node in range(size):
-                        if from_node == to_node:
-                            self.matrix[from_node][to_node] = 0
-                        else:
-                            x1 = locs[from_node][0]
-                            y1 = locs[from_node][1]
-                            x2 = locs[to_node][0]
-                            y2 = locs[to_node][1]
-                            self.matrix[from_node][to_node] = int(distance_euclidian(x1, y1, x2, y2))
+        :param locs:    list of (x, y) tuples
+        :param scale:   factor applied to the distances before the rounding
+        :return:        list of lists of int, the item [i][j] is the cost from location i to location j
+        """
+        pts = np.asarray(locs, dtype=float).reshape(-1, 2)
+        dx = pts[:, 0, None] - pts[None, :, 0]
+        dy = pts[:, 1, None] - pts[None, :, 1]
+        return np.rint(np.hypot(dx, dy) * scale).astype(np.int64).tolist()
 
-        def distance_callback(self, from_index, to_index):
-            # Convert from routing variable Index to distance matrix NodeIndex.
-            from_node = self.manager.IndexToNode(from_index)
-            to_node = self.manager.IndexToNode(to_index)
-            return self.matrix[from_node][to_node]
+    @classmethod
+    def ortools_set_time_limit(cls, search_parameters, opt_time):
+        """
+        Set the time limit of an OR-Tools search. Without a limit the local search runs until no move makes the path
+        shorter, which takes minutes for 1000 holes or more.
+
+        :param search_parameters:   OR-Tools search parameters, changed in place
+        :param opt_time:            search time in seconds (fractions are kept); 0 or None selects
+                                    ORTOOLS_DEFAULT_SEARCH_TIME
+        """
+        seconds = float(opt_time) if opt_time else 0.0
+        if seconds <= 0:
+            seconds = cls.ORTOOLS_DEFAULT_SEARCH_TIME
+        search_parameters.time_limit.FromMilliseconds(int(seconds * 1000))
+
+    def _ortools_route(self, manager, routing, assignment):
+        """The location indexes of the route of an OR-Tools solution, in the order of the route."""
+        route = []
+        node = routing.Start(0)
+        while not routing.IsEnd(node):
+            if self.app.abort_flag:
+                # graceful abort requested by the user
+                raise grace
+
+            route.append(manager.IndexToNode(node))
+            node = assignment.Value(routing.NextVar(node))
+        return route
 
     @staticmethod
     def create_tool_data_array(points):
@@ -3143,50 +3155,27 @@ class CNCjob(Geometry):
         search_parameters.local_search_metaheuristic = (
             routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH)
 
-        # Set search time limit in milliseconds.
-        if float(opt_time) != 0:
-            search_parameters.time_limit.seconds = int(
-                float(opt_time))
-        else:
-            search_parameters.time_limit.seconds = 3
+        self.ortools_set_time_limit(search_parameters, opt_time)
 
-        # Callback to the distance function. The callback takes two
-        # arguments (the from and to node indices) and returns the distance between them.
-        dist_between_locations = self.CreateDistanceCallback(locs=locations, manager=manager)
-
-        # if there are no distances then go to the next tool
-        if not dist_between_locations:
-            return
-
-        transit_callback_index = routing.RegisterTransitCallback(dist_between_locations.distance_callback)
-        routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
+        # the matrix is evaluated inside OR-Tools, without a Python call for each arc
+        transit_index = routing.RegisterTransitMatrix(self.ortools_distance_matrix(locations))
+        routing.SetArcCostEvaluatorOfAllVehicles(transit_index)
 
         # Solve, returns a solution if any.
         assignment = routing.SolveWithParameters(search_parameters)
 
         if assignment:
             # Solution cost.
-            self.app.log.info("OR-tools metaheuristics - Total distance: " + str(assignment.ObjectiveValue()))
-
-            # Inspect solution.
-            # Only one route here; otherwise iterate from 0 to routing.vehicles() - 1.
-            route_number = 0
-            node = routing.Start(route_number)
-
-            while not routing.IsEnd(node):
-                if self.app.abort_flag:
-                    # graceful abort requested by the user
-                    raise grace
-
-                optimized_path.append(node)
-                node = assignment.Value(routing.NextVar(node))
+            self.app.log.info("OR-tools metaheuristics - Total distance: %s" % str(
+                assignment.ObjectiveValue() / self.ORTOOLS_DISTANCE_SCALE))
+            optimized_path = self._ortools_route(manager, routing, assignment)
         else:
             self.app.log.warning('OR-tools metaheuristics - No solution found.')
 
         return optimized_path
         # ############################################# ##
 
-    def optimized_ortools_basic(self, locations, start=None):
+    def optimized_ortools_basic(self, locations, start=None, opt_time=0):
         optimized_path = []
 
         tsp_size = len(locations)
@@ -3202,37 +3191,25 @@ class CNCjob(Geometry):
         # Create routing model.
         routing = pywrapcp.RoutingModel(manager)
 
-        # Callback to the distance function. The callback takes two
-        # arguments (the from and to node indices) and returns the distance between them.
-        dist_between_locations = self.CreateDistanceCallback(locs=locations, manager=manager)
-        # if there are no distances then go to the next tool
-        if not dist_between_locations:
-            return
-
-        # START transit_callback
-        transit_callback_index = routing.RegisterTransitCallback(dist_between_locations.distance_callback)
+        # the matrix is evaluated inside OR-Tools, without a Python call for each arc
+        transit_index = routing.RegisterTransitMatrix(self.ortools_distance_matrix(locations))
         # Define cost of each arc.
-        routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
+        routing.SetArcCostEvaluatorOfAllVehicles(transit_index)
 
         # Setting first solution heuristic.
         search_parameters = pywrapcp.DefaultRoutingSearchParameters()
         search_parameters.first_solution_strategy = (
             routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC)
+        # the local search after the first solution stops at this limit
+        self.ortools_set_time_limit(search_parameters, opt_time)
 
         # Solve, returns a solution if any.
         solution = routing.SolveWithParameters(search_parameters)
 
         if solution:
             # Solution cost.
-            self.app.log.info("Total distance: {}".format(solution.ObjectiveValue()))
-
-            # Inspect solution.
-            # Only one route here; otherwise iterate from 0 to routing.vehicles() - 1.
-            route_number = 0
-            node = routing.Start(route_number)
-            while not routing.IsEnd(node):
-                optimized_path.append(node)
-                node = solution.Value(routing.NextVar(node))
+            self.app.log.info("Total distance: {}".format(solution.ObjectiveValue() / self.ORTOOLS_DISTANCE_SCALE))
+            optimized_path = self._ortools_route(manager, routing, solution)
         else:
             self.app.log.warning('No solution found.')
 
@@ -3581,7 +3558,8 @@ class CNCjob(Geometry):
             # if there are no locations then go to the next tool
             if not locations:
                 return 'fail'
-            optimized_path = self.optimized_ortools_basic(locations=locations)
+            opt_time = self._app_option("excellon_search_time")
+            optimized_path = self.optimized_ortools_basic(locations=locations, opt_time=opt_time)
         elif opt_type == 'T':
             locations = self.create_tool_data_array(points=points)
             # if there are no locations then go to the next tool
@@ -4082,7 +4060,7 @@ class CNCjob(Geometry):
             # if there are no locations then go to the next tool
             if not locations:
                 return 'fail'
-            optimized_locations = self.optimized_ortools_basic(locations=locations)
+            optimized_locations = self.optimized_ortools_basic(locations=locations, opt_time=opt_time)
             optimized_path = [(locations[loc], geo_storage[locations[loc]]) for loc in optimized_locations]
         elif opt_type == 'T':
             # if there are no locations then go to the next tool
@@ -4549,7 +4527,8 @@ class CNCjob(Geometry):
                     # if there are no locations then go to the next tool
                     if not locations:
                         continue
-                    optimized_path = self.optimized_ortools_basic(locations=locations)
+                    opt_time = self._app_option("excellon_search_time")
+                    optimized_path = self.optimized_ortools_basic(locations=locations, opt_time=opt_time)
                 elif used_excellon_optimization_type == 'T':
                     for point in points[tool]:
                         altPoints.append((point.coords.xy[0][0], point.coords.xy[1][0]))
@@ -4792,7 +4771,8 @@ class CNCjob(Geometry):
                 # if there are no locations then go to the next tool
                 if not locations:
                     return 'fail'
-                optimized_path = self.optimized_ortools_basic(locations=locations)
+                opt_time = self._app_option("excellon_search_time")
+                optimized_path = self.optimized_ortools_basic(locations=locations, opt_time=opt_time)
             elif used_excellon_optimization_type == 'T':
                 for point in all_points:
                     altPoints.append((point.coords.xy[0][0], point.coords.xy[1][0]))
@@ -5713,7 +5693,7 @@ class CNCjob(Geometry):
             # if there are no locations then go to the next tool
             if not locations:
                 return 'fail'
-            optimized_locations = self.optimized_ortools_basic(locations=locations)
+            optimized_locations = self.optimized_ortools_basic(locations=locations, opt_time=opt_time)
             optimized_path = [(locations[loc], geo_storage[locations[loc]]) for loc in optimized_locations]
         elif opt_type == 'T':
             # if there are no locations then go to the next tool
