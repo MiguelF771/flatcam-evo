@@ -314,6 +314,9 @@ class Gerber(Geometry):
           'aperture' 0 of type 'REG' is written natively, so it does not count);
         * a record holds a non-empty 'clear' geometry. Records have no global order, so the native
           writer, which groups them per aperture, cannot keep a dark -> clear -> dark sequence;
+        * a record of an 'R' aperture is not a flash of that aperture. The parser draws a track of an 'R'
+          aperture as a box around its end points, and the native writer would flash the aperture at the
+          end point instead;
         * the object comes from a PCB document import (``obj_options['pcbdoc_import']``).
 
         The method only reads the object.
@@ -333,6 +336,8 @@ class Gerber(Geometry):
             for record in tool.get('geometry', ()):
                 clear = record.get('clear')
                 if clear is not None and not clear.is_empty:
+                    return True
+                if tool.get('type') == 'R' and not _is_rectangle_flash(tool, record):
                     return True
         return False
 
@@ -2501,21 +2506,7 @@ class Gerber(Geometry):
 
                 self.tools[apid]['geometry'] = deepcopy(new_geometry)
 
-                try:
-                    if str(self.tools[apid]['type']) == 'R' or str(self.tools[apid]['type']) == 'O':
-                        self.tools[apid]['width'] *= xfactor
-                        self.tools[apid]['height'] *= xfactor
-                    elif str(self.tools[apid]['type']) == 'P':
-                        self.tools[apid]['diam'] *= xfactor
-                except KeyError:
-                    pass
-
-                try:
-                    if self.tools[apid]['size'] is not None:
-                        self.tools[apid]['size'] = float(self.tools[apid]['size'] * xfactor)
-                except KeyError:
-                    pass
-
+            update_scale_metadata(self, xfactor, yfactor)
         except Exception as e:
             self.app.log.error('ParseGerber.Gerber.scale() Exception --> %s' % str(e))
             return 'fail'
@@ -2671,6 +2662,7 @@ class Gerber(Geometry):
                             geo_el['follow'] = mirror_geom(geo_el['follow'])
                         if 'clear' in geo_el:
                             geo_el['clear'] = mirror_geom(geo_el['clear'])
+            update_mirror_metadata(self, axis)
         except Exception as e:
             self.app.log.error('ParseGerber.Gerber.mirror() Exception --> %s' % str(e))
             return 'fail'
@@ -2745,6 +2737,7 @@ class Gerber(Geometry):
                             geo_el['follow'] = skew_geom(geo_el['follow'])
                         if 'clear' in geo_el:
                             geo_el['clear'] = skew_geom(geo_el['clear'])
+            update_skew_metadata(self)
         except Exception as e:
             self.app.log.error('ParseGerber.Gerber.skew() Exception --> %s' % str(e))
             return 'fail'
@@ -2808,6 +2801,7 @@ class Gerber(Geometry):
                             geo_el['follow'] = rotate_geom(geo_el['follow'])
                         if 'clear' in geo_el:
                             geo_el['clear'] = rotate_geom(geo_el['clear'])
+            update_rotate_metadata(self, angle)
         except Exception as e:
             self.app.log.error('ParseGerber.Gerber.rotate() Exception --> %s' % str(e))
             return 'fail'
@@ -2888,24 +2882,17 @@ class Gerber(Geometry):
 
                     self.tools[apid]['geometry'] = deepcopy(new_geometry)
 
-                    try:
-                        if str(self.tools[apid]['type']) == 'R' or str(self.tools[apid]['type']) == 'O':
-                            self.tools[apid]['width'] += (distance * 2)
-                            self.tools[apid]['height'] += (distance * 2)
-                        elif str(self.tools[apid]['type']) == 'P':
-                            self.tools[apid]['diam'] += (distance * 2)
-                    except KeyError:
-                        pass
-
-                    try:
-                        if self.tools[apid]['size'] is not None:
-                            self.tools[apid]['size'] = float(self.tools[apid]['size'] + (distance * 2))
-                    except KeyError:
-                        pass
+                update_buffer_metadata(self, distance, join)
             except Exception as e:
                 self.app.log.error('ParseGerber.Gerber.buffer() Exception --> %s' % str(e))
                 return 'fail'
         else:
+            # The multiplicative buffer (Stage 3 owns it) rebuilds the records from 'follow' and 'size' and does not
+            # keep the metadata in agreement with the geometry in every case: the export must use the composed
+            # geometry as soon as there is any record.
+            if any(tool.get('geometry') for tool in self.tools.values()):
+                self.export_as_regions = True
+
             try:
                 for apid in self.tools:
                     try:
@@ -2975,6 +2962,343 @@ class Gerber(Geometry):
         if muted is False:
             self.app.inform.emit('[success] %s' % _("Gerber Buffer done."))
         self.app.proc_container.new_text = ''
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Stage 0C: the aperture metadata after a transform.
+#
+# The native Gerber writer declares the apertures from the metadata (C: size; R, O: width, height) and writes the
+# 'follow' geometry of the records. After a transform the metadata must still describe the geometry, or
+# ``Gerber.export_as_regions`` is set and the export writes the composed ``solid_geometry`` as regions. The rules
+# are in the Stage 0C table. The helpers below are called by Gerber.scale, rotate, mirror, skew and buffer once the
+# geometry is done; they never change the geometry or the records. Offset changes no metadata.
+#
+# Aperture keys (the parser, ``Gerber.aperture_parse``):
+#   C: size | R, O: width, height, size (= hypot(width, height), the width of a track) |
+#   P: diam, nVertices, size (= diam), rotation (optional, degrees) | AM: macro, modifiers | REG: size, geometry
+# ---------------------------------------------------------------------------------------------------------------
+
+_QUARTER_TURN_TOLERANCE = 1e-9      # degrees
+_RECTANGLE_FLASH_TOLERANCE = 1e-5   # the parser rounds the corners of a rectangle flash with a 1e-7 buffer
+_RECTANGLE_AREA_TOLERANCE = 1e-4    # relative
+
+
+def _is_rectangle_flash(tool: Dict[str, Any], record: Dict[str, Any]) -> bool:
+    """
+    Tell if the solid geometry of a record of an 'R' aperture is a flash of that aperture, that is, its bounds
+    are as wide and as high as the aperture. The parser makes a box around the end points for a track drawn with
+    an 'R' aperture; the native writer can not write such a record (it flashes the aperture at the end point).
+
+    :param tool:    the 'R' aperture
+    :param record:  one record of the aperture
+    :return:        False only when the solid geometry has other bounds than the aperture
+    """
+    solid = record.get('solid')
+    bounds = getattr(solid, 'bounds', None)
+    if solid is None or not bounds or len(bounds) != 4 or getattr(solid, 'is_empty', True):
+        return True
+    try:
+        width = abs(bounds[2] - bounds[0])
+        height = abs(bounds[3] - bounds[1])
+        return abs(width - tool['width']) <= _RECTANGLE_FLASH_TOLERANCE and \
+            abs(height - tool['height']) <= _RECTANGLE_FLASH_TOLERANCE
+    except (KeyError, TypeError):
+        return True
+
+
+_REQUIRED_KEYS = {'R': ('width', 'height'), 'O': ('width', 'height'), 'P': ('diam',)}
+
+
+def _is_well_formed(tool: Dict[str, Any]) -> bool:
+    """
+    Tell if an aperture has the keys its type needs ('R', 'O': width and height; 'P': diam). An aperture without
+    them can not be updated, the callers send it to the regions export.
+    """
+    return all(key in tool for key in _REQUIRED_KEYS.get(str(tool.get('type')), ()))
+
+
+def _flag_regions(gerber: Any, tool: Dict[str, Any]) -> None:
+    """
+    Mark that the aperture metadata can no longer describe the geometry, but only if the aperture has at least
+    1 record (a flash or a track). The flag never goes back to False inside a transform.
+
+    :param gerber:  the Gerber object
+    :param tool:    the aperture
+    :return:        None
+    """
+    if tool.get('geometry'):
+        gerber.export_as_regions = True
+
+
+def _has_track_records(tool: Dict[str, Any]) -> bool:
+    """
+    Tell if any record of the aperture is a track (its 'follow' is a line, not a flash point).
+
+    :param tool:    the aperture
+    :return:        True if there is a track record
+    """
+    for record in tool.get('geometry', ()):
+        if getattr(record.get('follow'), 'geom_type', None) in ('LineString', 'LinearRing', 'MultiLineString'):
+            return True
+    return False
+
+
+def _records_fill_rectangle(tool: Dict[str, Any]) -> bool:
+    """
+    Tell if the solid geometry of every record of an 'R' aperture is as large as the rectangle given by the
+    width and height of the aperture. The parser rounds the corners of a rectangle flash with a 1e-7 buffer, and a
+    mitre buffer of such a flash rounds the corners again (the many short edges of the tiny arcs get mitre joins
+    that follow a circle), so the buffered flash is not a rectangle of the buffered width and height.
+
+    :param tool:    the 'R' aperture, with its new width and height
+    :return:        True if the records are rectangles of the aperture size
+    """
+    expected = tool['width'] * tool['height']
+    for record in tool.get('geometry', ()):
+        solid = record.get('solid')
+        if solid is None:
+            continue
+        area = getattr(solid, 'area', None)
+        if area is None or abs(area - expected) > _RECTANGLE_AREA_TOLERANCE * expected:
+            return False
+    return True
+
+
+def _set_rectangle(tool: Dict[str, Any], width: float, height: float) -> None:
+    """
+    Store the width and height of an 'R' or 'O' aperture. 'size' is kept as the parser makes it: the diagonal.
+    """
+    tool['width'] = float(width)
+    tool['height'] = float(height)
+    tool['size'] = float(np.hypot(width, height))
+
+
+def _set_polygon_rotation(tool: Dict[str, Any], rotation: float) -> None:
+    """
+    Store the rotation of a 'P' aperture, in degrees, reduced to [0, 360). The parser omits the key for 0, so it
+    is left out when the aperture had none and the new value is 0.
+    """
+    rotation = float(rotation) % 360.0
+    if 'rotation' in tool or rotation != 0.0:
+        tool['rotation'] = rotation
+
+
+def _scale_size(tool: Dict[str, Any], factor: float) -> None:
+    """Multiply the generic 'size' by a (non-negative) factor, as the code did before Stage 0C."""
+    if tool.get('size') is not None:
+        tool['size'] = float(tool['size'] * factor)
+
+
+def update_scale_metadata(gerber: Any, xfactor: float, yfactor: float) -> None:
+    """
+    Update the aperture metadata after ``Gerber.scale``. Sizes are always taken with ``abs()``.
+
+    * ``s > 0`` uniform: C size, R and O width and height, P diam are multiplied; AM: regions.
+    * ``s < 0`` uniform (a 180 degrees rotation): the same with ``abs(s)``; P rotation + 180.
+    * non-uniform (``abs(sx) != abs(sy)``): R width * abs(sx), height * abs(sy); C, O, P and AM: regions.
+    * ``scale(-s, s)`` / ``scale(s, -s)``: like the mirror rows, then the uniform ``abs(s)``. A negative
+      ``yfactor`` negates Y (mirror X), a negative ``xfactor`` negates X (mirror Y).
+    * a zero factor (the geometry collapses): every aperture is regions.
+
+    :param gerber:  the Gerber object; its apertures are updated, the flag is set where needed
+    :param xfactor: the scale factor on X
+    :param yfactor: the scale factor on Y
+    :return:        None
+    """
+    ax = abs(xfactor)
+    ay = abs(yfactor)
+    nonzero = ax > 0 and ay > 0
+    uniform = nonzero and bool(np.isclose(ax, ay, rtol=1e-12, atol=0.0))
+
+    for tool in gerber.tools.values():
+        kind = str(tool.get('type'))
+        representable = True
+        if not _is_well_formed(tool):
+            _flag_regions(gerber, tool)
+            continue
+
+        if kind == 'C':
+            representable = uniform
+            _scale_size(tool, ax)
+        elif kind == 'R':
+            representable = nonzero
+            if representable:
+                _set_rectangle(tool, tool['width'] * ax, tool['height'] * ay)
+            else:
+                tool['width'] *= ax
+                tool['height'] *= ax
+                _scale_size(tool, ax)
+        elif kind == 'O':
+            representable = uniform
+            tool['width'] *= ax
+            tool['height'] *= ax
+            _scale_size(tool, ax)
+        elif kind == 'P':
+            representable = uniform
+            tool['diam'] *= ax
+            _scale_size(tool, ax)
+            if representable:
+                rotation = tool.get('rotation', 0.0)
+                if xfactor < 0 and yfactor < 0:
+                    rotation += 180.0
+                elif yfactor < 0:
+                    rotation = -rotation            # mirror X
+                elif xfactor < 0:
+                    rotation = 180.0 - rotation     # mirror Y
+                _set_polygon_rotation(tool, rotation)
+        elif kind == 'AM':
+            representable = False
+        else:
+            _scale_size(tool, ax)
+
+        if not representable:
+            _flag_regions(gerber, tool)
+
+
+def update_rotate_metadata(gerber: Any, angle: float) -> None:
+    """
+    Update the aperture metadata after ``Gerber.rotate`` by ``angle`` degrees.
+
+    * C: unchanged.
+    * R and O: an odd quarter turn swaps width and height, an even quarter turn changes nothing, any other
+      angle is regions. A quarter turn is a multiple of 90 degrees within 1e-9 degrees, after reducing the
+      angle modulo 360.
+    * P: rotation + angle. AM: regions.
+
+    :param gerber:  the Gerber object
+    :param angle:   the rotation angle, in degrees
+    :return:        None
+    """
+    reduced = float(angle) % 360.0
+    quarters = round(reduced / 90.0)
+    is_quarter_turn = abs(reduced - quarters * 90.0) <= _QUARTER_TURN_TOLERANCE
+    is_odd_turn = is_quarter_turn and quarters % 2 == 1
+
+    for tool in gerber.tools.values():
+        kind = str(tool.get('type'))
+        if not _is_well_formed(tool):
+            _flag_regions(gerber, tool)
+        elif kind in ('R', 'O'):
+            if not is_quarter_turn:
+                _flag_regions(gerber, tool)
+            elif is_odd_turn:
+                tool['width'], tool['height'] = tool['height'], tool['width']
+        elif kind == 'P':
+            _set_polygon_rotation(tool, tool.get('rotation', 0.0) + angle)
+        elif kind == 'AM':
+            _flag_regions(gerber, tool)
+
+
+def update_mirror_metadata(gerber: Any, axis: str) -> None:
+    """
+    Update the aperture metadata after ``Gerber.mirror``. Mirror X negates Y and mirror Y negates X.
+
+    * C, R, O: unchanged.
+    * P: mirror X: rotation = -rotation; mirror Y: rotation = 180 - rotation.
+    * AM: regions.
+
+    :param gerber:  the Gerber object
+    :param axis:    "X" or "Y"
+    :return:        None
+    """
+    for tool in gerber.tools.values():
+        kind = str(tool.get('type'))
+        if kind == 'P':
+            rotation = tool.get('rotation', 0.0)
+            _set_polygon_rotation(tool, -rotation if axis == 'X' else 180.0 - rotation)
+        elif kind == 'AM':
+            _flag_regions(gerber, tool)
+
+
+def update_skew_metadata(gerber: Any) -> None:
+    """
+    Update the aperture metadata after ``Gerber.skew`` with a non-zero angle: no aperture type survives a skew,
+    so every aperture with records is regions. The metadata values are left as they are.
+
+    :param gerber:  the Gerber object
+    :return:        None
+    """
+    for tool in gerber.tools.values():
+        if str(tool.get('type')) in ('C', 'R', 'O', 'P', 'AM'):
+            _flag_regions(gerber, tool)
+
+
+def _is_mitre_join(join: Any) -> bool:
+    """
+    Tell if the join style given to ``Gerber.buffer`` is the mitre join. Callers pass the Shapely name
+    ('mitre', the default of the method, 'round', 'bevel') or the Shapely code (1 round, 2 mitre, 3 bevel).
+    The plugin Transform passes 1 or 2, the Tcl command 'buffer' passes 1 or the names 'square' and 'bevel'.
+    """
+    if isinstance(join, str):
+        return join.strip().lower() == 'mitre'
+    try:
+        return int(join) == 2
+    except (TypeError, ValueError):
+        return False
+
+
+def update_buffer_metadata(gerber: Any, distance: float, join: Any) -> None:
+    """
+    Update the aperture metadata after ``Gerber.buffer`` by a distance (not by a factor).
+
+    * C: size + 2d.
+    * R: mitre join: width, height + 2d, if the records are exact rectangles of that size (see
+      ``_records_fill_rectangle``: a parsed flash has corners rounded by the parser, so a positive mitre buffer
+      rounds them and the result is regions); any other join rounds the corners: regions.
+    * O: width, height + 2d. The parser draws a track of an O aperture with 'size' (the diagonal) as its width,
+      and hypot(w + 2d, h + 2d) is not 'size' + 2d, so an O aperture with a track is regions.
+    * P and AM: regions.
+    * A size that is not positive after the buffer (a negative distance) is regions.
+
+    Where the result is regions, the metadata keeps the values the code produced before Stage 0C.
+
+    :param gerber:      the Gerber object
+    :param distance:    the buffer distance
+    :param join:        the join style: Shapely name or code
+    :return:            None
+    """
+    grow = distance * 2
+    mitre = _is_mitre_join(join)
+
+    for tool in gerber.tools.values():
+        kind = str(tool.get('type'))
+        representable = True
+        if not _is_well_formed(tool):
+            _flag_regions(gerber, tool)
+            continue
+
+        if kind == 'C':
+            _grow_size(tool, grow)
+            representable = tool.get('size') is None or tool['size'] > 0
+        elif kind in ('R', 'O'):
+            tool['width'] += grow
+            tool['height'] += grow
+            representable = tool['width'] > 0 and tool['height'] > 0
+            if kind == 'R':
+                representable = representable and mitre and _records_fill_rectangle(tool)
+            else:
+                representable = representable and not _has_track_records(tool)
+            if representable:
+                _set_rectangle(tool, tool['width'], tool['height'])
+            else:
+                _grow_size(tool, grow)
+        elif kind == 'P':
+            tool['diam'] += grow
+            _grow_size(tool, grow)
+            representable = False
+        elif kind == 'AM':
+            representable = False
+        else:
+            _grow_size(tool, grow)
+
+        if not representable:
+            _flag_regions(gerber, tool)
+
+
+def _grow_size(tool: Dict[str, Any], grow: float) -> None:
+    """Add the growth (2 * the buffer distance) to the generic 'size', as the code did before Stage 0C."""
+    if tool.get('size') is not None:
+        tool['size'] = float(tool['size'] + grow)
 
 
 def parse_gerber_number(
