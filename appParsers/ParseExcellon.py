@@ -1248,7 +1248,10 @@ class Excellon(Geometry):
         self.scale(factor, factor)
         self.file_units_factor = factor
 
-        # the tool diameters are scaled by self.scale() (uniform factor)
+        # scale() moves the drills and slots only: the tool diameters change units here, 1 time
+        for tool in self.tools:
+            self.tools[tool]['tooldia'] *= factor
+
         self.create_geometry()
         return factor
 
@@ -1286,9 +1289,9 @@ class Excellon(Geometry):
     def scale(self, xfactor, yfactor=None, point=None):
         """
         Scales geometry on the XY plane in the object by a given factor.
-        Drill and slot positions use the signed factors. The tool diameters are multiplied by abs(xfactor) only
-        for a uniform scale (abs(xfactor) == abs(yfactor), yfactor None means equal); for a nonuniform scale the
-        diameters are unchanged (no elliptic drills). Feedrates and Z-plane dimensions are untouched.
+        Drill and slot positions use the signed factors. The tool diameters are not changed: a drill is a physical
+        tool, and a scale is used to move the holes, for example to correct a file read with a wrong number format.
+        convert_units() changes the diameters itself. Feedrates and Z-plane dimensions are untouched.
 
         :param xfactor:     Number by which to scale the object.
         :type xfactor:      float
@@ -1312,13 +1315,7 @@ class Excellon(Geometry):
         if xfactor == 0 and yfactor == 0:
             return
 
-        uniform = abs(xfactor) == abs(yfactor)
-
         self._transform_tools(lambda geo: affinity.scale(geo, xfactor, yfactor, origin=(px, py)))
-
-        if uniform:
-            for tool in self.tools:
-                self.tools[tool]['tooldia'] *= abs(xfactor)
 
         self.create_geometry()
         self.app.proc_container.new_text = ''
