@@ -238,18 +238,8 @@ class ToolPDF(AppTool):
                 name_tool += 1
                 tool = str(name_tool)
 
-                new_obj.tools[tool] = {
-                    'tooldia':          dia,
-                    'drills':           [],
-                    'solid_geometry':   []
-                }
-
-                # update the drill list
-                for dia_points in points:
-                    if dia == dia_points:
-                        for pt in points[dia_points]:
-                            new_obj.tools[tool]['drills'].append(Point(pt))
-                        break
+                # the drill list comes from the points that have this diameter
+                new_obj.add_tool(dia, drills=[Point(pt) for pt in points[dia]], tool_id=tool)
 
             ret = new_obj.create_geometry()
             if ret == 'fail':

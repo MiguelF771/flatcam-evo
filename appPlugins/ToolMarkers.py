@@ -923,21 +923,12 @@ class ToolMarkers(AppTool):
                 self.app.call_source = "app"
                 return
 
-        tools = {
-            1: {
-                "tooldia":          tooldia,
-                "drills":           drill_list,
-                "slots":            [],
-                "data":             {},
-                "solid_geometry":   []
-            }
-        }
-
         def obj_init(obj_inst, app_inst):
             obj_inst.obj_options.update({
                 'name': outname
             })
-            obj_inst.tools = deepcopy(tools)
+            obj_inst.tools = {}
+            obj_inst.add_tool(tooldia, drills=drill_list, data={})
             obj_inst.create_geometry()
             obj_inst.source_file = app_inst.f_handlers.export_excellon(obj_name=obj_inst.obj_options['name'],
                                                                        local_use=obj_inst,
@@ -1032,21 +1023,12 @@ class ToolMarkers(AppTool):
                 self.app.call_source = "app"
                 return
 
-        tools = {
-            1: {
-                "tooldia":          tooldia,
-                "drills":           drill_list,
-                "slots":            [],
-                'data':             {},
-                "solid_geometry":   []
-            }
-        }
-
         def obj_init(new_obj, app_inst):
-            new_obj.tools = deepcopy(tools)
+            new_obj.tools = {}
+            new_obj.add_tool(tooldia, drills=drill_list, data={})
 
             # make sure we use the special preprocessor for checking
-            for tool in tools:
+            for tool in new_obj.tools:
                 new_obj.tools[tool]['data']['tools_drill_ppname_e'] = 'Check_points'
 
             new_obj.create_geometry()

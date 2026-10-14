@@ -347,14 +347,7 @@ class DblSidedTool(AppTool):
             self.app.inform.emit(msg)
             return
 
-        tools = {
-            1: {
-                "tooldia":          dia,
-                "drills":           [],
-                "solid_geometry":   []
-            }
-        }
-
+        drills = []
         if align_type in ["X", "Y"]:
             xscale, yscale = {"X": (1.0, -1.0), "Y": (-1.0, 1.0)}[align_type]
 
@@ -362,16 +355,14 @@ class DblSidedTool(AppTool):
                 point = Point(hole)
                 point_mirror = scale(point, xscale, yscale, origin=(px, py))
 
-                tools[1]['drills'] += [point, point_mirror]
-                tools[1]['solid_geometry'] += [point, point_mirror]
+                drills += [point, point_mirror]
         elif align_type == "manual":
             for hole in holes:
-                point = Point(hole)
-                tools[1]['drills'].append(point)
-                tools[1]['solid_geometry'].append(point.buffer(dia/2))
+                drills.append(Point(hole))
 
         def obj_init(obj_inst, app_inst):
-            obj_inst.tools = deepcopy(tools)
+            obj_inst.tools = {}
+            obj_inst.add_tool(dia, drills=drills)
             obj_inst.create_geometry()
             obj_inst.source_file = app_inst.f_handlers.export_excellon(obj_name=obj_inst.obj_options['name'],
                                                                        local_use=obj_inst,

@@ -930,16 +930,9 @@ class CutOut(AppTool):
                     if not holes:
                         return 'fail'
 
-                    tools = {
-                        1: {
-                            "tooldia": mb_dia,
-                            "drills": holes,
-                            "solid_geometry": []
-                        }
-                    }
-
                     exc_obj.multigeo = True
-                    exc_obj.tools = tools
+                    exc_obj.tools = {}
+                    exc_obj.add_tool(mb_dia, drills=holes)
                     exc_obj.create_geometry()
                     exc_obj.source_file = app_o.f_handlers.export_excellon(obj_name=exc_obj.obj_options['name'],
                                                                            local_use=exc_obj, filename=None,
@@ -1355,15 +1348,8 @@ class CutOut(AppTool):
                     if not holes:
                         return 'fail'
 
-                    tools = {
-                        1: {
-                            "tooldia": mb_dia,
-                            "drills": holes,
-                            "solid_geometry": []
-                        }
-                    }
-
-                    exc_obj.tools = tools
+                    exc_obj.tools = {}
+                    exc_obj.add_tool(mb_dia, drills=holes)
                     exc_obj.create_geometry()
                     exc_obj.source_file = app_o.f_handlers.export_excellon(obj_name=exc_obj.obj_options['name'],
                                                                            local_use=exc_obj,
@@ -1539,22 +1525,14 @@ class CutOut(AppTool):
             self.app.inform.emit('[WARNING_NOTCL] %s %s' % (_("Failed."), _("Could not add drills.")))
             return
 
-        tools = {
-            1: {
-                "tooldia": drill_dia,
-                "drills": drill_list,
-                "slots": [],
-                "solid_geometry": []
-            }
-        }
-
         formatted_name = obj.obj_options['name'].rpartition('.')[0]
         if formatted_name == '':
             formatted_name = obj.obj_options['name']
         outname = '%s_drillcut' % formatted_name
 
         def obj_init(obj_inst, app_inst):
-            obj_inst.tools = deepcopy(tools)
+            obj_inst.tools = {}
+            obj_inst.add_tool(drill_dia, drills=drill_list)
             obj_inst.create_geometry()
             obj_inst.source_file = app_inst.f_handlers.export_excellon(obj_name=outname, local_use=obj_inst,
                                                                        filename=None,
@@ -1926,15 +1904,8 @@ class CutOut(AppTool):
                             if not holes:
                                 return 'fail'
 
-                            tools = {
-                                1: {
-                                    "tooldia": mb_dia,
-                                    "drills": holes,
-                                    "solid_geometry": []
-                                }
-                            }
-
-                            exc_obj.tools = tools
+                            exc_obj.tools = {}
+                            exc_obj.add_tool(mb_dia, drills=holes)
                             exc_obj.create_geometry()
                             exc_obj.source_file = app_o.f_handlers.export_excellon(obj_name=exc_obj.obj_options['name'],
                                                                                    local_use=exc_obj,
