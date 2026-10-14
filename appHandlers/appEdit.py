@@ -33,14 +33,14 @@ class appEditor(QtCore.QObject):
         self.app_obj = self.app.app_obj
         self.decimals = self.app.decimals
 
-    def convert_any2geo(self):
+    def build_geometry_tool_table(self):
         """
-        Will convert any object out of Gerber, Excellon, Geometry to Geometry object.
-        :return:
-        """
-        self.defaults.report_usage("convert_any2geo()")
+        Builds the data a Geometry gets when it is made out of another kind: the default Geometry data (the app
+        options, with the 'geometry_' prefix stripped) and 1 tool per diameter of the 'tools_mill_tooldia' option.
+        Every tool has an empty 'solid_geometry', the caller fills it.
 
-        # store here the default data for Geometry Data
+        :return: (default_data, tools, tools_diameters), or None if the tool diameters can't be read
+        """
         default_data = {}
 
         for opt_key, opt_val in self.options.items():
@@ -64,8 +64,8 @@ class appEditor(QtCore.QObject):
                 tools_string = dias.split(",")
                 tools_diameters = [eval(a) for a in tools_string if a != '']
             except Exception as e:
-                self.log.error("appEditor.convert_any2geo() --> %s" % str(e))
-                return 'fail'
+                self.log.error("appEditor.build_geometry_tool_table() --> %s" % str(e))
+                return None
 
         tools = {}
         t_id = 0
@@ -81,6 +81,20 @@ class appEditor(QtCore.QObject):
                 'solid_geometry': []
             }
             tools[t_id] = deepcopy(new_tool)
+
+        return default_data, tools, tools_diameters
+
+    def convert_any2geo(self):
+        """
+        Will convert any object out of Gerber, Excellon, Geometry to Geometry object.
+        :return:
+        """
+        self.defaults.report_usage("convert_any2geo()")
+
+        built = self.build_geometry_tool_table()
+        if built is None:
+            return 'fail'
+        default_data, tools, tools_diameters = built
 
         def initialize_from_gerber(new_obj, app_obj):
             app_obj.log.debug("Gerber converted to Geometry: %s" % str(obj.obj_options["name"]))
