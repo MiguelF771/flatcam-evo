@@ -328,7 +328,7 @@ class GerberObjectUI(ObjectUI):
             _("Aperture Code"))
         self.apertures_table.horizontalHeaderItem(2).setToolTip(
             _("Type of aperture: circular, rectangle, macros etc"))
-        self.apertures_table.horizontalHeaderItem(4).setToolTip(
+        self.apertures_table.horizontalHeaderItem(3).setToolTip(
             _("Aperture Size:"))
         self.apertures_table.horizontalHeaderItem(4).setToolTip(
             _("Aperture Dimensions:\n"
