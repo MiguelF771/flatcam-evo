@@ -39,6 +39,7 @@ class ExcellonObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Excellon):
     # Dispatch metadata, read by AppObject, ObjectCollection and appPlotManager instead of kind chains.
     # status_color: color of the object name in the status bar message (None: no message).
     status_color = 'brown'
+    source_exporter = 'export_excellon'
     # tool_option_prefix: extra application options (with this prefix) copied into obj_options on creation.
     tool_option_prefix = 'tools_drill_'
     # inherits_mill_options: the tools_mill_* and tools_* options are copied into obj_options on creation.

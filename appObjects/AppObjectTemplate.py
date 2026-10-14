@@ -115,6 +115,9 @@ class FlatCAMObj(QtCore.QObject):
     # default_alpha_level: fixed default alpha level when alpha_fill_option is None.
     alpha_fill_option = None
     default_alpha_level = None
+    # source_exporter: name of the appIO export method that writes the text of the object (the source_file) in local
+    # use: 'export_gerber', 'export_excellon', 'export_dxf'. None: the object has no regenerable source text.
+    source_exporter = None
     # emitted by on_options_change with the key of the option that changed
     optionChanged = QtCore.pyqtSignal(str)
 
@@ -126,6 +129,51 @@ class FlatCAMObj(QtCore.QObject):
 
     def _app_option(self, key, fallback=None):
         return app_option(self.app, key, fallback)
+
+    def regenerate_source(self, name=None):
+        """
+        Rewrites self.source_file after an operation changed the geometry of the object (move, transform, edit,
+        origin change, ...). The single place of the ``obj.source_file = f_handlers.export_xxx(...)`` call that
+        was repeated at about 55 sites.
+
+        Specification:
+
+        - Which export: ``self.source_exporter`` (class attribute): GerberObject -> ``export_gerber``,
+          ExcellonObject -> ``export_excellon``, GeometryObject -> ``export_dxf``; every other kind has None and
+          this method does nothing and returns False.
+        - Local use only: ``self.app.f_handlers.<exporter>(obj_name=name, filename=None, local_use=self,
+          use_thread=False)``. Nothing is written to disk and no file signal is emitted; the export returns
+          the text. ``name`` only goes into the ``Filename:`` comment of the header and defaults to
+          ``obj_options['name']``.
+        - Threading: always ``use_thread=False``. With ``use_thread=True`` the export runs in a worker task and
+          a local-use call returns None, so the text would never reach source_file.
+        - Units: the text is a self-contained file written in the export preference units (``gerber_exp_*`` /
+          ``excellon_exp_*``, it declares them in its header), converted from the object units (the app units;
+          the object units for a PCB-document import). This is the format that 'View source', 'Save source' and the
+          project file expect, so the object units are not used.
+        - Failure: when the export returns 'fail' or None (an exception inside the export, a wrong object type),
+          source_file keeps its old value, a warning is logged and False is returned. (The old call sites stored
+          'fail' or None as the source text.)
+
+        :param name: the name for the header of the exported text; None: the name of the object
+        :return:     True if source_file was rewritten, False if the kind has no exporter or the export failed
+        """
+        exporter = self.source_exporter
+        if exporter is None:
+            return False
+
+        if name is None:
+            name = self.obj_options['name']
+
+        result = getattr(self.app.f_handlers, exporter)(obj_name=name, filename=None, local_use=self,
+                                                        use_thread=False)
+        if result is None or (isinstance(result, str) and result == 'fail'):
+            self.app.log.warning("FlatCAMObj.regenerate_source() --> %s failed for %s, the old source_file is kept." %
+                                 (exporter, name))
+            return False
+
+        self.source_file = result
+        return True
 
     def __init__(self, name, app):
         """

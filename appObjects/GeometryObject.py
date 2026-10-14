@@ -48,6 +48,7 @@ class GeometryObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Geometry):
     # Dispatch metadata, read by AppObject, ObjectCollection and appPlotManager instead of kind chains.
     # status_color: color of the object name in the status bar message (None: no message).
     status_color = 'red'
+    source_exporter = 'export_dxf'
     # tool_option_prefix: extra application options (with this prefix) copied into obj_options on creation.
     tool_option_prefix = None
     # inherits_mill_options: the tools_mill_* and tools_* options are copied into obj_options on creation.
