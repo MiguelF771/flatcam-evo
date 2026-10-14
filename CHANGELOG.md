@@ -22,6 +22,7 @@ Other:
 
 - fixed a bug when changing colors for objects
 - new feature: Altium .pcbdoc import in File -> Import -> Altium PCB directly to Gerbers and Excellons
+- tests: pytest options (for example -q or -x) do not stop the tests that import appMain any more (new tests/conftest.py)
 
 13.10.2026
 
