@@ -365,10 +365,7 @@ class DblSidedTool(AppTool):
             obj_inst.tools = {}
             obj_inst.add_tool(dia, drills=drills)
             obj_inst.create_geometry()
-            obj_inst.source_file = app_inst.f_handlers.export_excellon(obj_name=obj_inst.obj_options['name'],
-                                                                       local_use=obj_inst,
-                                                                       filename=None,
-                                                                       use_thread=False)
+            obj_inst.regenerate_source()
 
         ret_val = self.app.app_obj.new_object("excellon", _("Alignment Drills"), obj_init, autoselected=False)
         self.drill_values = ''

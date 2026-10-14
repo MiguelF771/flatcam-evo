@@ -541,14 +541,10 @@ class ToolTransform(AppTool):
                                 # Gerber.buffer() told the user why; the object is not changed
                                 rejected = True
                                 continue
-                            sel_obj.source_file = self.app.f_handlers.export_gerber(
-                                obj_name=sel_obj.obj_options['name'], filename=None, local_use=sel_obj,
-                                use_thread=False)
+                            sel_obj.regenerate_source()
                         elif sel_obj.kind.lower() == 'excellon':
                             sel_obj.buffer(value, join, factor)
-                            sel_obj.source_file = self.app.f_handlers.export_excellon(
-                                obj_name=sel_obj.obj_options['name'], filename=None, local_use=sel_obj,
-                                use_thread=False)
+                            sel_obj.regenerate_source()
                         elif sel_obj.kind.lower() == 'geometry':
                             sel_obj.buffer(value, join, factor)
 

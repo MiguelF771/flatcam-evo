@@ -230,13 +230,8 @@ class ToolMove(AppTool):
 
                     # update the source_file with the new positions
                     for sel_obj in obj_list:
-                        out_name = sel_obj.obj_options["name"]
-                        if sel_obj.kind == 'gerber':
-                            sel_obj.source_file = self.app.f_handlers.export_gerber(
-                                obj_name=out_name, filename=None, local_use=sel_obj, use_thread=False)
-                        elif sel_obj.kind == 'excellon':
-                            sel_obj.source_file = self.app.f_handlers.export_excellon(
-                                obj_name=out_name, filename=None, local_use=sel_obj, use_thread=False)
+                        if sel_obj.kind in ('gerber', 'excellon'):
+                            sel_obj.regenerate_source()
                 except Exception as err:
                     app_obj.log.error('[ERROR_NOTCL] %s --> %s' % ('ToolMove.move_handler()', str(err)))
                     return "fail"
