@@ -1,7 +1,8 @@
 
 from typing import Literal, Sequence, cast
 from PyQt6 import QtWidgets
-from camlib import Geometry, arc, arc_angle, ApertureMacro, grace, flatten_shapely_geometry, translate_geometry
+from camlib import Geometry, arc, arc_angle, ApertureMacro, grace, flatten_shapely_geometry, translate_geometry, \
+    map_geometry
 
 from appParsers.clipper_fuse import fuse_parts
 from appParsers.ParseDXF import getdxfgeo
@@ -2376,6 +2377,30 @@ class Gerber(Geometry):
             new_el = {'solid': pol, 'follow': pol}
             self.tools[0]['geometry'].append(new_el)
 
+    def _leaf_progress(self, top):
+        """
+        Progress callback for map_geometry: counts the leaves against self.geo_len and shows the percentage.
+        The caller sets self.geo_len, self.old_disp_number and self.el_count first.
+
+        :param top: the percentage that the last leaf maps to (99 or 100, kept per transform)
+        """
+        def tick(_leaf):
+            self.el_count += 1
+            disp_number = int(np.interp(self.el_count, [0, self.geo_len], [0, top]))
+            if self.old_disp_number < disp_number <= 100:
+                self.app.proc_container.update_view_text(' %d%%' % disp_number)
+                self.old_disp_number = disp_number
+        return tick
+
+    def _map_aperture_geometry(self, fn):
+        """Replace the 'solid', 'follow' and 'clear' geometry of every aperture geometry element with fn(geometry)."""
+        for apid in self.tools:
+            if 'geometry' in self.tools[apid]:
+                for geo_el in self.tools[apid]['geometry']:
+                    for key in ('solid', 'follow', 'clear'):
+                        if key in geo_el:
+                            geo_el[key] = fn(geo_el[key])
+
     def scale(
         self,
         xfactor: float,
@@ -2447,23 +2472,10 @@ class Gerber(Geometry):
         self.old_disp_number = 0
         self.el_count = 0
 
-        def scale_geom(obj):
-            if type(obj) is list:
-                new_obj = []
-                for g in obj:
-                    new_obj.append(scale_geom(g))
-                return new_obj
-            else:
-                try:
-                    self.el_count += 1
-                    disp_number = int(np.interp(self.el_count, [0, self.geo_len], [0, 99]))
-                    if self.old_disp_number < disp_number <= 100:
-                        self.app.proc_container.update_view_text(' %d%%' % disp_number)
-                        self.old_disp_number = disp_number
+        tick = self._leaf_progress(99)
 
-                    return affinity.scale(obj, xfactor, yfactor, origin=(px, py))
-                except AttributeError:
-                    return obj
+        def scale_geom(obj):
+            return map_geometry(obj, lambda leaf: affinity.scale(leaf, xfactor, yfactor, origin=(px, py)), tick)
 
         self.solid_geometry = scale_geom(self.solid_geometry)
         self.follow_geometry = scale_geom(self.follow_geometry)
@@ -2609,38 +2621,17 @@ class Gerber(Geometry):
         self.old_disp_number = 0
         self.el_count = 0
 
-        def mirror_geom(obj):
-            if type(obj) is list:
-                new_obj = []
-                for g in obj:
-                    new_obj.append(mirror_geom(g))
-                return new_obj
-            else:
-                try:
-                    self.el_count += 1
-                    disp_number = int(np.interp(self.el_count, [0, self.geo_len], [0, 99]))
-                    if self.old_disp_number < disp_number <= 100:
-                        self.app.proc_container.update_view_text(' %d%%' % disp_number)
-                        self.old_disp_number = disp_number
+        tick = self._leaf_progress(99)
 
-                    return affinity.scale(obj, xscale, yscale, origin=(px, py))
-                except AttributeError:
-                    return obj
+        def mirror_geom(obj):
+            return map_geometry(obj, lambda leaf: affinity.scale(leaf, xscale, yscale, origin=(px, py)), tick)
 
         self.solid_geometry = mirror_geom(self.solid_geometry)
         self.follow_geometry = mirror_geom(self.follow_geometry)
 
         # we need to mirror the geometry stored in the Gerber apertures, too
         try:
-            for apid in self.tools:
-                if 'geometry' in self.tools[apid]:
-                    for geo_el in self.tools[apid]['geometry']:
-                        if 'solid' in geo_el:
-                            geo_el['solid'] = mirror_geom(geo_el['solid'])
-                        if 'follow' in geo_el:
-                            geo_el['follow'] = mirror_geom(geo_el['follow'])
-                        if 'clear' in geo_el:
-                            geo_el['clear'] = mirror_geom(geo_el['clear'])
+            self._map_aperture_geometry(mirror_geom)
             update_mirror_metadata(self, axis)
         except Exception as e:
             self.app.log.error('ParseGerber.Gerber.mirror() Exception --> %s' % str(e))
@@ -2684,38 +2675,17 @@ class Gerber(Geometry):
         self.old_disp_number = 0
         self.el_count = 0
 
-        def skew_geom(obj):
-            if type(obj) is list:
-                new_obj = []
-                for g in obj:
-                    new_obj.append(skew_geom(g))
-                return new_obj
-            else:
-                try:
-                    self.el_count += 1
-                    disp_number = int(np.interp(self.el_count, [0, self.geo_len], [0, 100]))
-                    if self.old_disp_number < disp_number <= 100:
-                        self.app.proc_container.update_view_text(' %d%%' % disp_number)
-                        self.old_disp_number = disp_number
+        tick = self._leaf_progress(100)
 
-                    return affinity.skew(obj, angle_x, angle_y, origin=(px, py))
-                except AttributeError:
-                    return obj
+        def skew_geom(obj):
+            return map_geometry(obj, lambda leaf: affinity.skew(leaf, angle_x, angle_y, origin=(px, py)), tick)
 
         self.solid_geometry = skew_geom(self.solid_geometry)
         self.follow_geometry = skew_geom(self.follow_geometry)
 
         # we need to skew the geometry stored in the Gerber apertures, too
         try:
-            for apid in self.tools:
-                if 'geometry' in self.tools[apid]:
-                    for geo_el in self.tools[apid]['geometry']:
-                        if 'solid' in geo_el:
-                            geo_el['solid'] = skew_geom(geo_el['solid'])
-                        if 'follow' in geo_el:
-                            geo_el['follow'] = skew_geom(geo_el['follow'])
-                        if 'clear' in geo_el:
-                            geo_el['clear'] = skew_geom(geo_el['clear'])
+            self._map_aperture_geometry(skew_geom)
             update_skew_metadata(self)
         except Exception as e:
             self.app.log.error('ParseGerber.Gerber.skew() Exception --> %s' % str(e))
@@ -2748,38 +2718,17 @@ class Gerber(Geometry):
         self.old_disp_number = 0
         self.el_count = 0
 
-        def rotate_geom(obj):
-            if type(obj) is list:
-                new_obj = []
-                for g in obj:
-                    new_obj.append(rotate_geom(g))
-                return new_obj
-            else:
-                try:
-                    self.el_count += 1
-                    disp_number = int(np.interp(self.el_count, [0, self.geo_len], [0, 100]))
-                    if self.old_disp_number < disp_number <= 100:
-                        self.app.proc_container.update_view_text(' %d%%' % disp_number)
-                        self.old_disp_number = disp_number
+        tick = self._leaf_progress(100)
 
-                    return affinity.rotate(obj, angle, origin=(px, py))
-                except AttributeError:
-                    return obj
+        def rotate_geom(obj):
+            return map_geometry(obj, lambda leaf: affinity.rotate(leaf, angle, origin=(px, py)), tick)
 
         self.solid_geometry = rotate_geom(self.solid_geometry)
         self.follow_geometry = rotate_geom(self.follow_geometry)
 
         # we need to rotate the geometry stored in the Gerber apertures, too
         try:
-            for apid in self.tools:
-                if 'geometry' in self.tools[apid]:
-                    for geo_el in self.tools[apid]['geometry']:
-                        if 'solid' in geo_el:
-                            geo_el['solid'] = rotate_geom(geo_el['solid'])
-                        if 'follow' in geo_el:
-                            geo_el['follow'] = rotate_geom(geo_el['follow'])
-                        if 'clear' in geo_el:
-                            geo_el['clear'] = rotate_geom(geo_el['clear'])
+            self._map_aperture_geometry(rotate_geom)
             update_rotate_metadata(self, angle)
         except Exception as e:
             self.app.log.error('ParseGerber.Gerber.rotate() Exception --> %s' % str(e))
