@@ -1486,26 +1486,7 @@ class GeometryObject(FlatCAMObj, Geometry):
         if not FlatCAMObj.plot(self):
             return
 
-        if self.app.use_3d_engine:
-            def random_color():
-                r_color = np.random.rand(4)
-                r_color[3] = 1
-                return r_color
-        else:
-            def random_color():
-                while True:
-                    r_color = np.random.rand(4)
-                    r_color[3] = 1
-
-                    new_color = '#'
-                    for idx in range(len(r_color)):
-                        new_color += '%x' % int(r_color[idx] * 255)
-                    # do it until a valid color is generated
-                    # a valid color has the # symbol, another 6 chars for the color and the last 2 chars for alpha
-                    # for a total of 9 chars
-                    if len(new_color) == 9:
-                        break
-                return new_color
+        random_color = self.random_color
 
         try:
             batch = []

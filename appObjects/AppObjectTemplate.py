@@ -24,6 +24,7 @@ from copy import deepcopy, copy
 import sys
 import math
 import inspect
+import numpy as np
 
 import gettext
 import appTranslation as fcTranslate
@@ -189,6 +190,30 @@ class FlatCAMObj(QtCore.QObject):
                                        "Means that we are loading an old project that don't"
                                        "have all attributes in the latest application version." % str(attr))
                     pass
+
+    def random_color(self):
+        """
+        Return a random opaque color in the format the active canvas engine expects: an RGBA numpy array for the 3D
+        (VisPy) engine, a '#rrggbbaa' string for the legacy 2D engine.
+        """
+        if self.app.use_3d_engine:
+            r_color = np.random.rand(4)
+            r_color[3] = 1
+            return r_color
+
+        while True:
+            r_color = np.random.rand(4)
+            r_color[3] = 1
+
+            new_color = '#'
+            for idx in range(len(r_color)):
+                new_color += '%x' % int(r_color[idx] * 255)
+            # do it until a valid color is generated
+            # a valid color has the # symbol, another 6 chars for the color and the last 2 chars for alpha
+            # for a total of 9 chars
+            if len(new_color) == 9:
+                break
+        return new_color
 
     def on_options_change(self, key):
         # Update form on programmatically options change
