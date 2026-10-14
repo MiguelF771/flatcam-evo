@@ -370,3 +370,59 @@ def test_excellon_core_equals_tcl(app):
         assert [(p.x, p.y) for p in pan.tools[tid]['drills']] == pytest.approx([(p.x, p.y) for p in tool['drills']])
         assert [(a.x, a.y, b.x, b.y) for a, b in pan.tools[tid]['slots']] == \
             pytest.approx([(a.x, a.y, b.x, b.y) for a, b in tool['slots']])
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# gerber_tools_from_geometry
+# ---------------------------------------------------------------------------------------------------------------
+
+def test_gerber_tools_from_geometry_single_geo():
+    ring = LineString([(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)])
+    pad = box(20, 0, 22, 2)
+    src_tools = {1: {'tooldia': 1.0, 'data': {}, 'solid_geometry': []}}
+    src = [MultiPolygon([box(0, 0, 1, 1), box(5, 5, 6, 6)]), [pad], ring]
+    before = deepcopy(src)
+    tools, solid = pc.gerber_tools_from_geometry(src_tools, src, False)
+    assert list(tools) == [0] and tools[0]['type'] == 'REG' and tools[0]['size'] == 0.0
+    records = tools[0]['geometry']
+    # the MultiPolygon is split; the closed line becomes a polygon, like the pad
+    assert len(records) == 4 and len(solid) == 4
+    assert all(isinstance(r['solid'], Polygon) for r in records)
+    assert all(r['follow'].equals(r['solid'].exterior) for r in records)
+    assert freeze(src) == freeze(before)
+
+
+def test_gerber_tools_from_geometry_open_line_and_point_keep_their_shape():
+    line = LineString([(0, 0), (5, 0)])
+    point = Point(3, 3)
+    tools, solid = pc.gerber_tools_from_geometry({}, [line, point], False)
+    records = tools[0]['geometry']
+    assert [type(r['solid']) for r in records] == [LineString, Point]
+    assert records[0]['follow'].equals(line) and records[1]['follow'].equals(point)
+    assert solid[0].equals(line) and solid[1].equals(point)
+
+
+def test_gerber_tools_from_geometry_multigeo_uses_the_tools_and_unions_the_solid():
+    a = box(0, 0, 4, 4)
+    b = box(4, 0, 8, 4)
+    src_tools = {
+        1: {'tooldia': 1.0, 'data': {}, 'solid_geometry': [a, Polygon()]},
+        2: {'tooldia': 2.0, 'data': {}, 'solid_geometry': [MultiPolygon([b, box(20, 0, 21, 1)])]},
+    }
+    # the top-level solid is ignored in multigeo mode
+    tools, solid = pc.gerber_tools_from_geometry(src_tools, [box(100, 100, 101, 101)], True)
+    records = tools[0]['geometry']
+    assert len(records) == 3
+    assert solid.area == pytest.approx(16 + 16 + 1)
+    assert solid.symmetric_difference(shapely.unary_union([r['solid'] for r in records])).area < 1e-9
+
+
+def test_gerber_tools_from_geometry_panelizes_like_the_gerber_core():
+    src_tools = {1: {'tooldia': 1.0, 'data': {}, 'solid_geometry': [box(0, 0, 2, 2)]}}
+    tools, solid = pc.gerber_tools_from_geometry(src_tools, [], True)
+    offs = pc.grid_offsets((0, 0, 2, 2), 2, 2, 1.0, 1.0)
+    pan_tools, pan_solid = pc.panelize_gerber(tools, solid, offs)
+    assert len(pan_tools[0]['geometry']) == 4
+    assert polygon_union(pan_solid).area == pytest.approx(16.0)
+    assert shapely.unary_union([r['solid'] for r in pan_tools[0]['geometry']]).symmetric_difference(
+        polygon_union(pan_solid)).area < 1e-9

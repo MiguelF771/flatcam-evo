@@ -28,7 +28,7 @@ Contract (all functions)
 from copy import deepcopy
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-from shapely.geometry import LineString, MultiLineString, MultiPolygon
+from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon
 from shapely.ops import linemerge, snap, unary_union
 
 from camlib import grace, translate_geometry
@@ -294,6 +294,59 @@ def panelize_geometry(src_tools: Dict[Any, dict], src_solid, multigeo: bool, off
         _check_abort(abort)
         solid.extend(_translate_solid(src_solid, (dx, dy), split_multi=True))
         _report(progress, element, 1, 1)
+    return tools, solid
+
+
+def gerber_tools_from_geometry(src_tools: Dict[Any, dict], src_solid, multigeo: bool) -> Tuple[Dict[Any, dict], list]:
+    """
+    Builds the Gerber apertures of a Geometry, to panelize it as a Gerber. The result is the input of
+    ``panelize_gerber``.
+
+    Everything goes to the region 'aperture' 0 (type 'REG', size 0.0). Each element becomes 1 record:
+
+    * a polygon (or a closed line, which is turned into one): ``{'solid': polygon, 'follow': polygon.exterior}``;
+    * anything else (open line, point, ...): ``{'solid': geo, 'follow': geo}``.
+
+    The elements are:
+
+    * ``multigeo``: the parts of the 'solid_geometry' of every tool in ``src_tools`` (Multi* split, empty ones
+      dropped); a line is merged with ``linemerge`` first, if that works. The returned solid is the union of the
+      record solids.
+    * not ``multigeo``: the parts of ``src_solid`` (Multi* split). The returned solid is that flat list.
+
+    The inputs are not changed; the records hold copies.
+
+    :param src_tools:  tools of the Geometry ({tid: {'solid_geometry': [...], ...}})
+    :param src_solid:  solid_geometry of the Geometry (geometry or (nested) list)
+    :param multigeo:   True if the geometry is in the tools
+    :return:           (apertures {0: {'type': 'REG', 'size': 0.0, 'geometry': [records]}}, composed solid_geometry)
+    """
+    if multigeo:
+        elements = []
+        for tool in src_tools.values():
+            elements.extend(g for g in _split_multi(tool.get('solid_geometry')) if not g.is_empty)
+    else:
+        elements = _split_multi(src_solid)
+
+    records = []
+    for geo in elements:
+        if multigeo:
+            try:
+                geo = linemerge(geo)
+            except Exception:
+                pass
+        try:
+            poly = Polygon(geo)
+            record = {'solid': poly, 'follow': poly.exterior}
+        except Exception:
+            record = {'solid': geo, 'follow': geo}
+        records.append(deepcopy(record))
+
+    if multigeo:
+        solid = unary_union([r['solid'] for r in records])
+    else:
+        solid = deepcopy(elements)
+    tools = {0: {'type': 'REG', 'size': 0.0, 'geometry': records}}
     return tools, solid
 
 
