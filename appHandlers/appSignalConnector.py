@@ -54,6 +54,7 @@ class AppSignalConnector(QtCore.QObject):
         self.ui.menufileimportdxf_as_gerber.triggered.connect(lambda: self.app.f_handlers.on_file_import_dxf("gerber"))
         self.ui.menufileimport_hpgl2_as_geo.triggered.connect(lambda: self.app.f_handlers.on_file_open_hpgl2())
         self.ui.menufileimportpcbdoc.triggered.connect(lambda: self.app.f_handlers.on_file_import_pcbdoc())
+        self.ui.menufileimportkicad.triggered.connect(lambda: self.app.f_handlers.on_file_import_kicad_pcb())
         self.ui.menufileexportsvg.triggered.connect(self.app.f_handlers.on_file_export_svg)
         self.ui.menufileexportpng.triggered.connect(self.app.f_handlers.on_file_export_png)
         self.ui.menufileexportexcellon.triggered.connect(self.app.f_handlers.on_file_export_excellon)

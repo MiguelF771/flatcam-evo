@@ -3621,6 +3621,7 @@ class App(QtCore.QObject):
         icons = {
             "gerber": self.resource_location + "/flatcam_icon16.png",
             "pcbdoc": self.resource_location + "/flatcam_icon16.png",
+            "kicad_pcb": self.resource_location + "/flatcam_icon16.png",
             "excellon": self.resource_location + "/drill16.png",
             'geometry': self.resource_location + "/geometry16.png",
             "cncjob": self.resource_location + "/cnc16.png",
@@ -3646,6 +3647,7 @@ class App(QtCore.QObject):
 
         openers = {
             'pcbdoc': self.f_handlers.on_file_import_pcbdoc,
+            'kicad_pcb': self.f_handlers.on_file_import_kicad_pcb,
             'gerber': lambda fname: self.worker_task.emit({
                 'fcn': self.f_handlers.open_gerber,
                 'params': [fname]

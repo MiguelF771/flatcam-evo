@@ -869,13 +869,16 @@ class TestUIActions(AppTestCase):
             def addChild(self, *args, **kwargs):
                 self.rows.append(kwargs["title"])
 
-        properties_area = SimpleNamespace(placed=None)
+        properties_area = SimpleNamespace(placed=None, taken=0)
+        properties_area.takeWidget = lambda: setattr(properties_area, "taken", properties_area.taken + 1)
         properties_area.setWidget = lambda widget: setattr(properties_area, "placed", widget)
         app.ui.properties_scroll_area = properties_area
         app.ui.grid_gap_x_entry = Value(1.0)
         app.ui.grid_gap_y_entry = Value(2.0)
         with patch("appGUI.GUIElements.FCTree", Tree):
             invoke("ui_actions", handler, "setup_default_properties_tab")
+        # the old widget is taken out before the new one is set, so Qt does not delete an object UI
+        self.assertEqual(1, properties_area.taken)
         self.assertEqual("default_properties", properties_area.placed.name)
         self.assertGreaterEqual(len(properties_area.placed.rows), 10)
 
@@ -1267,7 +1270,7 @@ SIGNAL_ACTIONS = {
         "menufileopenexcellon menufileopengcode menufileopenproject menufileopenconfig menufilenewscript "
         "menufileopenscript menufileopenscriptexample menufilerunscript menufileimportsvg "
         "menufileimportsvg_as_gerber menufileimportdxf menufileimportdxf_as_gerber menufileimport_hpgl2_as_geo "
-        "menufileimportpcbdoc "
+        "menufileimportpcbdoc menufileimportkicad "
         "menufileexportsvg menufileexportpng menufileexportexcellon menufileexportgerber menufileexportdxf "
         "menufile_print menufilesaveproject menufilesaveprojectas menufilesavedefaults menufileexportpref "
         "menufileimportpref"
@@ -1340,6 +1343,7 @@ SIGNAL_EXPECTED_CALLS = {
     "menufileimportdxf_as_gerber": expected_call("f_handlers", "on_file_import_dxf", "gerber"),
     "menufileimport_hpgl2_as_geo": expected_call("f_handlers", "on_file_open_hpgl2"),
     "menufileimportpcbdoc": expected_call("f_handlers", "on_file_import_pcbdoc"),
+    "menufileimportkicad": expected_call("f_handlers", "on_file_import_kicad_pcb"),
     "menufileexportsvg": expected_call("f_handlers", "on_file_export_svg"),
     "menufileexportpng": expected_call("f_handlers", "on_file_export_png"),
     "menufileexportexcellon": expected_call("f_handlers", "on_file_export_excellon"),
@@ -1494,7 +1498,7 @@ class TestSignalConnector(AppTestCase):
         "on_file_new_click on_file_open_gerber on_file_open_excellon on_file_open_gcode on_file_open_project "
         "on_file_open_config on_file_new_script on_file_open_script on_file_open_script_example on_file_run_script "
         "on_file_import_svg on_file_import_dxf on_file_open_hpgl2 on_file_export_svg on_file_export_png "
-        "on_file_import_pcbdoc "
+        "on_file_import_pcbdoc on_file_import_kicad_pcb "
         "on_file_export_excellon on_file_export_gerber on_file_export_dxf on_file_save_objects_pdf "
         "on_file_save_project on_file_save_project_as on_file_save_defaults on_export_preferences on_import_preferences "
         "on_file_new_project"

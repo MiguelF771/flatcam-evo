@@ -85,33 +85,85 @@ class appIO(QtCore.QObject):
         self.pcbdoc_parsed.connect(self.on_pcbdoc_parsed, Qt.ConnectionType.QueuedConnection)
         self.pcbdoc_outputs_ready.connect(self.on_pcbdoc_outputs_ready, Qt.ConnectionType.QueuedConnection)
 
-    def on_file_import_pcbdoc(self, name=None):
-        if name is None:
-            name, _filter = QtWidgets.QFileDialog.getOpenFileName(
-                parent=self.app.ui, caption=_("Import Altium PCB"),
-                directory=self.app.get_last_folder(), filter='Altium PCB (*.PcbDoc *.pcbdoc)')
-        if name:
-            self.worker_task.emit({'fcn': self.parse_pcbdoc, 'params': [name]})
+    # Native PCB formats imported through the PcbDoc pipeline: kind -> file extension, file dialog filter,
+    # name in the logs and whether the layer name goes before its id in the checkboxes and in the object names.
+    # The dialog titles are in _pcb_title().
+    PCB_FORMATS = {
+        'pcbdoc': {
+            'ext': '.pcbdoc', 'filter': 'Altium PCB (*.PcbDoc *.pcbdoc)',
+            'log': 'Altium PCB', 'name_first': True},
+        'kicad_pcb': {
+            'ext': '.kicad_pcb', 'filter': 'KiCad PCB (*.kicad_pcb)',
+            'log': 'KiCad PCB', 'name_first': False},
+    }
 
-    def parse_pcbdoc(self, filename):
+    @staticmethod
+    def _pcb_title(kind):
+        # literal _() strings so the translation tools find them
+        if kind == 'kicad_pcb':
+            return _('Import KiCad PCB')
+        return _('Import Altium PCB')
+
+    @staticmethod
+    def _pcb_source_kind(filename):
+        """
+        Which native PCB format a file imported through the PcbDoc pipeline is: a key of PCB_FORMATS.
+        Anything that is not KiCad is Altium.
+        """
+        name = str(filename).lower()
+        for kind, pcb_format in appIO.PCB_FORMATS.items():
+            if name.endswith(pcb_format['ext']):
+                return kind
+        return 'pcbdoc'
+
+    def _import_pcb_file(self, kind, name, parse_fcn):
+        if name is None:
+            pcb_format = self.PCB_FORMATS[kind]
+            name, _filter = QtWidgets.QFileDialog.getOpenFileName(
+                parent=self.app.ui, caption=self._pcb_title(kind),
+                directory=self.app.get_last_folder(), filter=pcb_format['filter'])
+        if name:
+            self.worker_task.emit({'fcn': parse_fcn, 'params': [name]})
+
+    def on_file_import_pcbdoc(self, name=None):
+        self._import_pcb_file('pcbdoc', name, self.parse_pcbdoc)
+
+    def on_file_import_kicad_pcb(self, name=None):
+        self._import_pcb_file('kicad_pcb', name, self.parse_kicad_pcb)
+
+    def _parse_pcb_file(self, kind, filename, make_parser):
         if self.app.abort_flag:
             return
         try:
-            from appParsers.ParsePcbDoc import PcbDocParser, PcbDocParseError
-            parsed = PcbDocParser(app=self.app).parse_file(filename)
+            parsed = make_parser().parse_file(filename)
         except Exception as error:
-            self.log.error('Altium PCB import: %s', error)
+            self.log.error('%s import: %s', self.PCB_FORMATS[kind]['log'], error)
             self.inform.emit('[ERROR_NOTCL] %s: %s' % (_('Import failed.'), error))
             return 'fail'
         if not self.app.abort_flag:
             self.pcbdoc_parsed.emit(filename, parsed)
 
+    def parse_pcbdoc(self, filename):
+        def make_parser():
+            from appParsers.ParsePcbDoc import PcbDocParser
+            return PcbDocParser(app=self.app)
+        return self._parse_pcb_file('pcbdoc', filename, make_parser)
+
+    def parse_kicad_pcb(self, filename):
+        def make_parser():
+            from appParsers.ParseKiCadPcb import KiCadPcbParser
+            return KiCadPcbParser(app=self.app)
+        return self._parse_pcb_file('kicad_pcb', filename, make_parser)
+
     @QtCore.pyqtSlot(str, object)
     def on_pcbdoc_parsed(self, filename, parsed):
         if self.app.abort_flag:
             return
+        kind = self._pcb_source_kind(filename)
+        pcb_format = self.PCB_FORMATS[kind]
+        default_layers = getattr(parsed, 'default_layers', None)
         dialog = QtWidgets.QDialog(self.app.ui)
-        dialog.setWindowTitle(_('Import Altium PCB'))
+        dialog.setWindowTitle(self._pcb_title(kind))
         layout = QtWidgets.QVBoxLayout(dialog)
         layout.addWidget(QtWidgets.QLabel(_('Select layers and drill groups to import:')))
         scroll = QtWidgets.QScrollArea(dialog)
@@ -122,8 +174,12 @@ class appIO(QtCore.QObject):
         for layer_id, layer in parsed.layers.items():
             if not any(not geo.is_empty for geo in layer['solid_geometry']):
                 continue
-            checkbox = QtWidgets.QCheckBox('%s (%s)' % (layer['name'], layer_id))
-            checkbox.setChecked(True)
+            if pcb_format['name_first']:
+                text = '%s (%s)' % (layer['name'], layer_id)
+            else:
+                text = str(layer_id) if layer['name'] in (None, '', layer_id) else '%s (%s)' % (layer_id, layer['name'])
+            checkbox = QtWidgets.QCheckBox(text)
+            checkbox.setChecked(default_layers is None or layer_id in default_layers)
             choices.addWidget(checkbox)
             layers[layer_id] = checkbox
         for group, tools in parsed.drill_groups.items():
@@ -158,6 +214,7 @@ class appIO(QtCore.QObject):
             return
         units = self.app.app_units.upper()
         factor = 1 / 25.4 if units == 'IN' else 1
+        pcb_format = self.PCB_FORMATS[self._pcb_source_kind(filename)]
 
         def converted(value):
             if isinstance(value, dict):
@@ -181,12 +238,15 @@ class appIO(QtCore.QObject):
                         data = parsed.layers[key]
                         if not any(not geo.is_empty for geo in data['solid_geometry']):
                             continue
-                        label = '%s_%s' % (key, data['name'])
+                        if pcb_format['name_first']:
+                            label = '%s_%s' % (key, data['name'])
+                        else:
+                            label = str(key).replace('.', '_')
                     else:
                         data = parsed.drill_groups[key]
                         if not any(tool.get('drills') or tool.get('slots') for tool in data.values()):
                             continue
-                        label = key
+                        label = key if pcb_format['name_first'] else str(key).replace('.', '_')
                     name = '%s_%s' % (os.path.splitext(os.path.basename(filename))[0], label)
 
                     def initialize(obj, app, object_kind=kind, source=data, object_name=name):
@@ -217,7 +277,7 @@ class appIO(QtCore.QObject):
                 if failed:
                     break
         except Exception as error:
-            self.log.error('Altium PCB object import: %s', error)
+            self.log.error('%s object import: %s', pcb_format['log'], error)
             failed = True
         finally:
             if created:
@@ -232,7 +292,7 @@ class appIO(QtCore.QObject):
     def on_pcbdoc_outputs_ready(self, filename):
         if self.app.abort_flag:
             return
-        self.app.file_opened.emit('pcbdoc', filename)
+        self.app.file_opened.emit(self._pcb_source_kind(filename), filename)
 
     def on_file_open_gerber(self, name=None):
         """

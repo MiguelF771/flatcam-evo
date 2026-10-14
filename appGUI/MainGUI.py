@@ -290,6 +290,10 @@ class MainGUI(QtWidgets.QMainWindow):
             QtGui.QIcon(self.app.resource_location + '/import.png'),
             '%s...' % _('Altium PCB (.PcbDoc)'), self)
         self.menufileimport.addAction(self.menufileimportpcbdoc)
+        self.menufileimportkicad = QtGui.QAction(
+            QtGui.QIcon(self.app.resource_location + '/import.png'),
+            '%s...' % _('KiCad PCB (.kicad_pcb)'), self)
+        self.menufileimport.addAction(self.menufileimportkicad)
         self.menufileimport.addSeparator()
 
         # Export ...
