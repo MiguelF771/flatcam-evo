@@ -22,6 +22,7 @@ from camlib import Geometry  # noqa: E402
 
 PLUGINS = [
     ("appPlugins.ToolFollow", "ToolFollow"),
+    ("appPlugins.ToolIsolation", "ToolIsolation"),
 ]
 
 
