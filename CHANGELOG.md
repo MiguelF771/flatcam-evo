@@ -18,6 +18,15 @@ Gerber parser:
 - if pyclipr is missing or the geometry is not safe for it (invalid polygons, coordinates out of range, rings smaller than 1e-9 units), the old GEOS fusion runs
 - fixed: the old fusion could make a false hole where 2 parts overlap (seen on an Eagle top layer)
 
+Preferences:
+
+- all the Preferences pages use the columnar layout; the 'GUI Layout' option (Normal / Columnar) is removed
+- columnar layout: the number of columns uses the median width of the groups, so 1 wide group does not remove a column for all the other groups
+- columnar layout: a column is not wider than the widest group; the free space stays on the right side. If the groups fit in fewer columns, the used columns get the free width
+- columnar layout: the groups are inside the layout margins; a hidden group takes no room
+- fixed: in the columnar layout the groups could overlap, because some groups report a too small height before they are shown
+- fixed: the columnar layout raised an error each time Qt asked for its expanding directions (PyQt6 has no Qt.Orientations)
+
 Other:
 
 - fixed a bug when changing colors for objects

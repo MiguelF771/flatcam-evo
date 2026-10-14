@@ -1,6 +1,5 @@
 
 from PyQt6 import QtWidgets
-from appDatabase import _database_option
 
 from appGUI.preferences.geometry.GeometryEditorPrefGroupUI import GeometryEditorPrefGroupUI
 from appGUI.preferences.geometry.GeometryAdvOptPrefGroupUI import GeometryAdvOptPrefGroupUI
@@ -23,10 +22,7 @@ class GeometryPreferencesUI(QtWidgets.QWidget):
 
     def __init__(self, app, parent=None):
         QtWidgets.QWidget.__init__(self, parent=parent)
-        if _database_option(app, 'global_gui_layout') == 0:
-            self.layout = QtWidgets.QHBoxLayout()
-        else:
-            self.layout = ColumnarFlowLayout()
+        self.layout = ColumnarFlowLayout()
         self.setLayout(self.layout)
 
         self.geometry_gen_group = GeometryGenPrefGroupUI(app=app)

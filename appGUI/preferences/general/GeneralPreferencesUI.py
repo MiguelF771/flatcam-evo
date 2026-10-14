@@ -1,6 +1,5 @@
 
 from PyQt6 import QtWidgets
-from appDatabase import _database_option
 
 from appGUI.preferences.general.GeneralAppPrefGroupUI import GeneralAppPrefGroupUI
 from appGUI.preferences.general.GeneralAPPSetGroupUI import GeneralAPPSetGroupUI
@@ -20,10 +19,7 @@ if '_' not in builtins.__dict__:
 class GeneralPreferencesUI(QtWidgets.QWidget):
     def __init__(self, app, parent=None):
         QtWidgets.QWidget.__init__(self, parent=parent)
-        if _database_option(app, 'global_gui_layout') == 0:
-            self.layout = QtWidgets.QHBoxLayout()
-        else:
-            self.layout = ColumnarFlowLayout()
+        self.layout = ColumnarFlowLayout()
         self.setLayout(self.layout)
 
         self.general_app_group = GeneralAppPrefGroupUI(app=app)

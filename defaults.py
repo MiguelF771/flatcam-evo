@@ -42,8 +42,6 @@ class AppDefaults:
 
         "global_move_ref": 'abs',
 
-        "global_gui_layout": 0,  # can be 0:"normal" or 1:"columnar"
-
         "global_background_timeout": 300000,  # Default value is 5 minutes
         "global_verbose_error_level": 0,  # Shell verbosity 0 = default
         # (python trace only for unknown errors),

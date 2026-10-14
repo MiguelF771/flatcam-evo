@@ -1,6 +1,5 @@
 
 from PyQt6 import QtWidgets
-from appDatabase import _database_option
 
 from appGUI.preferences.tools.Tools2InvertPrefGroupUI import Tools2InvertPrefGroupUI
 from appGUI.preferences.tools.Tools2PunchGerberPrefGroupUI import Tools2PunchGerberPrefGroupUI
@@ -26,10 +25,7 @@ class Plugins2PreferencesUI(QtWidgets.QWidget):
 
     def __init__(self, app, parent=None):
         QtWidgets.QWidget.__init__(self, parent=parent)
-        if _database_option(app, 'global_gui_layout') == 0:
-            self.layout = QtWidgets.QHBoxLayout()
-        else:
-            self.layout = ColumnarFlowLayout()
+        self.layout = ColumnarFlowLayout()
         self.setLayout(self.layout)
 
         self.tools2_checkrules_group = Tools2RulesCheckPrefGroupUI(app=app)

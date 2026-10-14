@@ -1,6 +1,5 @@
 
 from PyQt6 import QtWidgets
-from appDatabase import _database_option
 import sys
 
 from appGUI.preferences.utilities.AutoCompletePrefGroupUI import AutoCompletePrefGroupUI
@@ -15,10 +14,7 @@ class UtilPreferencesUI(QtWidgets.QWidget):
 
     def __init__(self, app, parent=None):
         QtWidgets.QWidget.__init__(self, parent=parent)
-        if _database_option(app, 'global_gui_layout') == 0:
-            self.layout = QtWidgets.QHBoxLayout()
-        else:
-            self.layout = ColumnarFlowLayout()
+        self.layout = ColumnarFlowLayout()
         self.setLayout(self.layout)
 
         self.fa_excellon_group = FAExcPrefGroupUI(app=app)

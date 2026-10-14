@@ -45,7 +45,7 @@ class ColumnarFlowLayout(QLayout):
         return None
 
     def expandingDirections(self):
-        return Qt.Orientations(Qt.Orientation(0))
+        return Qt.Orientation(0)
 
     def hasHeightForWidth(self):
         return True
@@ -64,37 +64,79 @@ class ColumnarFlowLayout(QLayout):
     def minimumSize(self):
         size = QSize()
 
-        for item in self.itemList:
+        for item in self.visible_items():
             size = size.expandedTo(item.minimumSize())
 
-        margin, _, _, _ = self.getContentsMargins()
+        left, top, right, bottom = self.getContentsMargins()
 
-        size += QSize(2 * margin, 2 * margin)
+        size += QSize(left + right, top + bottom)
         return size
 
+    def visible_items(self):
+        # hidden widgets take no room in the layout
+        return [item for item in self.itemList if not item.isEmpty()]
+
     def doLayout(self, rect: QRect, testOnly: bool) -> int:
+        left, top, right, bottom = self.getContentsMargins()
+        area = rect.adjusted(left, top, -right, -bottom)
+
         spacing = self.spacing()
-        x = rect.x()
-        y = rect.y()
+        if spacing < 0:
+            # no spacing from the style
+            spacing = 6
 
-        # Determine width of widest item
-        widest = 0
-        for item in self.itemList:
-            widest = max(widest, item.sizeHint().width())
+        items = self.visible_items()
+        if not items:
+            return top + bottom
 
-        # Determine how many equal-width columns we can get, and how wide each one should be
-        column_count = math.floor(rect.width() / (widest + spacing))
-        column_count = min(column_count, len(self.itemList))
+        # A column has to be at least as wide as the widest minimum width. The column count uses the median
+        # preferred width, so that a single wide item does not reduce the column count for all the other items.
+        min_width = max(item.minimumSize().width() for item in items)
+        hint_widths = sorted(item.sizeHint().width() for item in items)
+        target_width = max(min_width, hint_widths[len(hint_widths) // 2])
+
+        # Determine how many equal-width columns we can get
+        column_count = math.floor((area.width() + spacing) / (target_width + spacing))
+        column_count = min(column_count, len(items))
         column_count = max(1, column_count)
-        # TODO somehow this should be adjusted to introduce a kind of stretch to the right of the layout
-        column_width = math.floor((rect.width() - (column_count-1)*spacing - 1) / column_count)
 
-        # Get the heights for all of our items
-        item_heights = {}
-        for item in self.itemList:
-            height = item.heightForWidth(column_width) if item.hasHeightForWidth() else item.sizeHint().height()
-            item_heights[item] = height
+        while True:
+            column_width = math.floor((area.width() - (column_count-1)*spacing) / column_count)
+            # a column is never wider than the widest preferred width; the free space stays to the right
+            column_width = max(min_width, min(column_width, hint_widths[-1]))
 
+            # Get the heights for all of our items. The heightForWidth() of some items is too small before
+            # they are shown, so the preferred height and the minimum height are a lower limit.
+            item_heights = {}
+            for item in items:
+                height = max(item.sizeHint().height(), item.minimumSize().height())
+                if item.hasHeightForWidth():
+                    height = max(height, item.heightForWidth(column_width))
+                item_heights[item] = height
+
+            column_contents, column_heights = self.fill_columns(items, item_heights, column_count, spacing)
+
+            # the items can fit in fewer columns than we have; then make the layout again with wider columns
+            used_columns = sum(1 for column in column_contents if column)
+            if used_columns >= column_count:
+                break
+            column_count = used_columns
+
+        # Set geometry according to the layout we have calculated
+        if not testOnly:
+            for column_index, column_items in enumerate(column_contents):
+                x = area.x() + column_index * (column_width + spacing)
+                y = area.y()
+                for item in column_items:
+                    height = item_heights[item]
+                    item.setGeometry(QRect(x, y, column_width, height))
+                    y += (height + spacing)
+
+        # Return the overall height; each column height holds a spacing after the last item
+        return max(column_heights) - spacing + top + bottom
+
+    @staticmethod
+    def fill_columns(items, item_heights, column_count, spacing):
         # Prepare our column representation
         column_contents = []
         column_heights = []
@@ -151,7 +193,7 @@ class ColumnarFlowLayout(QLayout):
 
         # Calculate the best layout
         column_index = 0
-        for item in self.itemList:
+        for item in items:
             item_height = item_heights[item]
             if column_heights[column_index] != 0 and (column_heights[column_index] + item_height) > max(column_heights):
                 column_index += 1
@@ -169,18 +211,7 @@ class ColumnarFlowLayout(QLayout):
 
         shove_cascade()
 
-        # Set geometry according to the layout we have calculated
-        if not testOnly:
-            for column_index, items in enumerate(column_contents):
-                x = column_index * (column_width + spacing)
-                y = 0
-                for item in items:
-                    height = item_heights[item]
-                    item.setGeometry(QRect(x, y, column_width, height))
-                    y += (height + spacing)
-
-        # Return the overall height
-        return max(column_heights)
+        return column_contents, column_heights
 
     def addStretch(self, val=None):
         wdg = QtWidgets.QWidget()
