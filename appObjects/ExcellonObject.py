@@ -1208,7 +1208,8 @@ class ExcellonObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Excellon):
 
     def plot(self, visible=None, kind=None):
 
-        multicolored = self.ui.multicolored_cb.get_value()
+        # the plot state is read from the options (the UI widgets mirror them and are not needed to plot)
+        multicolored = self.obj_options['multicolored']
 
         # Does all the required setup and returns False
         # if the 'ptint' option is set to False.
@@ -1224,14 +1225,14 @@ class ExcellonObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Excellon):
             self.solid_geometry = [self.solid_geometry]
 
         if visible is None:
-            visible = self.ui.plot_cb.get_value()
+            visible = self.obj_options['plot']
 
         # the shape indexes of a previous plot are not valid anymore
         self.shape_indexes_dict.clear()
 
         try:
             # Plot Excellon (All polygons?)
-            if self.ui.solid_cb.get_value():
+            if self.obj_options['solid']:
                 # Collect all shapes into one batch, tracking tool boundaries
                 batch = []
                 tool_ranges = {}  # tool -> (start_index, end_index) in batch
@@ -1281,7 +1282,8 @@ class ExcellonObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Excellon):
             self.app.log.debug("ExcellonObject.plot() -> %s" % str(e))
             self.shapes.clear(update=True)
 
-        if multicolored:
+        # the build of the tools table needs the UI
+        if multicolored and self.ui is not None:
             self.multicolored_build_sig.emit()
 
     def on_multicolored_build(self):

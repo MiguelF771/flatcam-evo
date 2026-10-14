@@ -390,6 +390,7 @@ def _plot_ready_excellon_object():
     ui.solid_cb.get_value.return_value = True
     ui.plot_cb.get_value.return_value = True
     obj.ui = ui
+    obj.obj_options.update({'multicolored': False, 'solid': True, 'plot': True})
     obj.tools = {1: {'tooldia': 1.0, 'solid_geometry': [Point(0, 0).buffer(0.5)]}}
     obj.solid_geometry = [Point(0, 0).buffer(0.5)]
     obj.add_shapes_batch = Mock(return_value=[11])
@@ -547,7 +548,7 @@ class TestGuardsAlreadyPassing_0B:
 
     def test_excellon_plot_visible_none_uses_ui_value(self, no_shape_collection):
         obj = _plot_ready_excellon_object()
-        obj.ui.plot_cb.get_value.return_value = False
+        obj.obj_options['plot'] = False
         obj.plot(visible=None)
         assert obj.add_shapes_batch.call_args.kwargs['visible'] is False
 
