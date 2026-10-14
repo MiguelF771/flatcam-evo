@@ -16,6 +16,7 @@ import shapely
 import shapely.affinity as affinity
 from shapely import box as shply_box
 from shapely import LinearRing, MultiLineString, LineString, Polygon, MultiPolygon, Point, prepare, is_prepared, simplify
+from shapely import STRtree
 from shapely.geometry.base import BaseGeometry, BaseMultipartGeometry
 
 from lxml import etree as ET
@@ -440,6 +441,69 @@ class Gerber(Geometry):
             else:
                 return
 
+    def _fold_layers(self, layers: list) -> BaseGeometry:
+        """
+        Compose the layers 1 by 1, in file order, starting from the current ``self.solid_geometry``.
+        This is the sequential union / difference done at every polarity change.
+
+        :param layers: list of (polarity, parts), polarity is 'D' (dark) or 'C' (clear), parts is a list of geometries
+        :return: the composed geometry
+        """
+        result = self.solid_geometry
+        for polarity, parts in layers:
+            if polarity == 'D':
+                result = result.union(unary_union(parts))
+            else:
+                result = result.difference(unary_union(parts))
+        return result
+
+    def _compose_layers(self, layers: list) -> BaseGeometry:
+        """
+        Compose the layers of the file: the result is the union of every dark layer D(k) minus the union of all
+        the clear layers C(j) with j > k. Each dark layer is processed 1 time, with the clear layers found by a
+        STRtree. On a GEOS error or an invalid layer it falls back to _fold_layers().
+
+        :param layers: list of (polarity, parts), polarity is 'D' (dark) or 'C' (clear), parts is a list of geometries
+        :return: the composed geometry
+        """
+        try:
+            merged = []
+            for polarity, parts in layers:
+                layer_geo = unary_union(parts)
+                if not layer_geo.is_valid:
+                    raise shapely.errors.GEOSException("invalid layer geometry")
+                merged.append((polarity, layer_geo))
+
+            clear_polys = []
+            clear_index = []
+            for idx, (polarity, layer_geo) in enumerate(merged):
+                if polarity == 'C' and not layer_geo.is_empty:
+                    for poly in shapely.get_parts(layer_geo):
+                        clear_polys.append(poly)
+                        clear_index.append(idx)
+            tree = STRtree(clear_polys) if clear_polys else None
+            clear_index = np.array(clear_index, dtype=int)
+
+            pieces = []
+            for idx, (polarity, layer_geo) in enumerate(merged):
+                if polarity != 'D' or layer_geo.is_empty:
+                    continue
+                dark_geo = layer_geo
+                if tree is not None:
+                    hits = tree.query(dark_geo, predicate='intersects')
+                    hits = hits[clear_index[hits] > idx]
+                    if len(hits) > 0:
+                        cutter = unary_union([clear_polys[i] for i in hits])
+                        dark_geo = dark_geo.difference(cutter)
+                if not dark_geo.is_empty:
+                    pieces.append(dark_geo)
+
+            return self.solid_geometry.union(unary_union(pieces))
+        except shapely.errors.GEOSException as err:
+            self.app.log.debug("Gerber polarity layers: fast composition failed (%s), using the sequential fold." %
+                               str(err))
+            return self._fold_layers(layers)
+
     # @profile
     def parse_lines(self, glines: Sequence[str]) -> Optional[str]:
         """
@@ -500,6 +564,10 @@ class Gerber(Geometry):
         # subtracted from solid_geometry. This is ~100 times faster than
         # applying a union for every new polygon.
         poly_buffer: list[Polygon] = []
+
+        # Finished layers of equal polarity as (polarity, poly_buffer). A layer ends at every %LP..*% command. They
+        # are composed 1 time at the end of the file (see _compose_layers()), not 1 by 1 at every polarity change.
+        earlier_layers: list[tuple[str, list]] = []
 
         # store here the follow geometry
         follow_buffer = []
@@ -602,7 +670,6 @@ class Gerber(Geometry):
                 if match:
                     new_polarity = match.group(1)
                     # self.app.log.info("Polarity CHANGE, LPC = %s, poly_buff = %s" % (self.is_lpc, poly_buffer))
-                    self.is_lpc = True if new_polarity == 'C' else False
                     path_length = len(path)
 
                     if path_length > 1 and current_polarity != new_polarity:
@@ -630,23 +697,13 @@ class Gerber(Geometry):
 
                         path = [path[-1]]
 
-                    # --- Apply buffer ---
-                    # If added for testing of bug #83
-                    # TODO: Remove when bug fixed
-                    try:
-                        buff_length = len(poly_buffer)
-                    except TypeError:
-                        buff_length = 1
+                    # the open path above was closed with the old polarity; from here on the new polarity is valid
+                    self.is_lpc = True if new_polarity == 'C' else False
 
-                    if buff_length > 0:
-                        assert isinstance(self.solid_geometry, BaseGeometry)
-                        if current_polarity == 'D':
-                            self.solid_geometry = self.solid_geometry.union(unary_union(poly_buffer))
-
-                        else:
-                            self.solid_geometry = self.solid_geometry.difference(unary_union(poly_buffer))
-
-                        # follow_buffer = []
+                    # --- Close the layer ---
+                    # The layer is not applied to solid_geometry here. All layers are composed at the end of the file.
+                    if len(poly_buffer) > 0:
+                        earlier_layers.append((current_polarity, poly_buffer))
                         poly_buffer = []
 
                     current_polarity = new_polarity
@@ -1416,6 +1473,11 @@ class Gerber(Geometry):
 
             # Build source_file from accumulated lines
             self.source_file = '\n'.join(source_lines) + '\n'
+
+            # Compose the layers closed by the polarity changes. Without earlier layers nothing changes: the last layer
+            # is applied directly to the (empty) solid_geometry below.
+            if earlier_layers:
+                self.solid_geometry = self._compose_layers(earlier_layers)
 
             # ##########################################################################################################
             #   Creating the FINAL GEOMETRY

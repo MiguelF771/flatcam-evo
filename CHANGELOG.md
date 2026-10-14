@@ -10,6 +10,13 @@ CHANGELOG for FlatCAM Evo beta
 
 14.10.2026
 
+Gerber parser:
+
+- the polarity changes (LPC/LPD) are composed 1 time at the end of the file, about 4 times faster on files with many polarity changes; the geometry is the same
+- a path that is open at a polarity change is stored with its own polarity (before, it got the new polarity)
+
+Other:
+
 - fixed a bug when changing colors for objects
 - new feature: Altium .pcbdoc import in File -> Import -> Altium PCB directly to Gerbers and Excellons
 
