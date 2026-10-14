@@ -363,41 +363,18 @@ class AppLifecycle(QtCore.QObject):
                 self.log.debug("ArgThread QThread requested an interruption.")
 
         # close editors before quitting the app, if they are open
-        if self.app.geo_editor is not None:
-            self.app.geo_editor.deactivate()
-            try:
-                self.app.geo_editor.disconnect()
-            except TypeError:
-                pass
-            if silent is False:
-                self.log.debug("App.quit_application() --> Geo Editor deactivated.")
-
-        if self.app.exc_editor is not None:
-            self.app.exc_editor.deactivate()
-            try:
-                self.app.exc_editor.disconnect()
-            except TypeError:
-                pass
-            if silent is False:
-                self.log.debug("App.quit_application() --> Excellon Editor deactivated.")
-
-        if self.app.grb_editor is not None:
-            self.app.grb_editor.deactivate_grb_editor()
-            try:
-                self.app.grb_editor.disconnect()
-            except TypeError:
-                pass
-            if silent is False:
-                self.log.debug("App.quit_application() --> Gerber Editor deactivated.")
-
-        if self.app.gcode_editor is not None:
-            self.app.gcode_editor.deactivate()
-            try:
-                self.app.gcode_editor.disconnect()
-            except TypeError:
-                pass
-            if silent is False:
-                self.log.debug("App.quit_application() --> GCode Editor deactivated.")
+        for kind, editor_name in (('geometry', 'Geo Editor'), ('excellon', 'Excellon Editor'),
+                                  ('gerber', 'Gerber Editor'), ('cncjob', 'GCode Editor')):
+            editor = self.app._editor_for(kind)
+            if editor is not None:
+                self.app._deactivate_editor(kind)
+                try:
+                    # QObject.disconnect() with no arguments raises TypeError when nothing is connected
+                    editor.disconnect()
+                except TypeError:
+                    pass
+                if silent is False:
+                    self.log.debug("App.quit_application() --> %s deactivated." % editor_name)
 
         # disconnect the mouse events
         if self.app.use_3d_engine:

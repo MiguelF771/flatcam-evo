@@ -207,10 +207,12 @@ class TestEditorCleanup(unittest.TestCase):
             f"All editors should be deactivated unconditionally when not None.")
 
         # After fix: check for unconditional deactivation pattern
-        unconditional_geo = 'self.app.geo_editor is not None' in method
-        unconditional_exc = 'self.app.exc_editor is not None' in method
-        unconditional_grb = 'self.app.grb_editor is not None' in method
-        unconditional_gcode = 'self.app.gcode_editor is not None' in method
+        # the 4 editors are walked by kind through App._editor_for(), each one with an 'is not None' check
+        has_none_check = 'editor is not None' in method and 'self.app._editor_for(kind)' in method
+        unconditional_geo = has_none_check and "'geometry'" in method
+        unconditional_exc = has_none_check and "'excellon'" in method
+        unconditional_grb = has_none_check and "'gerber'" in method
+        unconditional_gcode = has_none_check and "'cncjob'" in method
 
         all_unconditional = (unconditional_geo and unconditional_exc and
                             unconditional_grb and unconditional_gcode)
@@ -220,10 +222,11 @@ class TestEditorCleanup(unittest.TestCase):
             f"Found: geo={unconditional_geo}, exc={unconditional_exc}, "
             f"grb={unconditional_grb}, gcode={unconditional_gcode}")
 
-        # Also verify grb_editor uses deactivate_grb_editor
+        # The Gerber editor is deactivated through App._deactivate_editor(), which calls its deactivate() alias of
+        # deactivate_grb_editor()
         if unconditional_grb:
-            self.assertIn('deactivate_grb_editor', method,
-                "grb_editor should use deactivate_grb_editor() method")
+            self.assertIn('self.app._deactivate_editor(kind)', method,
+                "the editors should be deactivated with App._deactivate_editor()")
 
 
 # =============================================================================

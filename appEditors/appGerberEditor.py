@@ -5133,6 +5133,9 @@ class AppGerberEditor(QtCore.QObject):
         if self.gerber_obj:
             self.gerber_obj.visible = True
 
+    # the other editors name this method deactivate(); App._deactivate_editor() calls that name on every editor
+    deactivate = deactivate_grb_editor
+
     def connect_canvas_event_handlers(self):
         # Canvas events
 

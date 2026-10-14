@@ -112,6 +112,7 @@ from appEditors.appExcEditor import AppExcEditor
 from appEditors.appGerberEditor import AppGerberEditor
 from appEditors.appTextEditor import AppTextEditor
 from appEditors.appGCodeEditor import AppGCodeEditor
+from appParsers import feature_access
 
 # App Workers
 from appProcess import *
@@ -168,6 +169,15 @@ def _release_build_identity(app, fallback=""):
         if value:
             return str(value)
     return str(fallback or "")
+
+
+# object kind -> name of the App attribute that holds its editor
+_EDITOR_ATTR_BY_KIND = {
+    'geometry': 'geo_editor',
+    'excellon': 'exc_editor',
+    'gerber': 'grb_editor',
+    'cncjob': 'gcode_editor',
+}
 
 
 class App(QtCore.QObject):
@@ -2235,6 +2245,31 @@ class App(QtCore.QObject):
 
         self.should_we_save = True
 
+    def _editor_for(self, kind):
+        """
+        :param kind:    object kind: 'geometry', 'excellon', 'gerber' or 'cncjob'
+        :return:        the editor of that kind (None if it was not created) or None for an unknown kind
+        """
+        attr = _EDITOR_ATTR_BY_KIND.get(kind)
+        return getattr(self, attr, None) if attr else None
+
+    def _deactivate_editor(self, kind):
+        """
+        Deactivate the editor of the given object kind. An unknown kind or an editor that does not exist: no-op.
+        """
+        editor = self._editor_for(kind)
+        if editor is not None:
+            editor.deactivate()
+
+    def _edited_obj_is_empty(self, obj):
+        """
+        True if an object that leaves its editor has no content and the source object should be deleted.
+        Only Gerber and Excellon are deleted when empty; a Geometry or a CNCJob object never is.
+        """
+        if obj.kind in ('gerber', 'excellon'):
+            return feature_access.is_empty(obj)
+        return False
+
     def on_editing_finished(self, cleanup=None, force_cancel=None):
         """
         Transfers the Geometry or an "Excellon", from its editor to the current object.
@@ -2330,15 +2365,9 @@ class App(QtCore.QObject):
                     # self.grb_editor.update_options(edited_obj)
 
                     # delete the old object (the source object) if it was an empty one
-                    try:
-                        if len(edited_obj.solid_geometry) == 0:
-                            old_name = edited_obj.obj_options['name']
-                            self.collection.delete_by_name(old_name)
-                    except TypeError:
-                        # if the solid_geometry is a single Polygon the len() will not work
-                        # in any case, falling here means that we have something in the solid_geometry, even if only
-                        # a single Polygon, therefore we pass this
-                        pass
+                    if self._edited_obj_is_empty(edited_obj):
+                        old_name = edited_obj.obj_options['name']
+                        self.collection.delete_by_name(old_name)
 
                     self.inform.emit('[success] %s' % _("Editor exited. Editor content saved."))
 
@@ -2356,19 +2385,7 @@ class App(QtCore.QObject):
                     self.ui.plugin_scroll_area.takeWidget()
 
                     # delete the old object (the source object) if it was an empty one
-                    # find if we have drills:
-                    has_drills = None
-                    for tt in edited_obj.tools:
-                        if 'drills' in edited_obj.tools[tt] and edited_obj.tools[tt]['drills']:
-                            has_drills = True
-                            break
-                    # find if we have slots:
-                    has_slots = None
-                    for tt in edited_obj.tools:
-                        if 'slots' in edited_obj.tools[tt] and edited_obj.tools[tt]['slots']:
-                            has_slots = True
-                            break
-                    if has_drills is None and has_slots is None:
+                    if self._edited_obj_is_empty(edited_obj):
                         old_name = edited_obj.obj_options['name']
                         self.collection.delete_by_name(name=old_name)
                     self.inform.emit('[success] %s' % _("Editor exited. Editor content saved."))
@@ -2420,18 +2437,13 @@ class App(QtCore.QObject):
 
                 self.inform.emit('[WARNING_NOTCL] %s' % _("Editor exited. Editor content was not saved."))
 
+                self._deactivate_editor(edited_obj.kind)
                 if edited_obj.kind == 'geometry':
-                    self.geo_editor.deactivate()
                     edited_obj.build_ui()
                     edited_obj.plot()
-                elif edited_obj.kind == 'gerber':
-                    self.grb_editor.deactivate_grb_editor()
-                    edited_obj.build_ui()
-                elif edited_obj.kind == 'excellon':
-                    self.exc_editor.deactivate()
+                elif edited_obj.kind in ('gerber', 'excellon'):
                     edited_obj.build_ui()
                 elif edited_obj.kind == 'cncjob':
-                    self.gcode_editor.deactivate()
                     edited_obj.build_ui()
 
                     # close the open tab
@@ -2457,14 +2469,8 @@ class App(QtCore.QObject):
             if self.old_state_of_tools_toolbar is True:
                 plugins_tb.show()
 
-            if edited_obj.kind == 'geometry':
-                self.geo_editor.deactivate()
-            elif edited_obj.kind == 'gerber':
-                self.grb_editor.deactivate_grb_editor()
-            elif edited_obj.kind == 'excellon':
-                self.exc_editor.deactivate()
-            elif edited_obj.kind == 'cncjob':
-                self.gcode_editor.deactivate()
+            if edited_obj.kind in _EDITOR_ATTR_BY_KIND:
+                self._deactivate_editor(edited_obj.kind)
             else:
                 self.inform.emit(
                     '[WARNING_NOTCL] %s' % _("Select a Gerber, Geometry, Excellon or CNCJob Object to update.")

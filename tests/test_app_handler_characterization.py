@@ -621,6 +621,7 @@ class TestLifecycle(AppTestCase):
                 app.ui = SimpleNamespace(hide=Recorder(("call",)).call)
                 app.autosave_timer = Timer(active=True)
                 app.geo_editor = app.exc_editor = app.grb_editor = app.gcode_editor = None
+                app._editor_for = lambda kind: None
                 app.use_3d_engine = use_3d
                 app.plotcanvas = PlotCanvas()
                 app.on_mouse_move_over_plot = object()
