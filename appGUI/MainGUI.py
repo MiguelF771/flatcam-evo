@@ -294,6 +294,10 @@ class MainGUI(QtWidgets.QMainWindow):
             QtGui.QIcon(self.app.resource_location + '/import.png'),
             '%s...' % _('KiCad PCB (.kicad_pcb)'), self)
         self.menufileimport.addAction(self.menufileimportkicad)
+        self.menufileimportsprint = QtGui.QAction(
+            QtGui.QIcon(self.app.resource_location + '/import.png'),
+            '%s...' % _('Sprint Layout 6 (.lay6)'), self)
+        self.menufileimport.addAction(self.menufileimportsprint)
         self.menufileimport.addSeparator()
 
         # Export ...

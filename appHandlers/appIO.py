@@ -95,6 +95,9 @@ class appIO(QtCore.QObject):
         'kicad_pcb': {
             'ext': '.kicad_pcb', 'filter': 'KiCad PCB (*.kicad_pcb)',
             'log': 'KiCad PCB', 'name_first': False},
+        'sprint_lay6': {
+            'ext': '.lay6', 'filter': 'Sprint Layout 6 (*.lay6)',
+            'log': 'Sprint Layout', 'name_first': False},
     }
 
     @staticmethod
@@ -102,13 +105,15 @@ class appIO(QtCore.QObject):
         # literal _() strings so the translation tools find them
         if kind == 'kicad_pcb':
             return _('Import KiCad PCB')
+        if kind == 'sprint_lay6':
+            return _('Import Sprint Layout')
         return _('Import Altium PCB')
 
     @staticmethod
     def _pcb_source_kind(filename):
         """
         Which native PCB format a file imported through the PcbDoc pipeline is: a key of PCB_FORMATS.
-        Anything that is not KiCad is Altium.
+        Anything that is not KiCad or Sprint Layout is Altium.
         """
         name = str(filename).lower()
         for kind, pcb_format in appIO.PCB_FORMATS.items():
@@ -130,6 +135,9 @@ class appIO(QtCore.QObject):
 
     def on_file_import_kicad_pcb(self, name=None):
         self._import_pcb_file('kicad_pcb', name, self.parse_kicad_pcb)
+
+    def on_file_import_sprint_layout(self, name=None):
+        self._import_pcb_file('sprint_lay6', name, self.parse_sprint_layout)
 
     def _parse_pcb_file(self, kind, filename, make_parser):
         if self.app.abort_flag:
@@ -154,6 +162,12 @@ class appIO(QtCore.QObject):
             from appParsers.ParseKiCadPcb import KiCadPcbParser
             return KiCadPcbParser(app=self.app)
         return self._parse_pcb_file('kicad_pcb', filename, make_parser)
+
+    def parse_sprint_layout(self, filename):
+        def make_parser():
+            from appParsers.ParseSprintLayout import SprintLayoutParser
+            return SprintLayoutParser(app=self.app)
+        return self._parse_pcb_file('sprint_lay6', filename, make_parser)
 
     @QtCore.pyqtSlot(str, object)
     def on_pcbdoc_parsed(self, filename, parsed):
