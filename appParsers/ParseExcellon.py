@@ -1054,6 +1054,48 @@ class Excellon(Geometry):
             self.app.log.error("Aborted. Operation could not be completed due of %s" % str(e))
             return
 
+    def add_tool(self, dia, drills=(), slots=(), data=None, tool_id=None):
+        """
+        Adds a tool to ``self.tools`` and returns its id.
+
+        Contract (shared by all the callers that used to build the dict by hand):
+
+        - id: ``tool_id`` when given (any hashable, e.g. the string ``'1'``), else ``max(int(k)) + 1`` over the
+          existing ids, or ``1`` when there are no tools. A ``tool_id`` already in ``self.tools`` raises ValueError.
+        - the new entry has exactly the keys ``tooldia`` (float), ``drills`` (list of ``Point``, a copy of the
+          argument), ``slots`` (list of ``(Point, Point)`` tuples, a copy), ``solid_geometry`` (always an empty list)
+          and ``data``.
+        - ``data`` is a deepcopy of the argument, or a deepcopy of ``self.default_data`` (``{}`` when the attribute
+          does not exist) when the argument is None. Pass ``{}`` to get an empty ``data`` (an empty ``data`` is
+          filled from ``default_data`` by ``create_geometry``; a non-empty one is kept).
+        - it does NOT call ``create_geometry``: ``solid_geometry`` stays empty until the caller calls it.
+        - the arguments are not validated: drills must already be ``Point`` and slots ``(Point, Point)`` tuples.
+
+        :param dia:         Tool diameter.
+        :param drills:      Iterable of shapely Points.
+        :param slots:       Iterable of (start Point, stop Point) tuples.
+        :param data:        Tool data dict, or None for the default data.
+        :param tool_id:     Explicit tool id, or None for the next free integer id.
+        :return:            The id of the new tool.
+        """
+
+        if tool_id is None:
+            tool_id = max((int(key) for key in self.tools), default=0) + 1
+        elif tool_id in self.tools:
+            raise ValueError("Excellon tool id %r already exists" % (tool_id,))
+
+        if data is None:
+            data = getattr(self, 'default_data', {})
+
+        self.tools[tool_id] = {
+            'tooldia': float(dia),
+            'drills': list(drills),
+            'slots': [tuple(slot) for slot in slots],
+            'solid_geometry': [],
+            'data': deepcopy(data)
+        }
+        return tool_id
+
     def create_geometry(self):
         """
         Creates circles of the tool diameter at every point
