@@ -5573,6 +5573,32 @@ class FCTextAreaLineNumber(QtWidgets.QFrame):
         self.edit.setLineWrapMode(mode)
 
 
+def add_case_variants(ext_filter):
+    """
+    Adds the lower-case and the upper-case version of each pattern in a QFileDialog filter. On Linux the dialog
+    matches the patterns case-sensitive, so without this a file like 'board.GTL' (EasyEDA) is not shown.
+
+    :param ext_filter:  QFileDialog filter, e.g. "Gerber Files (*.gbr *.gtl);;All Files (*.*)"
+    :type ext_filter:   str
+    :return:            the same filter, e.g. "Gerber Files (*.gbr *.GBR *.gtl *.GTL);;All Files (*.*)"
+    :rtype:             str
+    """
+    groups = []
+    for group in ext_filter.split(';;'):
+        name, sep, patterns = group.rpartition('(')
+        if not sep or not patterns.endswith(')'):
+            groups.append(group)
+            continue
+
+        variants = []
+        for pattern in patterns[:-1].split():
+            for variant in (pattern, pattern.lower(), pattern.upper()):
+                if variant not in variants:
+                    variants.append(variant)
+        groups.append('%s(%s)' % (name, ' '.join(variants)))
+    return ';;'.join(groups)
+
+
 class FCFileSaveDialog(QtWidgets.QFileDialog):
 
     def __init__(self, *args):

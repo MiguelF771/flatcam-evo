@@ -7,6 +7,7 @@
 
 from PyQt6 import QtWidgets, QtCore     # noqa
 from appTool import AppTool
+from appGUI.GUIElements import add_case_variants
 
 import logging
 from copy import deepcopy
@@ -104,8 +105,7 @@ class ToolPDF(AppTool):
         self.app.log.debug("ToolPDF was called. Launching....")
         self.app.log.info(f"ToolPDF PDF: using stream parser: {self.pdf_stream_parser.name}")
 
-        _filter_ = "Adobe PDF Files (*.pdf);;" \
-                   "All Files (*.*)"
+        _filter_ = add_case_variants("Adobe PDF Files (*.pdf);;All Files (*.*)")
 
         try:
             filenames, _f = QtWidgets.QFileDialog.getOpenFileNames(caption=_("Open PDF"),

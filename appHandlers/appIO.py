@@ -6,7 +6,7 @@ from appEditors.appExcEditor import AppExcEditor
 from appEditors.appGeoEditor import AppGeoEditor
 from appEditors.appGerberEditor import AppGerberEditor
 
-from appGUI.GUIElements import FCFileSaveDialog, FCMessageBox
+from appGUI.GUIElements import FCFileSaveDialog, FCMessageBox, add_case_variants
 from camlib import to_dict, dict2obj, ET, ParseError
 from appParsers.ParseHPGL2 import HPGL2
 
@@ -364,7 +364,7 @@ class appIO(QtCore.QObject):
 
         _filter_ = "Gerber Files (*.gbr *.ger *.gtl *.gbl *.gts *.gbs *.gtp *.gbp *.gto *.gbo *.gm1 *.gml *.gm3 " \
                    "*.gko *.cmp *.sol *.stc *.sts *.plc *.pls *.crc *.crs *.tsm *.bsm *.ly2 *.ly15 *.dim *.mil *.grb " \
-                   "*.top *.bot *.smt *.smb *.sst *.ssb *.spt *.spb *.pho *.gdo *.art *.gbd *.outline *.gdl .gme);;" \
+                   "*.top *.bot *.smt *.smb *.sst *.ssb *.spt *.spb *.pho *.gdo *.art *.gbd *.outline *.gdl *.gme);;" \
                    "Protel Files (*.gtl *.gbl *.gts *.gbs *.gto *.gbo *.gtp *.gbp *.gml *.gm1 *.gm3 *.gko " \
                    "*.outline);;" \
                    "Eagle Files (*.cmp *.sol *.stc *.sts *.plc *.pls *.crc *.crs *.tsm *.bsm *.ly2 *.ly15 *.dim " \
@@ -373,6 +373,7 @@ class appIO(QtCore.QObject):
                    "Allegro Files (*.art);;" \
                    "Mentor Files (*.pho *.gdo);;" \
                    "All Files (*.*)"
+        _filter_ = add_case_variants(_filter_)
 
         if name is None:
             try:
@@ -413,6 +414,7 @@ class appIO(QtCore.QObject):
 
         _filter_ = "Excellon Files (*.drl *.txt *.xln *.drd *.tap *.exc *.ncd);;" \
                    "All Files (*.*)"
+        _filter_ = add_case_variants(_filter_)
         if name is None:
             try:
                 filenames, _f = QtWidgets.QFileDialog.getOpenFileNames(caption=_("Open Excellon"),
@@ -454,6 +456,7 @@ class appIO(QtCore.QObject):
         _filter_ = "G-Code Files (*.txt *.nc *.ncc *.tap *.gcode *.cnc *.ecs *.fnc *.dnc *.ncg *.gc *.fan *.fgc" \
                    " *.din *.xpi *.hnc *.h *.i *.ncp *.min *.gcd *.rol *.knc *.mpr *.ply *.out *.eia *.sbp *.mpf);;" \
                    "All Files (*.*)"
+        _filter_ = add_case_variants(_filter_)
 
         if name is None:
             try:
@@ -520,6 +523,7 @@ class appIO(QtCore.QObject):
 
         _filter_ = "HPGL2 Files (*.plt);;" \
                    "All Files (*.*)"
+        _filter_ = add_case_variants(_filter_)
 
         if name is None:
             try:
@@ -986,7 +990,7 @@ class appIO(QtCore.QObject):
         """
         self.log.debug("on_file_import_svg()")
 
-        _filter_ = "SVG File .svg (*.svg);;All Files (*.*)"
+        _filter_ = add_case_variants("SVG File .svg (*.svg);;All Files (*.*)")
         try:
             filenames, _f = QtWidgets.QFileDialog.getOpenFileNames(caption=_("Import SVG"),
                                                                    directory=self.app.get_last_folder(),
@@ -1016,7 +1020,7 @@ class appIO(QtCore.QObject):
         """
         self.log.debug("on_file_import_dxf()")
 
-        _filter_ = "DXF File .dxf (*.DXF);;All Files (*.*)"
+        _filter_ = add_case_variants("DXF File .dxf (*.dxf);;All Files (*.*)")
         try:
             filenames, _f = QtWidgets.QFileDialog.getOpenFileNames(caption=_("Import DXF"),
                                                                    directory=self.app.get_last_folder(),
