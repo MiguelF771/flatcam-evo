@@ -72,8 +72,8 @@ class TclCommandPanelize(TclCommand):
                     'for cutout boundary. Object from name is used if not specified.'),
             ('spacing_columns', 'Spacing between columns.'),
             ('spacing_rows', 'Spacing between rows.'),
-            ('columns', 'Number of columns.'),
-            ('rows', 'Number of rows;'),
+            ('columns', 'Number of columns. 1 if not given (the command needs -columns or -rows or both).'),
+            ('rows', 'Number of rows. 1 if not given (the command needs -columns or -rows or both).'),
             ('outname', 'Name of the new geometry object.'),
             ('use_thread', 'False (0) = non-threaded execution or True (1) = threaded execution')
         ]),
@@ -125,15 +125,20 @@ class TclCommandPanelize(TclCommand):
         if 'columns' in args:
             columns = int(args['columns'])
         else:
-            columns = int(0)
+            columns = 1
 
         if 'rows' in args:
             rows = int(args['rows'])
         else:
-            rows = int(0)
+            rows = 1
 
         if 'columns' not in args and 'rows' not in args:
-            self.app.log.error("ERROR: Specify either -columns or -rows. The one not specified it will assumed to be 0")
+            self.app.log.error("ERROR: Specify either -columns or -rows. The one not specified it will assumed to be 1")
+            return "fail"
+
+        if columns < 1 or rows < 1:
+            self.app.log.error("ERROR: -columns and -rows must be positive integers. Got columns=%d, rows=%d." %
+                               (columns, rows))
             return "fail"
 
         if 'outname' in args:

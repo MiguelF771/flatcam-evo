@@ -68,3 +68,45 @@ def test_existing_box_object_sets_the_pitch(app):
     assert res is None
     w = src.bounds()[2] - src.bounds()[0]
     assert created['p'].bounds()[2] == pytest.approx(src.bounds()[2] + w + 5.0)
+
+# ---------------------------------------------------------------------------------------------------------------
+# only -rows (or only -columns) gave 0 for the other one: an empty panel
+# ---------------------------------------------------------------------------------------------------------------
+
+def copies(pan):
+    # the aperture 11 of the mixed fixture holds 1 record
+    return len(pan.tools[11]['geometry'])
+
+
+def test_only_rows_means_one_column(app):
+    src = make_gerber(app, name='g')
+    res, created = run_panelize(app, src, 'g', '-rows', '3', '-outname', 'p')
+    assert res is None and copies(created['p']) == 3
+    assert created['p'].bounds()[2] == pytest.approx(src.bounds()[2])
+    assert created['p'].bounds()[3] > src.bounds()[3] + 2 * 5.0
+
+
+def test_only_columns_means_one_row(app):
+    src = make_gerber(app, name='g')
+    res, created = run_panelize(app, src, 'g', '-columns', '4', '-outname', 'p')
+    assert res is None and copies(created['p']) == 4
+    assert created['p'].bounds()[3] == pytest.approx(src.bounds()[3])
+
+
+def test_neither_rows_nor_columns_fails(app):
+    src = make_gerber(app, name='g')
+    res, created = run_panelize(app, src, 'g', '-outname', 'p')
+    assert res == 'fail' and not created
+
+
+@pytest.mark.parametrize('argv', [('-rows', '0', '-columns', '2'), ('-rows', '2', '-columns', '0'),
+                                  ('-rows', '-1'), ('-columns', '0')])
+def test_zero_or_negative_counts_fail_instead_of_an_empty_panel(app, argv):
+    src = make_gerber(app, name='g')
+    res, created = run_panelize(app, src, 'g', *argv)
+    assert res == 'fail' and not created
+
+
+def test_help_states_the_default():
+    help_text = TclCommandPanelize.help['args']
+    assert '1 if not given' in help_text['rows'] and '1 if not given' in help_text['columns']
