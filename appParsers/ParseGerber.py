@@ -2752,7 +2752,7 @@ class Gerber(Geometry):
 
         :param distance:        If 'factor' is True then distance is the factor
         :param join:            The type of joining used by the Shapely buffer method. Can be: round, mitre and bevel
-        :param factor:          True or False (None)
+        :param factor:          truthy: multiplicative mode, distance is the multiplier; None or False: distance mode
         :param only_exterior:   Bool. If True, the LineStrings are buffered only on the outside
         :param muted:           Bool. If True, the buffer operation is muted
         :return:                None | str
@@ -2777,7 +2777,7 @@ class Gerber(Geometry):
         self.old_disp_number = 0
         self.el_count = 0
 
-        if factor is None:
+        if not factor:
             def buffer_geom(obj):
                 new_obj = []
                 try:
@@ -2819,7 +2819,6 @@ class Gerber(Geometry):
                             self.tools[apid]['height'] += (distance * 2)
                         elif str(self.tools[apid]['type']) == 'P':
                             self.tools[apid]['diam'] += (distance * 2)
-                            self.tools[apid]['nVertices'] += (distance * 2)
                     except KeyError:
                         pass
 
@@ -2840,7 +2839,6 @@ class Gerber(Geometry):
                             self.tools[apid]['height'] *= distance
                         elif str(self.tools[apid]['type']) == 'P':
                             self.tools[apid]['diam'] *= distance
-                            self.tools[apid]['nVertices'] *= distance
                     except KeyError:
                         pass
 

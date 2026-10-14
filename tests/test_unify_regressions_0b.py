@@ -263,7 +263,6 @@ def _tcl_buffer(ex, *argv):
     cmd.execute(args, unnamed)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="fixed in Stage 0B.4")
 class TestTransformBugs_0B4:
     def test_excellon_rotate_without_point_uses_bounds_center(self):
         ex = make_excellon(default_data={})

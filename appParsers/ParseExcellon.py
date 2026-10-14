@@ -1080,10 +1080,13 @@ class Excellon(Geometry):
             # clear the solid_geometry in self.tools
             for tool in self.tools:
                 self.tools[tool]['solid_geometry'] = []
-                self.tools[tool]['data'] = {}
 
             for tool in self.tools:
                 tooldia = self.tools[tool]['tooldia']
+
+                # keep the existing tool data; only a tool without data gets the defaults
+                if not self.tools[tool].get('data'):
+                    self.tools[tool]['data'] = deepcopy(getattr(self, 'default_data', {}))
 
                 if 'drills' in self.tools[tool]:
                     for drill in self.tools[tool]['drills']:
@@ -1091,7 +1094,6 @@ class Excellon(Geometry):
 
                         # add poly in the tools geometry
                         self.tools[tool]['solid_geometry'].append(poly)
-                        self.tools[tool]['data'] = deepcopy(self.default_data)
 
                         # add poly to the total solid geometry
                         self.solid_geometry.append(poly)
@@ -1106,7 +1108,6 @@ class Excellon(Geometry):
 
                         # add poly in the tools geometry
                         self.tools[tool]['solid_geometry'].append(poly)
-                        self.tools[tool]['data'] = deepcopy(self.default_data)
 
                         # add poly to the total solid geometry
                         self.solid_geometry.append(poly)
@@ -1555,7 +1556,8 @@ class Excellon(Geometry):
         self.el_count = 0
 
         if point is None:
-            orig = 'center'
+            minx, miny, maxx, maxy = self.bounds()
+            orig = ((minx + maxx) / 2.0, (miny + maxy) / 2.0)
         else:
             orig = point
 
@@ -1594,7 +1596,7 @@ class Excellon(Geometry):
         """
 
         :param distance:        if 'factor' is True then distance is the factor
-        :param factor:          True or False (None)
+        :param factor:          truthy: multiplicative mode, distance is the multiplier; None or False: distance mode
         :param join:            The type of line joint used by the shapely buffer method: round, square, bevel
         :param only_exterior:   Bool. If True, the LineStrings are buffered only on the outside
         :return:                None
@@ -1612,7 +1614,7 @@ class Excellon(Geometry):
                     new_obj.append(buffer_geom(g))
             except TypeError:
                 try:
-                    if factor is None:
+                    if not factor:
                         new_obj = obj.buffer(distance, resolution=self.excellon_circle_steps)
                         if isinstance(obj, (LinearRing, LineString)) and only_exterior is True:
                             new_obj = new_obj.exterior
@@ -1630,9 +1632,9 @@ class Excellon(Geometry):
                 self.tools[tool]['solid_geometry'] = res
             except TypeError:
                 self.tools[tool]['solid_geometry'] = [res]
-            if factor is None:
+            if not factor:
                 self.tools[tool]['tooldia'] += (distance * 2)
             else:
-                self.tools[tool]['tooldia'] *= (distance * 2)
+                self.tools[tool]['tooldia'] *= distance
 
         self.create_geometry()
