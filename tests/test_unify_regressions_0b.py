@@ -345,7 +345,6 @@ def _scale_target():
     return make_excellon(default_data={}, tooldia=0.2, drills=((1.0, 1.0), (3.0, 2.0)), slots=())
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="fixed in Stage 0B.5")
 class TestTclScale_0B5:
     def test_x_alone_scales_x_only(self):
         ex = _scale_target()

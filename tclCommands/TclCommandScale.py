@@ -71,7 +71,7 @@ class TclCommandScale(TclCommand):
         :param unnamed_args:
         :return:
         """
-        if ('x' not in args or 'X' not in args) and ('y' not in args or 'Y' not in args) and 'factor' not in args:
+        if 'x' not in args and 'y' not in args and 'factor' not in args:
             self.app.log.warning('%s' % "Expected -x <value> -y <value> or -factor <value>")
             self.raise_tcl_error('%s' % "Expected -x <value> -y <value> or -factor <value>")
             return 'fail'
@@ -143,25 +143,24 @@ class TclCommandScale(TclCommand):
             if 'factor' in args:
                 factor = float(args['factor'])
                 obj_to_scale.scale(factor, point=point)
-                continue
 
-            if 'x' in args and 'y' not in args:
+            elif 'x' in args and 'y' not in args:
                 f_x = float(args['x'])
-                obj_to_scale.scale(f_x, 0, point=point)
+                obj_to_scale.scale(f_x, 1, point=point)
             elif 'x' not in args and 'y' in args:
                 f_y = float(args['y'])
-                obj_to_scale.scale(0, f_y, point=point)
+                obj_to_scale.scale(1, f_y, point=point)
             elif 'x' in args and 'y' in args:
                 f_x = float(args['x'])
                 f_y = float(args['y'])
                 obj_to_scale.scale(f_x, f_y, point=point)
 
             try:
-                xmin, ymin, xmax, ymax = obj_to_scale.bounds()
-                obj_to_scale.obj_options['xmin'] = xmin
-                obj_to_scale.obj_options['ymin'] = ymin
-                obj_to_scale.obj_options['xmax'] = xmax
-                obj_to_scale.obj_options['ymax'] = ymax
+                o_xmin, o_ymin, o_xmax, o_ymax = obj_to_scale.bounds()
+                obj_to_scale.obj_options['xmin'] = o_xmin
+                obj_to_scale.obj_options['ymin'] = o_ymin
+                obj_to_scale.obj_options['xmax'] = o_xmax
+                obj_to_scale.obj_options['ymax'] = o_ymax
             except Exception as e:
                 self.app.log.error("TclCommandScale -> The object has no bounds properties. %s" % str(e))
                 return "fail"
