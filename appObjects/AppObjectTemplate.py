@@ -14,6 +14,7 @@ from PyQt6 import QtCore, QtGui
 
 from appGUI.ObjectUI import ObjectUI
 from appCommon.Common import LoudDict
+from camlib import app_option
 from appGUI.VisPyVisuals import ShapeCollection
 
 from shapely.ops import unary_union
@@ -63,12 +64,7 @@ class FlatCAMObj(QtCore.QObject):
     calculations_finished = QtCore.pyqtSignal(float, float, float, float, float, object)
 
     def _app_option(self, key, fallback=None):
-        defaults = getattr(self.app, "defaults", None)
-        if defaults is None:
-            return self.app.options.get(key, fallback)
-
-        factory_defaults = getattr(defaults, "factory_defaults", {})
-        return self.app.options.get(key, defaults.get(key, factory_defaults.get(key, fallback)))
+        return app_option(self.app, key, fallback)
 
     def __init__(self, name, app):
         """

@@ -608,12 +608,7 @@ class Geometry(object):
         self._Geometry_inited = True
 
     def _app_option(self, key, fallback=None):
-        defaults = getattr(self.app, "defaults", None)
-        if defaults is None:
-            return self.app.options.get(key, fallback)
-
-        factory_defaults = getattr(defaults, "factory_defaults", {})
-        return self.app.options.get(key, defaults.get(key, factory_defaults.get(key, fallback)))
+        return app_option(self.app, key, fallback)
 
     def plot_temp_shapes(self, element: BaseGeometry | list[BaseGeometry], color='red'):
 
@@ -8130,6 +8125,20 @@ def flatten_shapely_geometry(
 
     flatten(geometry)
     return flat_list
+
+
+def app_option(app, key, fallback=None):
+    """
+    Look up an option: app.options first, then app.defaults, then the factory defaults, then ``fallback``.
+
+    Shared by Geometry._app_option and FlatCAMObj._app_option.
+    """
+    defaults = getattr(app, "defaults", None)
+    if defaults is None:
+        return app.options.get(key, fallback)
+
+    factory_defaults = getattr(defaults, "factory_defaults", {})
+    return app.options.get(key, defaults.get(key, factory_defaults.get(key, fallback)))
 
 
 def circle_quad_segs(steps_per_circle) -> int:

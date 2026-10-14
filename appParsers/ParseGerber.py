@@ -99,17 +99,6 @@ class Gerber(Geometry):
     #     "use_buffer_for_union": True
     # }
 
-    def _get_app_option(self, key: str, fallback: Any = None) -> Any:
-        app_defaults = getattr(self.app, "defaults", None)
-        if app_defaults is None:
-            return self.app.options.get(key, fallback)
-
-        factory_defaults = getattr(app_defaults, "factory_defaults", {})
-        return self.app.options.get(
-            key,
-            app_defaults.get(key, factory_defaults.get(key, fallback))
-        )
-
     def __init__(self, app, steps_per_circle: int | None=None):
         """
         Use ``gerber.parse_files()`` or ``gerber.parse_lines()`` to populate the object from Gerber source.
@@ -129,7 +118,7 @@ class Gerber(Geometry):
 
         # How to approximate a circle with lines.
         if steps_per_circle is None:
-            self.steps_per_circle = int(self._get_app_option("gerber_circle_steps", 64))
+            self.steps_per_circle = int(self._app_option("gerber_circle_steps", 64))
         else:
             self.steps_per_circle = steps_per_circle
         self.decimals = self.app.decimals
@@ -144,7 +133,7 @@ class Gerber(Geometry):
         self.frac_digits = 4
         """Number of fraction digits in Gerber numbers. Used during parsing."""
 
-        self.gerber_zeros: Literal["L", "T"] = self._get_app_option("gerber_def_zeros")
+        self.gerber_zeros: Literal["L", "T"] = self._app_option("gerber_def_zeros")
         """Zeros in Gerber numbers. If 'L' then remove leading zeros, if 'T' remove trailing zeros. Used during parsing.
         """
 
@@ -168,7 +157,7 @@ class Gerber(Geometry):
         '''
 
         # store the file units here:
-        self.units: Literal["IN", "MM"] = self._get_app_option("gerber_def_units")
+        self.units: Literal["IN", "MM"] = self._app_option("gerber_def_units")
 
         # aperture storage
         self.tools: dict[int | None, dict] = {}
@@ -287,7 +276,7 @@ class Gerber(Geometry):
         # Flag to detect if an aperture is used without definition
         self.defective_aperture_detected: bool = False
 
-        self.use_buffer_for_union = self._get_app_option("gerber_use_buffer_for_union")
+        self.use_buffer_for_union = self._app_option("gerber_use_buffer_for_union")
 
         # Attributes to be included in serialization
         # Always append to it because it carries contents
@@ -694,13 +683,13 @@ class Gerber(Geometry):
         # ### Parsing starts here ## ##
         line_num: int = 0
 
-        s_tol = float(self._get_app_option("gerber_simp_tolerance"))
+        s_tol = float(self._app_option("gerber_simp_tolerance"))
 
         # Cache options lookups for performance
-        use_simplification = self._get_app_option("gerber_simplification")
-        use_buffering = self._get_app_option("gerber_buffering")
-        extra_buffering = self._get_app_option("gerber_extra_buffering")
-        clean_apertures = self._get_app_option("gerber_clean_apertures")
+        use_simplification = self._app_option("gerber_simplification")
+        use_buffering = self._app_option("gerber_buffering")
+        extra_buffering = self._app_option("gerber_extra_buffering")
+        clean_apertures = self._app_option("gerber_clean_apertures")
 
         # Cache steps_per_circle conversion
         steps = int(self.steps_per_circle)
@@ -825,7 +814,7 @@ class Gerber(Geometry):
                     self.app.log.debug("Gerber units found = %s" % self.units)
                     # Changed for issue #80
                     # self.convert_units(match.group(1))
-                    s_tol = float(self._get_app_option("gerber_simp_tolerance")) / 25.4 \
+                    s_tol = float(self._app_option("gerber_simp_tolerance")) / 25.4 \
                         if self.units == 'IN' else s_tol
 
                     self.conversion_done = True
@@ -848,7 +837,7 @@ class Gerber(Geometry):
                     self.app.log.debug("Gerber format found. Coordinates type = %s (Absolute or Relative)" % absolute)
 
                     self.units = cast(Literal["IN", "MM"], match.group(5))
-                    s_tol = float(self._get_app_option("gerber_simp_tolerance")) / 25.4 \
+                    s_tol = float(self._app_option("gerber_simp_tolerance")) / 25.4 \
                         if self.units == 'IN' else s_tol
 
                     self.app.log.debug("Gerber units found = %s" % self.units)
@@ -881,7 +870,7 @@ class Gerber(Geometry):
                             "Gerber format found. Coordinates type = %s (Absolute or Relative)" % absolute)
 
                         self.units = cast(Literal["IN", "MM"], match.group(1))
-                        s_tol = float(self._get_app_option("gerber_simp_tolerance")) / 25.4 \
+                        s_tol = float(self._app_option("gerber_simp_tolerance")) / 25.4 \
                             if self.units == 'IN' else s_tol
 
                         self.app.log.debug("Gerber units found = %s" % self.units)
@@ -900,7 +889,7 @@ class Gerber(Geometry):
                     elif match.group(1) == "1":
                         obs_gerber_units = "MM"
                     self.units = obs_gerber_units
-                    s_tol = float(self._get_app_option("gerber_simp_tolerance")) / 25.4 \
+                    s_tol = float(self._app_option("gerber_simp_tolerance")) / 25.4 \
                         if self.units == 'IN' else s_tol
 
                     self.app.log.warning("Gerber obsolete units found = %s" % obs_gerber_units)
@@ -2267,7 +2256,7 @@ class Gerber(Geometry):
             return 'fail'
 
         units = self.app.app_units if units is None else units
-        res = self._get_app_option("gerber_circle_steps", 64)
+        res = self._app_option("gerber_circle_steps", 64)
         factor = svgparse_viewbox(svg_root)
 
         if svg_units in svg_unit_to_mm:
@@ -2833,7 +2822,7 @@ class Gerber(Geometry):
         if distance == 0:
             return
 
-        steps = self._get_app_option("gerber_circle_steps", 64)
+        steps = self._app_option("gerber_circle_steps", 64)
 
         # variables to display the percentage of work done
         self.geo_len = 0
