@@ -24,6 +24,7 @@ import builtins
 
 from camlib import Geometry
 from defaults import AppDefaults
+from appParsers.feature_access import iter_features
 
 fcTranslate.apply_language('strings')
 if '_' not in builtins.__dict__:
@@ -1672,20 +1673,14 @@ class ToolPunchGerber(Geometry, AppTool):
         for it in self.ui.apertures_table.selectedItems():
             sel_apid.append(int(it.text()))
 
-        for apid, apid_value in self.grb_obj.tools.items():
-            if apid in sel_apid:
-                for idx, elem in enumerate(apid_value['geometry']):
-                    if 'follow' in elem and isinstance(elem['follow'], Point):
-                        try:
-                            pad = elem['solid']
-                        except KeyError:
-                            continue
-                        if pt.within(pad):
-                            new_elem = {
-                                'apid': apid,
-                                'idx': idx
-                            }
-                            results.append(deepcopy(new_elem))
+        # the result is only read later: self.grb_obj is not changed between this call and the use of 'idx'
+        for rec in iter_features(self.grb_obj):
+            if rec.item_key in sel_apid and rec.polarity == 'dark' and isinstance(rec.follow, Point):
+                if pt.within(rec.solid):
+                    results.append({
+                        'apid': rec.item_key,
+                        'idx': rec.feature_index
+                    })
         return results
 
     def on_manual_punch(self):
