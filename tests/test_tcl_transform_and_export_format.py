@@ -9,6 +9,9 @@
 
 from unittest.mock import Mock, patch
 
+import pytest
+
+import test_unify_characterization as char
 from appObjects.GerberObject import GerberObject
 from tclCommands.TclCommandMirror import TclCommandMirror
 from tclCommands.TclCommandSkew import TclCommandSkew
@@ -96,3 +99,59 @@ class TestGerberExportNumberFormat:
 
     def test_leading_zeros_omitted_adds_no_padding(self):
         assert 'X15000Y-22500D03' in _exported_body('L')
+
+    @pytest.mark.parametrize('g_zeros', ['L', 'T'])
+    @pytest.mark.parametrize('whole, fract', [(2, 4), (3, 6), (4, 6)])
+    def test_real_export_round_trips_negative_and_small_coordinates(self, g_zeros, whole, fract, tmp_path):
+        """appIO.export_gerber -> parser: the Gerber spec 4.2.2 (L) and 8.2.1.1 (T, deprecated) formats."""
+        app = char.make_app()
+        app.options.update({'gerber_exp_zeros': g_zeros, 'gerber_exp_integer': whole, 'gerber_exp_decimals': fract})
+        with patch('appObjects.AppObjectTemplate.ShapeCollection', Mock()):
+            grb = char.make_gerber(app, char.NATIVE_GBR)
+            # negative coordinates on both axes and a fraction with leading decimal zeros
+            grb.offset((-20.05, -20.003))
+            text = char.export_gerber_text(app, grb)
+            assert '%%FS%sAX%d%dY%d%d*%%' % (g_zeros, whole, fract, whole, fract) in text
+            again = char.reparse_gerber(app, text, tmp_path)
+        assert again.bounds()[0] < 0 and again.bounds()[1] < 0
+        char.assert_poly_equiv(again.solid_geometry, grb.solid_geometry, rel=1e-6, abs_tol=10 ** -fract * 50,
+                               msg='%s %d.%d' % (g_zeros, whole, fract))
+
+
+def _flat(items):
+    return [c for item in items for c in item]
+
+
+class TestExcellonExportNumberFormat:
+    """appIO.export_excellon -> parser, without the decimal point (Excellon CNC-7 rules):
+    LZ: the leading zeros are written, the reader adds the trailing zeros, so the whole part has 'whole' digits;
+    TZ: the trailing zeros are written, the reader counts the decimals from the right, so no padding."""
+
+    @pytest.mark.parametrize('slot_type', ['routing', 'drilling'])
+    @pytest.mark.parametrize('e_zeros', ['LZ', 'TZ'])
+    @pytest.mark.parametrize('whole, fract', [(3, 3), (2, 4)])
+    def test_real_export_round_trips_negative_and_small_coordinates(self, e_zeros, whole, fract, slot_type,
+                                                                     tmp_path):
+        app = char.make_app()
+        app.options.update({'excellon_exp_format': 'ndec', 'excellon_exp_zeros': e_zeros,
+                            'excellon_exp_integer': whole, 'excellon_exp_decimals': fract,
+                            'excellon_exp_units': 'METRIC', 'excellon_exp_slot_type': slot_type})
+        with patch('appObjects.AppObjectTemplate.ShapeCollection', Mock()):
+            exc = char.make_excellon(app)
+            # negative coordinates on both axes, values below 1 and a fraction with leading decimal zeros
+            exc.offset((-9.95, -10.05))
+            text = char.export_excellon_text(app, exc)
+            assert 'METRIC,%s' % e_zeros in text
+            again = char.reparse_excellon(app, text, tmp_path)
+
+        tol = 10 ** -fract
+        assert sorted(again.tools) == sorted(exc.tools)
+        for t, tool in exc.tools.items():
+            msg = '%s %d.%d %s T%s' % (e_zeros, whole, fract, slot_type, t)
+            # compare the numbers directly (a drill has zero area); the counts must match first
+            assert len(again.tools[t]['drills']) == len(tool['drills']), msg
+            assert _flat(char.pts(again.tools[t]['drills'])) == pytest.approx(_flat(char.pts(tool['drills'])),
+                                                                              abs=tol), msg
+            assert len(again.tools[t].get('slots', [])) == len(tool['slots']), msg
+            assert _flat(char.slot_flat(again.tools[t].get('slots', []))) == \
+                pytest.approx(_flat(char.slot_flat(tool['slots'])), abs=tol), msg

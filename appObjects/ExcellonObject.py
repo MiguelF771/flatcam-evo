@@ -768,6 +768,21 @@ class ExcellonObject(FlatCAMObj, Excellon):
 
         excellon_code = ''
 
+        def ndec_format(value):
+            """
+            Format 1 coordinate without the decimal point, by the Excellon CNC-7 rules. The sign stays in front.
+            LZ: the leading zeros are written and the reader adds the trailing zeros, so the whole part is
+            padded to 'whole' digits.
+            TZ: the trailing zeros are written and the reader counts 'fract' decimals from the right, so there
+            is no padding (a trailing padding would multiply the value).
+            """
+            formatted = "{:.{dec}f}".format(value, dec=fract)
+            sign = '-' if formatted.startswith('-') else ''
+            int_part, __, dec_part = formatted.lstrip('-').partition('.')
+            if e_zeros == 'LZ':
+                int_part = int_part.rjust(whole, '0')
+            return sign + int_part + dec_part
+
         # store here if the file has slots, return 1 if any slots, 0 if only drills
         slots_in_file = 0
 
@@ -787,7 +802,6 @@ class ExcellonObject(FlatCAMObj, Excellon):
 
         # drills processing
         if has_drills:
-            length = whole + fract
             for tool in self.tools:
                 excellon_code += 'T0%s\n' % str(tool) if int(tool) < 10 else 'T%s\n' % str(tool)
 
@@ -799,45 +813,12 @@ class ExcellonObject(FlatCAMObj, Excellon):
                             excellon_code += "X{:.{dec}f}Y{:.{dec}f}\n".format(drill_x, drill_y, dec=fract)
                         except Exception as e:
                             self.app.log.error('ExcellonObject.export_excellon() drills "dec" -> %s' % str(e))
-                    elif e_zeros == 'LZ':
-                        try:
-                            drill_x = drill.x * factor
-                            drill_y = drill.y * factor
-
-                            exc_x_formatted = "{:.{dec}f}".format(drill_x, dec=fract)
-                            exc_y_formatted = "{:.{dec}f}".format(drill_y, dec=fract)
-
-                            # extract whole part and decimal part
-                            exc_x_formatted = exc_x_formatted.partition('.')
-                            exc_y_formatted = exc_y_formatted.partition('.')
-
-                            # left pad the 'whole' part with zeros
-                            x_whole = exc_x_formatted[0].rjust(whole, '0')
-                            y_whole = exc_y_formatted[0].rjust(whole, '0')
-
-                            # restore the coordinate padded in the left with 0 and added the decimal part
-                            # without the decinal dot
-                            exc_x_formatted = x_whole + exc_x_formatted[2]
-                            exc_y_formatted = y_whole + exc_y_formatted[2]
-
-                            excellon_code += "X{xform}Y{yform}\n".format(xform=exc_x_formatted, yform=exc_y_formatted)
-                        except Exception as e:
-                            self.app.log.error('ExcellonObject.export_excellon() drills "LZ" -> %s' % str(e))
                     else:
                         try:
-                            drill_x = drill.x * factor
-                            drill_y = drill.y * factor
-
-                            exc_x_formatted = "{:.{dec}f}".format(drill_x, dec=fract).replace('.', '')
-                            exc_y_formatted = "{:.{dec}f}".format(drill_y, dec=fract).replace('.', '')
-
-                            # pad with rear zeros
-                            exc_x_formatted.ljust(length, '0')
-                            exc_y_formatted.ljust(length, '0')
-
-                            excellon_code += "X{xform}Y{yform}\n".format(xform=exc_x_formatted, yform=exc_y_formatted)
+                            excellon_code += "X{xform}Y{yform}\n".format(xform=ndec_format(drill.x * factor),
+                                                                          yform=ndec_format(drill.y * factor))
                         except Exception as e:
-                            self.app.log.error('ExcellonObject.export_excellon() drills "TZ" -> %s' % str(e))
+                            self.app.log.error('ExcellonObject.export_excellon() drills "%s" -> %s' % (e_zeros, str(e)))
 
         # slots processing
         if has_slots:
@@ -869,80 +850,23 @@ class ExcellonObject(FlatCAMObj, Excellon):
                                 )
                         except Exception as err:
                             self.app.log.error('ExcellonObject.export_excellon() slots "dec" -> %s' % str(err))
-                    elif e_zeros == 'LZ':
-                        try:
-                            start_slot_x = slot[0].x * factor
-                            start_slot_y = slot[0].y * factor
-                            stop_slot_x = slot[1].x * factor
-                            stop_slot_y = slot[1].y * factor
-
-                            start_slot_x_formatted = "{:.{dec}f}".format(start_slot_x, dec=fract).replace('.', '')
-                            start_slot_y_formatted = "{:.{dec}f}".format(start_slot_y, dec=fract).replace('.', '')
-                            stop_slot_x_formatted = "{:.{dec}f}".format(stop_slot_x, dec=fract).replace('.', '')
-                            stop_slot_y_formatted = "{:.{dec}f}".format(stop_slot_y, dec=fract).replace('.', '')
-
-                            # extract whole part and decimal part
-                            start_slot_x_formatted = start_slot_x_formatted.partition('.')
-                            start_slot_y_formatted = start_slot_y_formatted.partition('.')
-                            stop_slot_x_formatted = stop_slot_x_formatted.partition('.')
-                            stop_slot_y_formatted = stop_slot_y_formatted.partition('.')
-
-                            # left pad the 'whole' part with zeros
-                            start_x_whole = start_slot_x_formatted[0].rjust(whole, '0')
-                            start_y_whole = start_slot_y_formatted[0].rjust(whole, '0')
-                            stop_x_whole = stop_slot_x_formatted[0].rjust(whole, '0')
-                            stop_y_whole = stop_slot_y_formatted[0].rjust(whole, '0')
-
-                            # restore the coordinate padded in the left with 0 and added the decimal part
-                            # without the decinal dot
-                            start_slot_x_formatted = start_x_whole + start_slot_x_formatted[2]
-                            start_slot_y_formatted = start_y_whole + start_slot_y_formatted[2]
-                            stop_slot_x_formatted = stop_x_whole + stop_slot_x_formatted[2]
-                            stop_slot_y_formatted = stop_y_whole + stop_slot_y_formatted[2]
-
-                            if slot_type == 'routing':
-                                excellon_code += "G00X{xstart}Y{ystart}\nM15\n".format(xstart=start_slot_x_formatted,
-                                                                                       ystart=start_slot_y_formatted)
-                                excellon_code += "G01X{xstop}Y{ystop}\nM16\n".format(xstop=stop_slot_x_formatted,
-                                                                                     ystop=stop_slot_y_formatted)
-                            elif slot_type == 'drilling':
-                                excellon_code += "{xstart}Y{ystart}G85X{xstop}Y{ystop}\nG05\n".format(
-                                    xstart=start_slot_x_formatted, ystart=start_slot_y_formatted,
-                                    xstop=stop_slot_x_formatted, ystop=stop_slot_y_formatted
-                                )
-                        except Exception as err:
-                            self.app.log.error('ExcellonObject.export_excellon() slots "LZ" -> %s' % str(err))
                     else:
                         try:
-                            start_slot_x = slot[0].x * factor
-                            start_slot_y = slot[0].y * factor
-                            stop_slot_x = slot[1].x * factor
-                            stop_slot_y = slot[1].y * factor
-                            length = whole + fract
-
-                            start_slot_x_formatted = "{:.{dec}f}".format(start_slot_x, dec=fract).replace('.', '')
-                            start_slot_y_formatted = "{:.{dec}f}".format(start_slot_y, dec=fract).replace('.', '')
-                            stop_slot_x_formatted = "{:.{dec}f}".format(stop_slot_x, dec=fract).replace('.', '')
-                            stop_slot_y_formatted = "{:.{dec}f}".format(stop_slot_y, dec=fract).replace('.', '')
-
-                            # pad with rear zeros
-                            start_slot_x_formatted.ljust(length, '0')
-                            start_slot_y_formatted.ljust(length, '0')
-                            stop_slot_x_formatted.ljust(length, '0')
-                            stop_slot_y_formatted.ljust(length, '0')
+                            start_x = ndec_format(slot[0].x * factor)
+                            start_y = ndec_format(slot[0].y * factor)
+                            stop_x = ndec_format(slot[1].x * factor)
+                            stop_y = ndec_format(slot[1].y * factor)
 
                             if slot_type == 'routing':
-                                excellon_code += "G00X{xstart}Y{ystart}\nM15\n".format(xstart=start_slot_x_formatted,
-                                                                                       ystart=start_slot_y_formatted)
-                                excellon_code += "G01X{xstop}Y{ystop}\nM16\n".format(xstop=stop_slot_x_formatted,
-                                                                                     ystop=stop_slot_y_formatted)
+                                excellon_code += "G00X{xstart}Y{ystart}\nM15\n".format(xstart=start_x, ystart=start_y)
+                                excellon_code += "G01X{xstop}Y{ystop}\nM16\n".format(xstop=stop_x, ystop=stop_y)
                             elif slot_type == 'drilling':
-                                excellon_code += "{xstart}Y{ystart}G85X{xstop}Y{ystop}\nG05\n".format(
-                                    xstart=start_slot_x_formatted, ystart=start_slot_y_formatted,
-                                    xstop=stop_slot_x_formatted, ystop=stop_slot_y_formatted
+                                excellon_code += "X{xstart}Y{ystart}G85X{xstop}Y{ystop}\nG05\n".format(
+                                    xstart=start_x, ystart=start_y, xstop=stop_x, ystop=stop_y
                                 )
                         except Exception as err:
-                            self.app.log.error('ExcellonObject.export_excellon() slots "TZ" -> %s' % str(err))
+                            self.app.log.error('ExcellonObject.export_excellon() slots "%s" -> %s' % (e_zeros, str(err)))
+
         if not has_drills and not has_slots:
             self.app.log.debug("ExcellonObject.export_excellon() --> Excellon Object is empty: no drills, no slots.")
             return 'fail'
