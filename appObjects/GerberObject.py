@@ -1191,9 +1191,11 @@ class GerberObject(FlatCAMObj, Gerber):
             x_form = x_form.partition('.')
             y_form = y_form.partition('.')
 
-            # left padd the 'whole' part with zeros
-            x_whole = x_form[0].rjust(whole, '0')
-            y_whole = y_form[0].rjust(whole, '0')
+            # left padd the 'whole' part with zeros; the sign stays in front of the padding
+            x_sign, x_digits = ('-', x_form[0][1:]) if x_form[0].startswith('-') else ('', x_form[0])
+            y_sign, y_digits = ('-', y_form[0][1:]) if y_form[0].startswith('-') else ('', y_form[0])
+            x_whole = x_sign + x_digits.rjust(whole, '0')
+            y_whole = y_sign + y_digits.rjust(whole, '0')
 
             # restore the coordinate padded in the left with 0 and added the decimal part
             # without the decinal dot
@@ -1205,12 +1207,10 @@ class GerberObject(FlatCAMObj, Gerber):
             x_c = x * fac
             y_c = y * fac
 
+            # no padding: with the leading zeros omitted the reader takes the last 'fract' digits as the decimals,
+            # so trailing zeros added here would multiply the coordinate
             x_form = "{:.{dec}f}".format(x_c, dec=fract).replace('.', '')
             y_form = "{:.{dec}f}".format(y_c, dec=fract).replace('.', '')
-
-            # pad with rear zeros
-            x_form.ljust(length, '0')
-            y_form.ljust(length, '0')
 
             return x_form, y_form
 
@@ -1219,7 +1219,6 @@ class GerberObject(FlatCAMObj, Gerber):
 
         # apertures processing
         try:
-            length = whole + fract
             if 0 in self.tools:
                 if 'geometry' in self.tools[0]:
                     for geo_elem in self.tools[0]['geometry']:
