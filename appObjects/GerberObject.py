@@ -1756,28 +1756,34 @@ class GerberObject(FlatCAMObj, Gerber):
         self.replotApertures.emit()
 
     def mirror(self, axis, point):
-        Gerber.mirror(self, axis=axis, point=point)
+        result = Gerber.mirror(self, axis=axis, point=point)
         self._after_transform()
+        return result
 
     def offset(self, vect):
-        Gerber.offset(self, vect=vect)
+        result = Gerber.offset(self, vect=vect)
         self._after_transform()
+        return result
 
     def rotate(self, angle, point):
-        Gerber.rotate(self, angle=angle, point=point)
+        result = Gerber.rotate(self, angle=angle, point=point)
         self._after_transform()
+        return result
 
     def scale(self, xfactor, yfactor=None, point=None):
-        Gerber.scale(self, xfactor=xfactor, yfactor=yfactor, point=point)
+        result = Gerber.scale(self, xfactor=xfactor, yfactor=yfactor, point=point)
         self._after_transform()
+        return result
 
     def skew(self, angle_x, angle_y, point):
-        Gerber.skew(self, angle_x=angle_x, angle_y=angle_y, point=point)
+        result = Gerber.skew(self, angle_x=angle_x, angle_y=angle_y, point=point)
         self._after_transform()
+        return result
 
     def buffer(self, distance, join="mitre", factor=None, only_exterior=False, muted=False):
-        Gerber.buffer(self, distance=distance, join=join, factor=factor, only_exterior=only_exterior)
+        result = Gerber.buffer(self, distance=distance, join=join, factor=factor, only_exterior=only_exterior)
         self._after_transform()
+        return result
 
     def serialize(self):
         return {

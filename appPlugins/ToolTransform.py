@@ -532,11 +532,15 @@ class ToolTransform(AppTool):
         else:
             with self.app.proc_container.new('%s...' % _("Buffering")):
                 try:
+                    rejected = False
                     for sel_obj in obj_list:
                         if sel_obj.kind == 'cncjob':
                             self.app.inform.emit(_("CNCJob objects can't be buffered."))
                         elif sel_obj.kind.lower() == 'gerber':
-                            sel_obj.buffer(value, join, factor)
+                            if sel_obj.buffer(value, join, factor) == 'fail':
+                                # Gerber.buffer() told the user why; the object is not changed
+                                rejected = True
+                                continue
                             sel_obj.source_file = self.app.f_handlers.export_gerber(
                                 obj_name=sel_obj.obj_options['name'], filename=None, local_use=sel_obj,
                                 use_thread=False)
@@ -551,7 +555,8 @@ class ToolTransform(AppTool):
                         self.app.app_obj.object_changed.emit(sel_obj)
                         sel_obj.plot()
 
-                    self.app.inform.emit('[success] %s...' % _('Buffer done'))
+                    if not rejected:
+                        self.app.inform.emit('[success] %s...' % _('Buffer done'))
 
                 except Exception as e:
                     self.app.log.error("ToolTransform.on_buffer_action() --> %s" % str(e))

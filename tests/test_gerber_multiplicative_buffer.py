@@ -328,13 +328,42 @@ class TestRejected:
 
 
 def test_the_object_wrapper_survives_a_rejection(app):
-    # ToolTransform, the Gerber editor plugin and TclCommandBuffer call GerberObject.buffer, which discards the result
+    # ToolTransform and TclCommandBuffer call GerberObject.buffer, which returns the result of Gerber.buffer
     obj = make_gerber(app, MIXED_GBR)
     before = full_state(obj)
     app.inform.emit.reset_mock()
-    obj.buffer(1.5, 'mitre', True)
+    assert obj.buffer(1.5, 'mitre', True) == 'fail'
     assert full_state(obj) == before
     assert warned(app)
+
+
+def test_tcl_buffer_returns_fail_on_a_rejection(app):
+    from tclCommands.TclCommandBuffer import TclCommandBuffer
+    obj = make_gerber(app, MIXED_GBR)
+    before = full_state(obj)
+    app.collection.get_by_name.return_value = obj
+    cmd = TclCommandBuffer(app)
+    args, unnamed = cmd.check_args(('grb', '-dist', '1.5', '-factor', 'True'))
+    assert cmd.execute(args, unnamed) == 'fail'
+    assert full_state(obj) == before
+
+
+def test_transform_tool_does_not_report_success_or_export_on_a_rejection(app):
+    from unittest.mock import MagicMock, Mock
+    from appPlugins.ToolTransform import ToolTransform
+    obj = make_gerber(app, MIXED_GBR)
+    obj.plot = Mock()
+    fake = Mock()
+    fake.app = MagicMock()
+    fake.app.collection.get_selected.return_value = [obj]
+    app.inform.emit.reset_mock()
+
+    ToolTransform.on_buffer_action(fake, 1.5, 'mitre', True)
+
+    assert warned(app)
+    fake.app.f_handlers.export_gerber.assert_not_called()
+    messages = [str(c.args[0]) for c in fake.app.inform.emit.call_args_list if c.args]
+    assert not any(m.startswith('[success]') for m in messages), messages
 
 
 class TestFactorMustBePositive:

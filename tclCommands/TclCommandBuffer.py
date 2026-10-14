@@ -109,7 +109,9 @@ class TclCommandBuffer(TclCommand):
                 join = "round"
         factor = bool(eval(str(args['factor']).capitalize())) if 'factor' in args else None
 
-        obj_to_buff.buffer(distance, join, factor, only_exterior=True)
+        if obj_to_buff.buffer(distance, join, factor, only_exterior=True) == 'fail':
+            # the object is not changed; the buffer method told the user why
+            return "fail"
 
         try:
             x_min, y_min, x_max, y_max = obj_to_buff.bounds()

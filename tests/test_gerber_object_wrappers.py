@@ -41,8 +41,8 @@ def test_wrapper_emits_replot_once_after_the_parent_call(grb, name):
     parent.assert_called_once_with(grb, **parent_kwargs)
     grb.signal.emit.assert_called_once_with()
     assert order == ['parent', 'emit']
-    # the wrappers have never returned the parent result
-    assert result is None
+    # the wrapper returns the parent result, so a caller can see 'fail' (for example a rejected buffer)
+    assert result == 'fail'
 
 
 @pytest.mark.parametrize('name', sorted(CASES))
