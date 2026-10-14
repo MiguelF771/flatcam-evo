@@ -38,6 +38,7 @@ from camlib import (
     flatten_shapely_geometry,
 )
 from defaults import AppDefaults
+from appParsers.feature_access import fused_solid
 
 fcTranslate.apply_language('strings')
 if '_' not in builtins.__dict__:
@@ -49,6 +50,14 @@ if TYPE_CHECKING:
     from appMain import App
 
 log = logging.getLogger('base')
+
+
+def gerber_copper_for_paint(obj):
+    """
+    The copper of a Gerber object as one valid Polygon / MultiPolygon (``fused_solid``): the composed geometry with
+    the polarity applied, repaired and fused. Nothing is changed on the object.
+    """
+    return fused_solid(obj)
 
 
 @dataclass
@@ -999,10 +1008,7 @@ class PaintGen:
                 "tools_paint_plotting",
                 app_defaults.get("tools_paint_plotting", AppDefaults.factory_defaults.get("tools_paint_plotting"))
             ) == 'progressive':
-                if isinstance(obj.solid_geometry, list):
-                    obj.solid_geometry = MultiPolygon(obj.solid_geometry).buffer(0)
-                else:
-                    obj.solid_geometry = obj.solid_geometry.buffer(0)
+                obj.solid_geometry = gerber_copper_for_paint(obj)
         else:
             self.app.inform.emit('%s %s' % (_("Paint Plugin."), _("Normal painting polygon task started.")))
 
@@ -1110,10 +1116,7 @@ class PaintGen:
                 "tools_paint_plotting",
                 app_defaults.get("tools_paint_plotting", AppDefaults.factory_defaults.get("tools_paint_plotting"))
             ) == 'progressive':
-                if isinstance(obj.solid_geometry, list):
-                    obj.solid_geometry = MultiPolygon(obj.solid_geometry).buffer(0)
-                else:
-                    obj.solid_geometry = obj.solid_geometry.buffer(0)
+                obj.solid_geometry = gerber_copper_for_paint(obj)
         else:
             self.app.inform.emit('%s %s' % (_("Paint Plugin."), _("Paint all polygons task started.")))
 
@@ -1349,7 +1352,10 @@ class PaintGen:
         app_defaults = getattr(self.app, "defaults", None) or AppDefaults.factory_defaults
 
         # this is where heavy lifting is done and creating the geometry to be painted
-        target_geo = unary_union(painted_object.solid_geometry)
+        if painted_object.kind == 'gerber':
+            target_geo = gerber_copper_for_paint(painted_object)
+        else:
+            target_geo = unary_union(painted_object.solid_geometry)
 
         p_msg = f'{_("Paint Plugin.")} {_("Painting area task started.")}'
         if painted_object.kind == 'gerber':
@@ -1364,13 +1370,6 @@ class PaintGen:
                 self.app.inform.emit(msg)
             else:
                 self.app.inform.emit(p_msg)
-
-            if painted_object.kind == 'gerber':
-                if self.app.options.get(
-                    "tools_paint_plotting",
-                    app_defaults.get("tools_paint_plotting", AppDefaults.factory_defaults.get("tools_paint_plotting"))
-                ) == 'progressive':
-                    target_geo = target_geo.buffer(0)
         else:
             self.app.inform.emit(p_msg)
 
