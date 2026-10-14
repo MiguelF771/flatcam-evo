@@ -109,13 +109,8 @@ class TclCommandAlignDrillGrid(TclCommandSignaled):
 
                 currenty = currenty + args['gridy']
 
-            init_obj.tools = {
-                '1': {
-                    'tooldia':          tooldia,
-                    'drills':           deepcopy(drills),
-                    'solid_geometry':   []
-                }
-            }
+            init_obj.tools = {}
+            init_obj.add_tool(tooldia, drills=drills, tool_id='1')
             init_obj.create_geometry()
 
             init_obj.source_file = app_obj.f_handlers.export_excellon(obj_name=outname, local_use=init_obj,

@@ -93,20 +93,9 @@ class TclCommandAddDrill(TclCommandSignaled):
         drill_point = Point((drill_x, drill_y))
 
         if not dia_tool_dict:
-            obj.tools[1] = {
-                'tooldia': new_dia,
-                'drills': [drill_point],
-                'slots': [],
-                'data': deepcopy(new_data)
-            }
+            obj.add_tool(new_dia, drills=[drill_point], data=new_data)
         elif new_dia not in list(dia_tool_dict.keys()):
-            new_tool = max(list(obj.tools.keys())) + 1
-            obj.tools[new_tool] = {
-                'tooldia': new_dia,
-                'drills': [drill_point],
-                'slots': [],
-                'data': deepcopy(new_data)
-            }
+            obj.add_tool(new_dia, drills=[drill_point], data=new_data)
 
             # sort the updated tools dict
             new_tools = {}
