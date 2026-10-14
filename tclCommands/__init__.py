@@ -40,6 +40,7 @@ import tclCommands.TclCommandInteriors
 import tclCommands.TclCommandIsolate
 import tclCommands.TclCommandJoinExcellon
 import tclCommands.TclCommandJoinGeometry
+import tclCommands.TclCommandJoinGerber
 import tclCommands.TclCommandListSys
 import tclCommands.TclCommandListPP
 import tclCommands.TclCommandMillDrills

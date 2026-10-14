@@ -32,7 +32,7 @@ class KeyWords:
         'geo_union', 'geocutout', 'get_active', 'get_bounds', 'get_names', 'get_path',
         'get_sys', 'help',
         'interiors', 'isolate', 'join_excellon',
-        'join_geometry', 'list_sys', 'list_pp', 'milld', 'mills', 'milldrills', 'millslots',
+        'join_geometry', 'join_gerber', 'list_sys', 'list_pp', 'milld', 'mills', 'milldrills', 'millslots',
         'mirror', 'ncc',
         'ncr', 'new', 'new_geometry', 'new_gerber', 'new_excellon', 'non_copper_regions',
         'offset',
