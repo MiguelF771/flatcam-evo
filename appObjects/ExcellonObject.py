@@ -36,6 +36,23 @@ class ExcellonObject(FlatCAMObj, Excellon):
     """
     Represents Excellon/Drill code. An object stored in the FlatCAM objects collection (a dict)
     """
+    # Dispatch metadata, read by AppObject, ObjectCollection and appPlotManager instead of kind chains.
+    # status_color: color of the object name in the status bar message (None: no message).
+    status_color = 'brown'
+    # tool_option_prefix: extra application options (with this prefix) copied into obj_options on creation.
+    tool_option_prefix = 'tools_drill_'
+    # inherits_mill_options: the tools_mill_* and tools_* options are copied into obj_options on creation.
+    inherits_mill_options = True
+    # has_plot_colors: the object has user settable fill / outline plot colors.
+    has_plot_colors = True
+    # plot_default_fill_option / plot_default_line_option: option keys of the colors restored by "Default".
+    plot_default_fill_option = 'excellon_plot_fill'
+    plot_default_line_option = 'excellon_plot_line'
+    # alpha_fill_option: option key whose color alpha is the default alpha level.
+    # default_alpha_level: fixed default alpha level when alpha_fill_option is None.
+    alpha_fill_option = 'excellon_plot_fill'
+    default_alpha_level = None
+
 
     ui_type = ExcellonObjectUI
     optionChanged = QtCore.pyqtSignal(str)

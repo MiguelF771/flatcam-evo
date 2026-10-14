@@ -31,6 +31,23 @@ class DocumentObject(FlatCAMObj):
     """
     Represents a Document object.
     """
+    # Dispatch metadata, read by AppObject, ObjectCollection and appPlotManager instead of kind chains.
+    # status_color: color of the object name in the status bar message (None: no message).
+    status_color = 'darkCyan'
+    # tool_option_prefix: extra application options (with this prefix) copied into obj_options on creation.
+    tool_option_prefix = None
+    # inherits_mill_options: the tools_mill_* and tools_* options are copied into obj_options on creation.
+    inherits_mill_options = False
+    # has_plot_colors: the object has user settable fill / outline plot colors.
+    has_plot_colors = False
+    # plot_default_fill_option / plot_default_line_option: option keys of the colors restored by "Default".
+    plot_default_fill_option = None
+    plot_default_line_option = None
+    # alpha_fill_option: option key whose color alpha is the default alpha level.
+    # default_alpha_level: fixed default alpha level when alpha_fill_option is None.
+    alpha_fill_option = None
+    default_alpha_level = None
+
     optionChanged = QtCore.pyqtSignal(str)
     ui_type = DocumentObjectUI
 
