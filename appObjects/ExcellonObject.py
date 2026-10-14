@@ -1197,11 +1197,9 @@ class ExcellonObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Excellon):
                     break
             state = self.ui.tools_table.cellWidget(check_row, 5).isChecked()
             try:
-                # suggested by an user that may fix issues when run in Linux
-                # I don't see the reason for the .copy() but ...
-                # TODO may need removal of the .copy() method if the reason is not found
-                self.shapes.update_visibility(state, indexes=self.shape_indexes_dict[tool_key]).copy()
-            except Exception:
+                self.shapes.update_visibility(state, indexes=self.shape_indexes_dict[tool_key])
+            except KeyError:
+                # this tool has no plotted shapes
                 pass
         self.shapes.redraw()
         self.ui_connect()
