@@ -1303,6 +1303,13 @@ class ExcellonObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Excellon):
         except Exception:
             return False
 
+    def from_dict(self, d):
+        FlatCAMObj.from_dict(self, d)
+        # JSON has no tuples: a slot (start, end) comes back from a project file as a list [start, end]
+        for tool in self.tools.values():
+            if 'slots' in tool:
+                tool['slots'] = [tuple(slot) for slot in tool['slots']]
+
     @staticmethod
     def merge(exc_list, exc_final, decimals=None, fuse_tools=True, log=None):
         """
