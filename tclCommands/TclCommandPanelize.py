@@ -15,6 +15,21 @@ if '_' not in builtins.__dict__:
     _ = gettext.gettext
 
 
+def parse_bool(value):
+    """
+    Safe parse of a Tcl boolean option: True / False for 1/0, true/false, yes/no, on/off, t/f, y/n (any case),
+    None for anything else. (The option used to go through eval().)
+    """
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ('1', 'true', 'yes', 'on', 't', 'y'):
+        return True
+    if text in ('0', 'false', 'no', 'off', 'f', 'n'):
+        return False
+    return None
+
+
 class TclCommandPanelize(TclCommand):
     """
     Tcl shell command to panelize an object.
@@ -123,11 +138,10 @@ class TclCommandPanelize(TclCommand):
             outname = name + '_panelized'
 
         if 'use_thread' in args:
-            try:
-                par = args['use_thread'].capitalize()
-            except AttributeError:
-                par = args['use_thread']
-            threaded = bool(eval(par))
+            threaded = parse_bool(args['use_thread'])
+            if threaded is None:
+                self.app.log.error("ERROR: -use_thread expects 0/1 or True/False. Got: %s" % args['use_thread'])
+                return "fail"
         else:
             threaded = False
 

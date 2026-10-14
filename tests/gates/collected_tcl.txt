@@ -105,6 +105,21 @@ tests/test_panelize_tcl_characterization.py::TestGerberPanel::test_records_per_a
 tests/test_panelize_tcl_characterization.py::test_geometry_panel_solid_geometry_is_flat[False]
 tests/test_panelize_tcl_characterization.py::test_geometry_panel_solid_geometry_is_flat[True]
 tests/test_panelize_tcl_characterization.py::test_gerber_panel_inherits_export_as_regions_and_macros
+tests/test_panelize_tcl_fixes.py::test_use_thread_false_values_run_at_once[0]
+tests/test_panelize_tcl_fixes.py::test_use_thread_false_values_run_at_once[False]
+tests/test_panelize_tcl_fixes.py::test_use_thread_false_values_run_at_once[false]
+tests/test_panelize_tcl_fixes.py::test_use_thread_false_values_run_at_once[no]
+tests/test_panelize_tcl_fixes.py::test_use_thread_false_values_run_at_once[off]
+tests/test_panelize_tcl_fixes.py::test_use_thread_is_never_evaluated[2 > 1]
+tests/test_panelize_tcl_fixes.py::test_use_thread_is_never_evaluated[__import__("os").getcwd()]
+tests/test_panelize_tcl_fixes.py::test_use_thread_is_never_evaluated[maybe]
+tests/test_panelize_tcl_fixes.py::test_use_thread_is_never_evaluated[print(1)]
+tests/test_panelize_tcl_fixes.py::test_use_thread_true_values_start_a_worker_task[1]
+tests/test_panelize_tcl_fixes.py::test_use_thread_true_values_start_a_worker_task[TRUE]
+tests/test_panelize_tcl_fixes.py::test_use_thread_true_values_start_a_worker_task[True]
+tests/test_panelize_tcl_fixes.py::test_use_thread_true_values_start_a_worker_task[on]
+tests/test_panelize_tcl_fixes.py::test_use_thread_true_values_start_a_worker_task[true]
+tests/test_panelize_tcl_fixes.py::test_use_thread_true_values_start_a_worker_task[yes]
 tests/test_stage4_join_gerber_tcl.py::test_command_is_registered
 tests/test_stage4_join_gerber_tcl.py::test_default_outname
 tests/test_stage4_join_gerber_tcl.py::test_fails_with_a_non_gerber_object
