@@ -231,3 +231,117 @@ class TestObjectCollectionSelectionMessage:
         holder = selection_change(SimpleNamespace(kind='other', obj_options={'name': 'nm'}))
         holder.item_selected.emit.assert_called_once_with('nm')
         holder.app.inform.emit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# AppPlotManager.on_set_color_action_triggered (alpha default, "Default" colors, color gate)
+# ---------------------------------------------------------------------------------------------------------------
+
+from appHandlers.appPlotManager import AppPlotManager  # noqa: E402
+
+PM_OPTIONS = {
+    'gerber_plot_fill': '#00FF00BF', 'gerber_plot_line': '#006600BF',
+    'excellon_plot_fill': '#112233CC', 'excellon_plot_line': '#445566CC',
+    'geometry_plot_line': '#778899DD',
+}
+
+
+class PlotColorApp(QtCore.QObject):
+    def __init__(self, selected):
+        super().__init__()
+        for name in ('log', 'inform', 'worker_task', 'plotcanvas', 'clear_pool',
+                     'app_obj', 'proc_container', 'use_3d_engine'):
+            setattr(self, name, Mock())
+        self.options = {}
+        self.defaults = dict(PM_OPTIONS, gerber_color_list=[])
+        self.collection = Mock()
+        self.collection.get_selected.return_value = [selected]
+        self.collection.get_list.return_value = [selected]
+        self.collection.group_items = {'gerber': Mock()}
+        self.collection.index.return_value = SimpleNamespace(row=lambda: 0)
+        self.plot_manager = AppPlotManager(self)
+        self.errors = []
+
+    def slot(self):
+        try:
+            self.plot_manager.on_set_color_action_triggered()
+        except Exception as error:
+            self.errors.append(error)
+
+
+def trigger(selected, text):
+    PlotColorApp.qt_app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app = PlotColorApp(selected)
+    action = QtGui.QAction(text, app)
+    action.triggered.connect(app.slot)
+    action.trigger()
+    assert app.errors == []
+    return app
+
+
+def stand_in(kind, **extra):
+    return SimpleNamespace(kind=kind, shapes=Mock(), item=SimpleNamespace(row=lambda: 0), **extra)
+
+
+# kind -> (alpha without an alpha_level attribute, fill and line restored by "Default"), from the OLD chains
+OLD_DEFAULT_COLORS = {
+    'excellon': ('cc', '#112233CC', '#445566CC'),
+    'gerber': ('bf', '#00FF00BF', '#006600BF'),
+    'geometry': ('FF', '#778899DD', '#778899DD'),
+}
+
+
+class TestPlotManagerColorAction:
+    @pytest.mark.parametrize('kind', sorted(OLD_DEFAULT_COLORS))
+    def test_default_action_stand_in(self, kind):
+        sel = stand_in(kind)
+        trigger(sel, 'Default')
+        _, fill, line = OLD_DEFAULT_COLORS[kind]
+        assert (sel.fill_color, sel.outline_color) == (fill, line)
+        sel.shapes.redraw.assert_called_once_with(update_colors=(fill, line))
+
+    @pytest.mark.parametrize('kind', sorted(OLD_DEFAULT_COLORS))
+    def test_default_action_real_object_class(self, kind, _headless_qt):
+        sel = build_obj(kind, make_app())
+        sel.shapes = Mock()
+        sel.item = SimpleNamespace(row=lambda: 0)
+        trigger(sel, 'Default')
+        _, fill, line = OLD_DEFAULT_COLORS[kind]
+        assert (sel.fill_color, sel.outline_color) == (fill, line)
+
+    @pytest.mark.parametrize('kind', ['cncjob', 'script', 'document', 'other'])
+    def test_default_action_unsupported_kind_is_skipped(self, kind):
+        sel = stand_in(kind)
+        trigger(sel, 'Default')
+        assert not hasattr(sel, 'fill_color')
+        sel.shapes.redraw.assert_not_called()
+
+    @pytest.mark.parametrize('kind', sorted(OLD_DEFAULT_COLORS))
+    def test_alpha_default_without_alpha_level(self, kind):
+        sel = stand_in(kind)
+        trigger(sel, 'Red')
+        alpha = OLD_DEFAULT_COLORS[kind][0]
+        assert sel.alpha_level == alpha
+        if kind == 'geometry':
+            # not in the ["excellon", "gerber"] gate: the color is not applied
+            assert not hasattr(sel, 'fill_color')
+        else:
+            assert sel.fill_color == '#FF0000' + alpha
+
+    @pytest.mark.parametrize('kind', ['cncjob', 'script', 'document', 'other'])
+    def test_alpha_default_unsupported_kind_is_skipped(self, kind):
+        sel = stand_in(kind)
+        trigger(sel, 'Red')
+        assert not hasattr(sel, 'alpha_level')
+        assert not hasattr(sel, 'fill_color')
+
+    @pytest.mark.parametrize('kind', KINDS)
+    def test_color_gate_with_an_alpha_level(self, kind):
+        sel = stand_in(kind, alpha_level='80')
+        trigger(sel, 'Blue')
+        if kind in ('excellon', 'gerber'):
+            assert sel.fill_color == '#0000FF80'
+            sel.shapes.redraw.assert_called_once()
+        else:
+            assert not hasattr(sel, 'fill_color')
+            sel.shapes.redraw.assert_not_called()

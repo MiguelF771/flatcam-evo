@@ -1,6 +1,7 @@
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from appObjects.ObjectCollection import CNCJobObject
+from appObjects.ObjectDispatch import dispatch_attr
 from appGUI.GUIElements import FCInputDialogSlider
 from appCommon.Common import color_variant
 from copy import deepcopy
@@ -343,12 +344,12 @@ class AppPlotManager(QtCore.QObject):
             if hasattr(sel_obj, "alpha_level"):
                 alpha_level = sel_obj.alpha_level
             else:
-                if sel_obj.kind == 'excellon':
-                    alpha_level = str(hex(int(self.options.get('excellon_plot_fill', self.defaults.get('excellon_plot_fill'))[7:9], 16))[2:])
-                elif sel_obj.kind == 'gerber':
-                    alpha_level = str(hex(int(self.options.get('gerber_plot_fill', self.defaults.get('gerber_plot_fill'))[7:9], 16))[2:])
-                elif sel_obj.kind == 'geometry':
-                    alpha_level = 'FF'
+                alpha_option = dispatch_attr(sel_obj, 'alpha_fill_option')
+                fixed_alpha = dispatch_attr(sel_obj, 'default_alpha_level')
+                if alpha_option:
+                    alpha_level = str(hex(int(self.options.get(alpha_option, self.defaults.get(alpha_option))[7:9], 16))[2:])
+                elif fixed_alpha is not None:
+                    alpha_level = fixed_alpha
                 else:
                     self.log.debug(
                         "App.on_set_color_action_triggered() --> Default transparency level "
@@ -390,15 +391,11 @@ class AppPlotManager(QtCore.QObject):
         # when it is desired the return to the default color set in Preferences
         if act_name == _("Default"):
             for sel_obj in sel_obj_list:
-                if sel_obj.kind == 'excellon':
-                    new_color = self.options.get('excellon_plot_fill', self.defaults.get('excellon_plot_fill'))
-                    new_line_color = self.options.get('excellon_plot_line', self.defaults.get('excellon_plot_line'))
-                elif sel_obj.kind == 'gerber':
-                    new_color = self.options.get('gerber_plot_fill', self.defaults.get('gerber_plot_fill'))
-                    new_line_color = self.options.get('gerber_plot_line', self.defaults.get('gerber_plot_line'))
-                elif sel_obj.kind == 'geometry':
-                    new_color = self.options.get('geometry_plot_line', self.defaults.get('geometry_plot_line'))
-                    new_line_color = self.options.get('geometry_plot_line', self.defaults.get('geometry_plot_line'))
+                fill_option = dispatch_attr(sel_obj, 'plot_default_fill_option')
+                line_option = dispatch_attr(sel_obj, 'plot_default_line_option')
+                if fill_option and line_option:
+                    new_color = self.options.get(fill_option, self.defaults.get(fill_option))
+                    new_line_color = self.options.get(line_option, self.defaults.get(line_option))
                 else:
                     self.log.debug(
                         "App.on_set_color_action_triggered() --> Default color for this object type not supported yet")
@@ -453,7 +450,7 @@ class AppPlotManager(QtCore.QObject):
             new_line_color = color_variant("#dedede", 0.7)
 
         for sel_obj in sel_obj_list:
-            if sel_obj.kind in ["excellon", "gerber"]:
+            if dispatch_attr(sel_obj, 'has_plot_colors'):
                 sel_obj.fill_color = new_color
                 sel_obj.outline_color = new_line_color
 
