@@ -843,7 +843,8 @@ class SolderPaste(AppTool):
         tools_geometry = []
         for ap_id in obj.tools:
             for geo_el in obj.tools[ap_id]['geometry']:
-                if "follow" in geo_el and isinstance(geo_el["follow"], Point):
+                # a clear (LPC) flash has no 'solid': it is not a pad
+                if "solid" in geo_el and "follow" in geo_el and isinstance(geo_el["follow"], Point):
                     tools_geometry.append(geo_el["solid"])
 
         # flatten(geometry=obj.solid_geometry, pathonly=True)

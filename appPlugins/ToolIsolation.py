@@ -1909,7 +1909,8 @@ class ToolIsolation(Geometry, AppTool):
                         extra_geo = []
                         for apid in isolated_obj.tools:
                             for t_geo_dict in isolated_obj.tools[apid]['geometry']:
-                                if 'follow' in t_geo_dict:
+                                # a clear (LPC) flash has no 'solid': it is not a pad
+                                if 'follow' in t_geo_dict and 'solid' in t_geo_dict:
                                     if isinstance(t_geo_dict['follow'], Point):
                                         extra_geo.append(t_geo_dict['solid'])
 

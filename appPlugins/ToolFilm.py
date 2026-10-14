@@ -494,7 +494,8 @@ class Film(AppTool):
                                                "is bigger than some of the apertures in the Gerber object."))
                         return 'fail'
                     else:
-                        for elem in flatten_shapely_geometry(film_obj.tools.get(apid, {}).get('geometry', [])):
+                        # the records are dicts, not geometries: flatten_shapely_geometry() raises on them
+                        for elem in film_obj.tools.get(apid, {}).get('geometry', []):
                             if 'follow' in elem:
                                 if isinstance(elem['follow'], Point):
                                     punching_geo.append(elem['follow'].buffer(punch_size / 2))
