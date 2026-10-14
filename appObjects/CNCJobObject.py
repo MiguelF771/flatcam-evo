@@ -13,7 +13,7 @@
 from PyQt6 import QtCore, QtWidgets
 
 from appEditors.appTextEditor import AppTextEditor
-from appObjects.AppObjectTemplate import FlatCAMObj, ObjectDeleted
+from appObjects.AppObjectTemplate import FlatCAMObj, PropertiesPanelMixin, ObjectDeleted
 from appGUI.GUIElements import FCFileSaveDialog, FCCheckBox
 from appGUI.ObjectUI import CNCObjectUI
 from camlib import CNCjob
@@ -36,7 +36,7 @@ if '_' not in builtins.__dict__:
     _ = gettext.gettext
 
 
-class CNCJobObject(FlatCAMObj, CNCjob):
+class CNCJobObject(PropertiesPanelMixin, FlatCAMObj, CNCjob):
     """
     Represents G-Code.
     """
@@ -673,25 +673,6 @@ class CNCJobObject(FlatCAMObj, CNCjob):
             self.ui.plot_cb.stateChanged.disconnect(self.on_plot_cb_click)
         except (TypeError, AttributeError):
             pass
-
-    def on_properties(self, state):
-        if state:
-            self.ui.info_frame.show()
-        else:
-            self.ui.info_frame.hide()
-            return
-
-        self.ui.treeWidget.clear()
-        self.add_properties_items(obj=self, treeWidget=self.ui.treeWidget)
-
-        self.ui.treeWidget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
-                                         QtWidgets.QSizePolicy.Policy.MinimumExpanding)
-        # make sure that the FCTree widget columns are resized to content
-        self.ui.treeWidget.resize_sig.emit()
-
-    def on_properties_expanded(self):
-        for col in range(self.treeWidget.columnCount()):
-            self.ui.treeWidget.resizeColumnToContents(col)
 
     def on_updateplot_button_click(self, *args):
         """

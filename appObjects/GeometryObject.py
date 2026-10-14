@@ -11,7 +11,7 @@
 # ##########################################################
 
 from PyQt6 import QtWidgets, QtCore
-from appObjects.AppObjectTemplate import FlatCAMObj, ObjectDeleted
+from appObjects.AppObjectTemplate import FlatCAMObj, PropertiesPanelMixin, ObjectDeleted
 from appGUI.GUIElements import FCCheckBox
 from appGUI.ObjectUI import GeometryObjectUI
 
@@ -40,7 +40,7 @@ if '_' not in builtins.__dict__:
     _ = gettext.gettext
 
 
-class GeometryObject(FlatCAMObj, Geometry):
+class GeometryObject(PropertiesPanelMixin, FlatCAMObj, Geometry):
     """
     Geometric object not associated with a specific
     format.
@@ -525,24 +525,6 @@ class GeometryObject(FlatCAMObj, Geometry):
                                                     color: red;
                                                 }
                                                 """)
-
-    def on_properties(self, state):
-        if state:
-            self.ui.info_frame.show()
-        else:
-            self.ui.info_frame.hide()
-            return
-
-        self.ui.treeWidget.clear()
-        self.add_properties_items(obj=self, treeWidget=self.ui.treeWidget)
-        self.ui.treeWidget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
-                                         QtWidgets.QSizePolicy.Policy.MinimumExpanding)
-        # make sure that the FCTree widget columns are resized to content
-        self.ui.treeWidget.resize_sig.emit()
-
-    def on_properties_expanded(self):
-        for col in range(self.treeWidget.columnCount()):
-            self.ui.treeWidget.resizeColumnToContents(col)
 
     def on_milling_button_clicked(self):
         self.app.milling_tool.run(toggle=True)

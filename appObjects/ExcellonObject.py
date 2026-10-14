@@ -13,7 +13,7 @@
 from PyQt6 import QtWidgets, QtCore, QtGui
 
 from appParsers.ParseExcellon import Excellon
-from appObjects.AppObjectTemplate import FlatCAMObj, ObjectDeleted
+from appObjects.AppObjectTemplate import FlatCAMObj, PropertiesPanelMixin, ObjectDeleted
 from appGUI.GUIElements import FCCheckBox
 from appGUI.ObjectUI import ExcellonObjectUI
 
@@ -32,7 +32,7 @@ if '_' not in builtins.__dict__:
     _ = gettext.gettext
 
 
-class ExcellonObject(FlatCAMObj, Excellon):
+class ExcellonObject(PropertiesPanelMixin, FlatCAMObj, Excellon):
     """
     Represents Excellon/Drill code. An object stored in the FlatCAM objects collection (a dict)
     """
@@ -772,25 +772,6 @@ class ExcellonObject(FlatCAMObj, Excellon):
 
     def on_table_visibility_toggle(self, state):
         self.ui.tools_table.show() if state else self.ui.tools_table.hide()
-
-    def on_properties(self, state):
-        if state:
-            self.ui.info_frame.show()
-        else:
-            self.ui.info_frame.hide()
-            return
-
-        self.ui.treeWidget.clear()
-        self.add_properties_items(obj=self, treeWidget=self.ui.treeWidget)
-        self.ui.treeWidget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
-                                         QtWidgets.QSizePolicy.Policy.MinimumExpanding)
-
-        # make sure that the FCTree widget columns are resized to content
-        self.ui.treeWidget.resize_sig.emit()
-
-    def on_properties_expanded(self):
-        for col in range(self.treeWidget.columnCount()):
-            self.ui.treeWidget.resizeColumnToContents(col)
 
     def on_milling_button_clicked(self):
         self.app.milling_tool.run(toggle=True)

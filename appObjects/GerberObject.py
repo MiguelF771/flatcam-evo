@@ -14,7 +14,7 @@ from PyQt6 import QtWidgets, QtCore
 from appGUI.GUIElements import FCCheckBox
 from appGUI.ObjectUI import GerberObjectUI
 from appParsers.ParseGerber import Gerber
-from appObjects.AppObjectTemplate import FlatCAMObj, ObjectDeleted, ValidationError
+from appObjects.AppObjectTemplate import FlatCAMObj, PropertiesPanelMixin, ObjectDeleted, ValidationError
 
 from camlib import flatten_shapely_geometry
 
@@ -33,7 +33,7 @@ if '_' not in builtins.__dict__:
     _ = gettext.gettext
 
 
-class GerberObject(FlatCAMObj, Gerber):
+class GerberObject(PropertiesPanelMixin, FlatCAMObj, Gerber):
     """
     Represents Gerber code.
     """
@@ -464,10 +464,6 @@ class GerberObject(FlatCAMObj, Gerber):
 
         # make sure that the FCTree widget columns are resized to content
         self.ui.treeWidget.resize_sig.emit()
-
-    def on_properties_expanded(self):
-        for col in range(self.treeWidget.columnCount()):
-            self.ui.treeWidget.resizeColumnToContents(col)
 
     def on_generate_buffer(self):
         self.app.inform.emit('[WARNING_NOTCL] %s...' % _("Buffering solid geometry"))

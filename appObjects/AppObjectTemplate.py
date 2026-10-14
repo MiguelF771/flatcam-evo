@@ -10,7 +10,7 @@
 # File modified by: Marius Stanciu                         #
 # ##########################################################
 
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 from appGUI.ObjectUI import ObjectUI
 from appCommon.Common import LoudDict
@@ -45,6 +45,32 @@ class ValidationError(Exception):
         super().__init__(message)
 
         self.errors = errors
+
+
+class PropertiesPanelMixin:
+    """
+    The Properties tree of the selected-object tab. For the object classes whose ObjectUI has the `info_frame` and
+    `treeWidget` widgets (Gerber, Excellon, Geometry, CNCJob); it needs `add_properties_items` from FlatCAMObj.
+    """
+
+    def on_properties(self, state):
+        if state:
+            self.ui.info_frame.show()
+        else:
+            self.ui.info_frame.hide()
+            return
+
+        self.ui.treeWidget.clear()
+        self.add_properties_items(obj=self, treeWidget=self.ui.treeWidget)
+        self.ui.treeWidget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
+                                         QtWidgets.QSizePolicy.Policy.MinimumExpanding)
+
+        # make sure that the FCTree widget columns are resized to content
+        self.ui.treeWidget.resize_sig.emit()
+
+    def on_properties_expanded(self):
+        for col in range(self.treeWidget.columnCount()):
+            self.ui.treeWidget.resizeColumnToContents(col)
 
 
 class FlatCAMObj(QtCore.QObject):

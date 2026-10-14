@@ -57,3 +57,74 @@ def test_random_color_2d_engine_is_a_9_char_hex_string(no_shape_collection):  # 
         assert isinstance(color, str)
         assert len(color) == 9
         assert re.fullmatch(r'#[0-9a-f]{8}', color)
+
+
+# ------------------------------------------------- on_properties / on_properties_expanded
+
+PROPERTIES_CLASSES = [GerberObject, ExcellonObject, GeometryObject, CNCJobObject]
+
+
+@pytest.mark.parametrize('cls', PROPERTIES_CLASSES)
+def test_on_properties_expanded_has_one_definition(cls):
+    owner = defining_class(cls, 'on_properties_expanded')
+    assert owner is not cls
+    assert owner.__name__ == 'PropertiesPanelMixin'
+
+
+@pytest.mark.parametrize('cls', [ExcellonObject, GeometryObject, CNCJobObject])
+def test_on_properties_has_one_definition(cls):
+    assert defining_class(cls, 'on_properties').__name__ == 'PropertiesPanelMixin'
+
+
+def test_gerber_keeps_its_own_on_properties():
+    # GerberObject.on_properties does not set the size policy of the tree, the others do: not identical, not moved
+    assert defining_class(GerberObject, 'on_properties') is GerberObject
+
+
+@pytest.mark.parametrize('cls', [ExcellonObject, GeometryObject, CNCJobObject])
+def test_on_properties_checked(cls, no_shape_collection):  # noqa: F811
+    obj = make_obj(cls)
+    obj.ui = MagicMock()
+    with patch.object(FlatCAMObj, 'add_properties_items') as add_items:
+        obj.on_properties(True)
+    obj.ui.info_frame.show.assert_called_once_with()
+    obj.ui.info_frame.hide.assert_not_called()
+    obj.ui.treeWidget.clear.assert_called_once_with()
+    add_items.assert_called_once_with(obj=obj, treeWidget=obj.ui.treeWidget)
+    obj.ui.treeWidget.setSizePolicy.assert_called_once()
+    obj.ui.treeWidget.resize_sig.emit.assert_called_once_with()
+
+
+def test_gerber_on_properties_checked(no_shape_collection):  # noqa: F811
+    obj = make_obj(GerberObject)
+    obj.ui = MagicMock()
+    with patch.object(FlatCAMObj, 'add_properties_items') as add_items:
+        obj.on_properties(True)
+    obj.ui.info_frame.show.assert_called_once_with()
+    obj.ui.treeWidget.clear.assert_called_once_with()
+    add_items.assert_called_once_with(obj=obj, treeWidget=obj.ui.treeWidget)
+    obj.ui.treeWidget.setSizePolicy.assert_not_called()
+    obj.ui.treeWidget.resize_sig.emit.assert_called_once_with()
+
+
+@pytest.mark.parametrize('cls', PROPERTIES_CLASSES)
+def test_on_properties_unchecked_hides_and_stops(cls, no_shape_collection):  # noqa: F811
+    obj = make_obj(cls)
+    obj.ui = MagicMock()
+    with patch.object(FlatCAMObj, 'add_properties_items') as add_items:
+        obj.on_properties(False)
+    obj.ui.info_frame.hide.assert_called_once_with()
+    obj.ui.info_frame.show.assert_not_called()
+    obj.ui.treeWidget.clear.assert_not_called()
+    add_items.assert_not_called()
+
+
+@pytest.mark.parametrize('cls', PROPERTIES_CLASSES)
+def test_on_properties_expanded_resizes_every_column(cls, no_shape_collection):  # noqa: F811
+    obj = make_obj(cls)
+    obj.ui = MagicMock()
+    # the method reads the count from self.treeWidget (not self.ui.treeWidget): same as before the move
+    obj.treeWidget = Mock()
+    obj.treeWidget.columnCount.return_value = 3
+    obj.on_properties_expanded()
+    assert [c.args for c in obj.ui.treeWidget.resizeColumnToContents.call_args_list] == [(0,), (1,), (2,)]
