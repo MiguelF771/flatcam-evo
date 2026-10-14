@@ -1299,14 +1299,33 @@ class ExcellonObject(FlatCAMObj, Excellon):
         self.build_ui()
 
     @staticmethod
+    def _tool_data_equal(data_a, data_b):
+        """
+        True if two tool ``data`` dicts are equal, ignoring the per-object 'name' key. A missing data counts as {}.
+        A comparison that raises (e.g. a numpy array value) counts as "not equal", so the tools stay separate.
+        """
+        a = {k: v for k, v in (data_a or {}).items() if k != 'name'}
+        b = {k: v for k, v in (data_b or {}).items() if k != 'name'}
+        try:
+            return bool(a == b)
+        except Exception:
+            return False
+
+    @staticmethod
     def merge(exc_list, exc_final, decimals=None, fuse_tools=True, log=None):
         """
         Merge Excellon objects found in exc_list parameter into exc_final object.
         Options are always copied from source .
 
-        Tools are disregarded, what is taken in consideration is the unique drill diameters found as values in the
-        exc_list tools dict's. In the reconstruction section for each unique tool diameter it will be created a
-        tool_name to be used in the final Excellon object, exc_final.
+        With fuse_tools=False every tool of every source object is kept as its own tool (ids 1..n in source order).
+
+        With fuse_tools=True two tools are fused into one only when both conditions hold:
+        - their diameters are equal after rounding to ``decimals``;
+        - their ``data`` dicts are equal (``==`` on the copies) once the per-object 'name' key is ignored. That key
+          differs between source objects and says nothing about how the tool is used.
+        Tools of the same diameter with different data stay separate tools, each keeping its own data, drills and
+        slots (no silent metadata loss). Tools with a ``data`` that cannot be compared with == stay separate.
+        The result tools are numbered 1..n in the order of their first appearance.
 
         If only one object is in exc_list parameter then this function will copy that object in the exc_final
 
@@ -1360,35 +1379,28 @@ class ExcellonObject(FlatCAMObj, Excellon):
 
         exc_final.solid_geometry = deepcopy(total_geo)
 
-        fused_tools_dict = {}
         if exc_final.tools and fuse_tools:
-            toolid = 0
-            for tool, tool_dict in exc_final.tools.items():
+            fused_tools_dict = {}
+            for tool_dict in exc_final.tools.values():
                 current_tooldia = float('%.*f' % (decimals_exc, tool_dict['tooldia']))
-                toolid += 1
 
-                # calculate all diameters in fused_tools_dict
-                all_dia = []
-                if fused_tools_dict:
-                    for f_tool in fused_tools_dict:
-                        all_dia.append(float('%.*f' % (decimals_exc, fused_tools_dict[f_tool]['tooldia'])))
+                target = None
+                for f_tool in fused_tools_dict.values():
+                    if f_tool['tooldia'] == current_tooldia and \
+                            ExcellonObject._tool_data_equal(f_tool.get('data'), tool_dict.get('data')):
+                        target = f_tool
+                        break
 
-                if current_tooldia in all_dia:
-                    # find tool for current_tooldia in fuse_tools
-                    t = None
-                    for f_tool in fused_tools_dict:
-                        if fused_tools_dict[f_tool]['tooldia'] == current_tooldia:
-                            t = f_tool
-                            break
-                    if t:
-                        if 'drills' in tool_dict and tool_dict['drills']:
-                            fused_tools_dict[t]['drills'] += tool_dict['drills']
-                        if 'slots' in tool_dict and tool_dict['slots']:
-                            fused_tools_dict[t]['slots'] += tool_dict['slots']
-                        fused_tools_dict[t]['solid_geometry'] += tool_dict['solid_geometry']
+                if target is not None:
+                    if tool_dict.get('drills'):
+                        target.setdefault('drills', []).extend(tool_dict['drills'])
+                    if tool_dict.get('slots'):
+                        target.setdefault('slots', []).extend(tool_dict['slots'])
+                    if tool_dict.get('solid_geometry'):
+                        target.setdefault('solid_geometry', []).extend(tool_dict['solid_geometry'])
                 else:
-                    fused_tools_dict[toolid] = tool_dict
-                    fused_tools_dict[toolid]['tooldia'] = current_tooldia
+                    tool_dict['tooldia'] = current_tooldia
+                    fused_tools_dict[len(fused_tools_dict) + 1] = tool_dict
 
             exc_final.tools = fused_tools_dict
 

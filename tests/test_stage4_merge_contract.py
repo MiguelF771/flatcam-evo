@@ -21,8 +21,6 @@ from test_unify_characterization import _headless_qt, app  # noqa: F401  (the fi
 DATA_A = {'cutz': -1.7, 'multidepth': True, 'depthperpass': 0.4, 'tag': 'first'}
 DATA_B = {'cutz': -2.4, 'multidepth': False, 'depthperpass': 0.8, 'tag': 'second'}
 
-stage4 = pytest.mark.xfail(strict=True, raises=AssertionError, reason="fixed in Stage 4")
-
 
 def make_exc(app, name, specs):
     """specs: list of (dia, drill xy list, slot xy-pair list, data dict). Tool ids are 1..n."""
@@ -92,7 +90,6 @@ class TestFuseEqualData:
 
 
 class TestKeepDifferentData:
-    @stage4
     def test_same_diameter_different_data_stays_two_tools(self, app):
         a = make_exc(app, 'a', [(1.0, [(0, 0), (1, 0)], [], DATA_A)])
         b = make_exc(app, 'b', [(1.0, [(10, 0)], [((10, 5), (13, 5))], DATA_B)])
@@ -105,7 +102,6 @@ class TestKeepDifferentData:
         assert slots_xy(second['slots']) == [((10, 5), (13, 5))]
         assert len(final.solid_geometry) == 4
 
-    @stage4
     def test_same_object_tools_with_different_data_stay_separate(self, app):
         a = make_exc(app, 'a', [(1.0, [(5, 5), (9, 9)], [], DATA_A),
                                 (1.0, [(15, 5)], [((20, 5), (26, 5))], DATA_B)])
@@ -115,7 +111,6 @@ class TestKeepDifferentData:
         assert pts(final.tools[1]['drills']) == [(5, 5), (9, 9)]
         assert slots_xy(final.tools[2]['slots']) == [((20, 5), (26, 5))]
 
-    @stage4
     def test_mixed_groups_fuse_per_data(self, app):
         a = make_exc(app, 'a', [(1.0, [(0, 0)], [], DATA_A), (1.0, [(1, 0)], [], DATA_B)])
         b = make_exc(app, 'b', [(1.0, [(2, 0)], [], DATA_A), (1.0, [(3, 0)], [], DATA_B)])
@@ -125,7 +120,6 @@ class TestKeepDifferentData:
         assert pts(by_tag['first']['drills']) == [(0, 0), (2, 0)]
         assert pts(by_tag['second']['drills']) == [(1, 0), (3, 0)]
 
-    @stage4
     def test_tool_ids_are_contiguous_in_order_of_first_appearance(self, app):
         a = make_exc(app, 'a', [(1.0, [(0, 0)], [], DATA_A)])
         b = make_exc(app, 'b', [(1.0, [(1, 0)], [], DATA_A)])
