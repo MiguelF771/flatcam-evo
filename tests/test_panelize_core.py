@@ -1,0 +1,372 @@
+"""Golden tests of appParsers/panelize_core.py (no Qt objects, no app: plain dicts and shapely geometry; the fixture
+files are only parsed to get realistic input)."""
+
+from copy import deepcopy
+
+import pytest
+import shapely
+from shapely import affinity
+from shapely.geometry import LineString, MultiLineString, MultiPolygon, Point, Polygon, box
+
+from appParsers import panelize_core as pc
+from camlib import grace
+
+from test_unify_characterization import (  # noqa: F401  (fixtures)
+    NATIVE_GBR, _headless_qt, app, assert_coords_close, assert_poly_equiv, make_excellon, make_gerber, parts,
+    polygon_union)
+
+ROWS, COLS, SPACING = 2, 3, 5.0
+
+
+def freeze(obj):
+    """Hashable-free deep snapshot: geometry -> WKB, containers -> same containers, everything else -> repr."""
+    if isinstance(obj, shapely.geometry.base.BaseGeometry):
+        return ('geo', obj.wkb)
+    if isinstance(obj, dict):
+        return {k: freeze(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return (type(obj).__name__, [freeze(v) for v in obj])
+    return repr(obj)
+
+
+def expected_offsets(bounds):
+    w, h = bounds[2] - bounds[0], bounds[3] - bounds[1]
+    return [(col * (w + SPACING), row * (h + SPACING)) for row in range(ROWS) for col in range(COLS)]
+
+
+def moved(geo, offset):
+    return affinity.translate(polygon_union(geo), *offset)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# grid
+# ---------------------------------------------------------------------------------------------------------------
+
+class TestGrid:
+    def test_grid_offsets_2x3(self):
+        offs = pc.grid_offsets((1.0, 2.0, 11.0, 5.0), 2, 3, 5.0, 5.0)
+        assert offs == pytest.approx([(0, 0), (15, 0), (30, 0), (0, 8), (15, 8), (30, 8)])
+
+    def test_grid_offsets_row_major_and_empty(self):
+        offs = pc.grid_offsets((0, 0, 1, 1), 2, 2, 0, 0)
+        assert offs == [(0, 0), (1, 0), (0, 1), (1, 1)]
+        assert pc.grid_offsets((0, 0, 1, 1), 0, 3, 1, 1) == []
+        assert pc.grid_offsets((0, 0, 1, 1), 3, 0, 1, 1) == []
+
+    def test_constrain_fits(self):
+        assert pc.constrain_grid((0, 0, 10, 10), 2, 3, 5, 5, 100, 100) == (2, 3, False)
+
+    def test_constrain_reduces(self):
+        # width of n columns: 10n + 5(n-1): 3 -> 40, 2 -> 25; height of n rows: 2 -> 25, 3 -> 40
+        assert pc.constrain_grid((0, 0, 10, 10), 3, 3, 5, 5, 30, 100) == (3, 2, True)
+        assert pc.constrain_grid((0, 0, 10, 10), 3, 3, 5, 5, 100, 30) == (2, 3, True)
+        assert pc.constrain_grid((0, 0, 10, 10), 4, 4, 5, 5, 25, 25) == (2, 2, True)
+
+
+class TestTranslate:
+    def test_flat_result_for_nested_lists(self):
+        a, b, c = Point(0, 0), Point(1, 1), Point(2, 2)
+        out = pc.translate_flat([a, [b, [c]], None], 10, 20)
+        assert isinstance(out, list) and len(out) == 3
+        assert [(p.x, p.y) for p in out] == [(10, 20), (11, 21), (12, 22)]
+
+    def test_single_geometry_stays_single(self):
+        poly = box(0, 0, 1, 1)
+        out = pc.translate_flat(poly, 3, 4)
+        assert isinstance(out, Polygon) and out.bounds == (3, 4, 4, 5)
+        multi = MultiPolygon([box(0, 0, 1, 1), box(5, 5, 6, 6)])
+        assert isinstance(pc.translate_flat(multi, 1, 1), MultiPolygon)
+
+    def test_empty_and_none(self):
+        assert pc.translate_flat([], 1, 1) == []
+        assert pc.translate_flat(None, 1, 1) is None
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Gerber
+# ---------------------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize('path', [None, NATIVE_GBR], ids=['mixed', 'native'])
+class TestGerber:
+    def build(self, app, path):
+        src = make_gerber(app, name='g') if path is None else make_gerber(app, path, name='g')
+        offs = pc.grid_offsets(src.bounds(), ROWS, COLS, SPACING, SPACING)
+        assert offs == pytest.approx(expected_offsets(src.bounds()))
+        return src, offs
+
+    def test_every_feature_appears_once_per_offset(self, app, path):
+        src, offs = self.build(app, path)
+        tools, solid = pc.panelize_gerber(src.tools, src.solid_geometry, offs)
+        assert list(tools) == list(src.tools)
+        for apid, tool in src.tools.items():
+            records = tool['geometry']
+            n = len(records)
+            assert len(tools[apid]['geometry']) == n * len(offs)
+            for copy, off in enumerate(offs):
+                for rec_idx, rec in enumerate(records):
+                    new_rec = tools[apid]['geometry'][copy * n + rec_idx]
+                    assert set(new_rec) == set(rec)
+                    for key in ('solid', 'clear', 'follow'):
+                        if key in rec:
+                            assert_coords_close(new_rec[key], pc.translate_geometry(rec[key], *off),
+                                                msg='%s %s' % (apid, key))
+        # the composed copper of each copy is the source composed copper moved
+        flat_src = parts(src.solid_geometry)
+        assert len(solid) == len(flat_src) * len(offs)
+        for copy, off in enumerate(offs):
+            chunk = solid[copy * len(flat_src):(copy + 1) * len(flat_src)]
+            assert_poly_equiv(chunk, moved(src.solid_geometry, off), msg='copy %d' % copy)
+
+    def test_aperture_metadata_is_copied_deeply(self, app, path):
+        src, offs = self.build(app, path)
+        tools, _ = pc.panelize_gerber(src.tools, src.solid_geometry, offs)
+        for apid, tool in src.tools.items():
+            for key, value in tool.items():
+                if key != 'geometry':
+                    assert key in tools[apid]
+                    if key != 'macro':
+                        assert tools[apid][key] == value
+            assert tools[apid] is not tool
+        macro_ids = [a for a, t in src.tools.items() if 'macro' in t]
+        for apid in macro_ids:
+            assert tools[apid]['macro'] is not src.tools[apid]['macro']
+
+    def test_source_is_unchanged(self, app, path):
+        src, offs = self.build(app, path)
+        before = (freeze(src.tools), freeze(src.solid_geometry))
+        pc.panelize_gerber(src.tools, src.solid_geometry, offs)
+        assert (freeze(src.tools), freeze(src.solid_geometry)) == before
+
+
+def test_gerber_dark_clear_dark_keeps_composed_geometry_per_copy():
+    dark1 = box(0, 0, 10, 10)
+    clear = box(2, 2, 8, 8)
+    dark2 = box(4, 4, 6, 6)
+    composed = dark1.difference(clear).union(dark2)
+    tools = {
+        10: {'type': 'R', 'size': 1.0, 'geometry': [{'solid': dark1, 'follow': Point(5, 5)},
+                                                    {'solid': dark2, 'follow': Point(5, 5)}]},
+        11: {'type': 'C', 'size': 1.0, 'geometry': [{'clear': clear, 'follow': Point(5, 5)}]},
+    }
+    offs = [(0.0, 0.0), (20.0, 0.0), (0.0, 30.0)]
+    new_tools, solid = pc.panelize_gerber(tools, [composed], offs)
+    assert len(solid) == 3
+    for off, geo in zip(offs, solid):
+        assert_poly_equiv(geo, affinity.translate(composed, *off))
+        # the ring (dark minus clear) has a hole, the inner dot fills it again: area 100 - 36 + 4
+        assert polygon_union(geo).area == pytest.approx(68.0)
+    # the clear record stays a clear record, with no 'solid' key
+    assert [list(r) for r in new_tools[11]['geometry']] == [['clear', 'follow']] * 3
+    assert [list(r) for r in new_tools[10]['geometry']] == [['solid', 'follow']] * 6
+    # record order: copy 1 of both dark records, then copy 2, ...
+    assert new_tools[10]['geometry'][1]['solid'].bounds == (4, 4, 6, 6)
+    assert new_tools[10]['geometry'][2]['solid'].bounds == (20, 0, 30, 10)
+
+
+def test_gerber_single_polygon_solid_and_empty_offsets():
+    tools = {10: {'type': 'C', 'size': 1.0, 'geometry': [{'solid': box(0, 0, 1, 1)}]}}
+    new_tools, solid = pc.panelize_gerber(tools, box(0, 0, 1, 1), [(5, 5), (7, 7)])
+    assert [g.bounds for g in solid] == [(5, 5, 6, 6), (7, 7, 8, 8)]
+    new_tools, solid = pc.panelize_gerber(tools, box(0, 0, 1, 1), [])
+    assert solid == [] and new_tools[10]['geometry'] == []
+
+
+def test_copy_gerber_attributes(app):
+    src = make_gerber(app, name='g')
+    src.export_as_regions = True
+    dst = type(src)('dst', app)
+    pc.copy_gerber_attributes(dst, src)
+    assert dst.export_as_regions is True
+    assert set(dst.aperture_macros) == set(src.aperture_macros) and dst.aperture_macros
+    assert all(dst.aperture_macros[k] is not src.aperture_macros[k] for k in src.aperture_macros)
+    src.export_as_regions = False
+    pc.copy_gerber_attributes(dst, src)
+    assert dst.export_as_regions is False
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Excellon
+# ---------------------------------------------------------------------------------------------------------------
+
+class TestExcellon:
+    def build(self, app):
+        src = make_excellon(app, name='e')
+        return src, pc.grid_offsets(src.bounds(), ROWS, COLS, SPACING, SPACING)
+
+    def test_drills_and_slots_at_every_offset(self, app):
+        src, offs = self.build(app)
+        tools = pc.panelize_excellon(src.tools, offs)
+        assert list(tools) == list(src.tools)
+        for tid, tool in src.tools.items():
+            nd, ns = len(tool['drills']), len(tool['slots'])
+            assert len(tools[tid]['drills']) == nd * len(offs) and len(tools[tid]['slots']) == ns * len(offs)
+            for copy, (dx, dy) in enumerate(offs):
+                for i, drill in enumerate(tool['drills']):
+                    new = tools[tid]['drills'][copy * nd + i]
+                    assert (new.x, new.y) == pytest.approx((drill.x + dx, drill.y + dy))
+                for i, (start, stop) in enumerate(tool['slots']):
+                    new_start, new_stop = tools[tid]['slots'][copy * ns + i]
+                    assert (new_start.x, new_start.y, new_stop.x, new_stop.y) == \
+                        pytest.approx((start.x + dx, start.y + dy, stop.x + dx, stop.y + dy))
+
+    def test_slots_stay_tuples_also_from_lists(self, app):
+        src, offs = self.build(app)
+        src_tools = deepcopy(src.tools)
+        for tool in src_tools.values():
+            tool['slots'] = [list(s) for s in tool['slots']]
+        tools = pc.panelize_excellon(src_tools, offs)
+        slots = [s for t in tools.values() for s in t['slots']]
+        assert slots and all(type(s) is tuple and len(s) == 2 for s in slots)
+        assert all(isinstance(p, Point) for s in slots for p in s)
+
+    def test_tool_data_kept_and_independent(self, app):
+        src, offs = self.build(app)
+        src.tools[1]['data'] = {'cutz': -1.7, 'tag': 'first'}
+        tools = pc.panelize_excellon(src.tools, offs)
+        assert tools[1]['tooldia'] == src.tools[1]['tooldia']
+        assert tools[1]['data'] == {'cutz': -1.7, 'tag': 'first'} and tools[1]['data'] is not src.tools[1]['data']
+        tools[1]['data']['cutz'] = 5
+        assert src.tools[1]['data']['cutz'] == -1.7
+
+    def test_source_is_unchanged(self, app):
+        src, offs = self.build(app)
+        before = freeze(src.tools)
+        pc.panelize_excellon(src.tools, offs)
+        assert freeze(src.tools) == before
+
+    def test_tool_without_drills_or_slots_keys(self):
+        tools = pc.panelize_excellon({1: {'tooldia': 1.0, 'drills': [Point(1, 1)]}, 2: {'tooldia': 2.0}},
+                                     [(0, 0), (10, 0)])
+        assert [(p.x, p.y) for p in tools[1]['drills']] == [(1, 1), (11, 1)]
+        assert tools[2]['drills'] == [] and tools[2]['slots'] == []
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Geometry
+# ---------------------------------------------------------------------------------------------------------------
+
+class TestGeometry:
+    def tools_multigeo(self):
+        line = LineString([(0, 0), (10, 0)])
+        return {1: {'tooldia': 1.0, 'data': {'cutz': -1.0},
+                    'solid_geometry': [line, MultiLineString([[(0, 5), (10, 5)], [(0, 6), (10, 6)]]),
+                                       LineString()]}}
+
+    def test_multigeo_tools_and_solid(self):
+        tools_in = self.tools_multigeo()
+        solid_in = [LineString([(0, 0), (10, 0)]), [LineString([(1, 1), (2, 2)])]]
+        tools, solid = pc.panelize_geometry(tools_in, solid_in, True, [(0, 0), (20, 0)])
+        geos = tools[1]['solid_geometry']
+        assert len(geos) == 6  # 3 non-empty parts x 2 copies, the empty one dropped
+        assert all(isinstance(g, LineString) for g in geos)
+        assert geos[3].bounds == (20, 0, 30, 0)
+        assert tools[1]['data'] == {'cutz': -1.0} and tools[1]['data'] is not tools_in[1]['data']
+        # flat composed solid: nested list flattened
+        assert len(solid) == 4 and all(isinstance(g, LineString) for g in solid)
+        assert solid[2].bounds == (20, 0, 30, 0) and solid[3].bounds == (21, 1, 22, 2)
+
+    def test_non_multigeo_keeps_tools_and_is_flat(self):
+        tools_in = {1: {'tooldia': 1.0, 'solid_geometry': [box(0, 0, 1, 1)]}}
+        poly = MultiPolygon([box(0, 0, 1, 1), box(3, 3, 4, 4)])
+        tools, solid = pc.panelize_geometry(tools_in, poly, False, [(0, 0), (10, 0), (0, 10)])
+        assert tools == tools_in and tools is not tools_in and tools[1] is not tools_in[1]
+        assert len(solid) == 6 and all(isinstance(g, Polygon) for g in solid)  # Multi split
+
+    def test_single_geometry_source_terminates(self):
+        # regression of 17f28747 (iterating and growing the same list)
+        tools, solid = pc.panelize_geometry({}, box(0, 0, 1, 1), False, [(0, 0), (5, 0)])
+        assert [g.bounds for g in solid] == [(0, 0, 1, 1), (5, 0, 6, 1)]
+
+    def test_source_is_unchanged(self):
+        tools_in = self.tools_multigeo()
+        solid_in = [LineString([(0, 0), (10, 0)])]
+        before = (freeze(tools_in), freeze(solid_in))
+        pc.panelize_geometry(tools_in, solid_in, True, [(0, 0), (20, 0)])
+        assert (freeze(tools_in), freeze(solid_in)) == before
+
+    def test_merge_tool_lines_fuses_shared_borders(self):
+        # 2 copies of a square outline side by side share the vertical border x = 10
+        outline = [LineString([(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)])]
+        tools, _ = pc.panelize_geometry({1: {'solid_geometry': outline}}, [], True, [(0, 0), (10, 0)])
+        assert len(tools[1]['solid_geometry']) == 2
+        pc.merge_tool_lines(tools)
+        fused = tools[1]['solid_geometry']
+        assert len(fused) == 1
+        assert fused[0].length == pytest.approx(70.0)  # 2 x 40 - the shared border (10) once
+        pc.merge_tool_lines(tools, snap_overlaps=True)
+        assert tools[1]['solid_geometry'][0].length == pytest.approx(70.0)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# abort / progress
+# ---------------------------------------------------------------------------------------------------------------
+
+class TestAbortAndProgress:
+    def test_abort_raises_grace(self, app):
+        src = make_gerber(app, name='g')
+        offs = pc.grid_offsets(src.bounds(), 2, 2, 5, 5)
+        with pytest.raises(grace):
+            pc.panelize_gerber(src.tools, src.solid_geometry, offs, abort=lambda: True)
+        exc = make_excellon(app, name='e')
+        with pytest.raises(grace):
+            pc.panelize_excellon(exc.tools, offs, abort=lambda: True)
+        with pytest.raises(grace):
+            pc.panelize_geometry({}, [box(0, 0, 1, 1)], False, offs, abort=lambda: True)
+
+    def test_abort_false_does_not_raise(self, app):
+        exc = make_excellon(app, name='e')
+        assert pc.panelize_excellon(exc.tools, [(0, 0)], abort=lambda: False)
+
+    def test_progress_reports_elements_and_tags(self, app):
+        exc = make_excellon(app, name='e')
+        calls = []
+        pc.panelize_excellon(exc.tools, [(0, 0), (30, 0)], progress=lambda *a: calls.append(a))
+        assert {c[0] for c in calls} == {1, 2}
+        assert {c[2] for c in calls} == {'D:', 'S:'}
+        assert all(0 <= c[1] <= 100 for c in calls)
+        g = make_gerber(app, name='g')
+        calls.clear()
+        pc.panelize_gerber(g.tools, g.solid_geometry, [(0, 0)], progress=lambda *a: calls.append(a))
+        assert calls and calls[-1][1] == 100 and calls[-1][2] == ''
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# core == Tcl command
+# ---------------------------------------------------------------------------------------------------------------
+
+from test_panelize_tcl_characterization import run_panelize  # noqa: E402
+
+
+@pytest.mark.parametrize('path', [None, NATIVE_GBR], ids=['mixed', 'native'])
+def test_gerber_core_equals_tcl(app, path):
+    src = make_gerber(app, name='g') if path is None else make_gerber(app, path, name='g')
+    _, created = run_panelize(app, src, 'g', '-rows', str(ROWS), '-columns', str(COLS),
+                              '-spacing_columns', '5', '-spacing_rows', '5', '-outname', 'p')
+    pan = created['p']
+    offs = pc.grid_offsets(src.bounds(), ROWS, COLS, SPACING, SPACING)
+    tools, solid = pc.panelize_gerber(src.tools, src.solid_geometry, offs)
+    assert list(pan.tools) == list(tools)
+    for apid, tool in tools.items():
+        assert len(pan.tools[apid]['geometry']) == len(tool['geometry'])
+        for rec_t, rec_c in zip(pan.tools[apid]['geometry'], tool['geometry']):
+            assert set(rec_t) == set(rec_c)
+            for key in rec_c:
+                assert_coords_close(rec_t[key], rec_c[key], msg='%s %s' % (apid, key))
+        assert {k: v for k, v in pan.tools[apid].items() if k not in ('geometry', 'macro')} == \
+            {k: v for k, v in tool.items() if k not in ('geometry', 'macro')}
+    assert_coords_close(pan.solid_geometry, solid)
+
+
+def test_excellon_core_equals_tcl(app):
+    src = make_excellon(app, name='e')
+    _, created = run_panelize(app, src, 'e', '-rows', str(ROWS), '-columns', str(COLS),
+                              '-spacing_columns', '5', '-spacing_rows', '5', '-outname', 'q')
+    pan = created['q']
+    offs = pc.grid_offsets(src.bounds(), ROWS, COLS, SPACING, SPACING)
+    tools = pc.panelize_excellon(src.tools, offs)
+    assert list(pan.tools) == list(tools)
+    for tid, tool in tools.items():
+        assert pan.tools[tid]['tooldia'] == tool['tooldia']
+        assert [(p.x, p.y) for p in pan.tools[tid]['drills']] == pytest.approx([(p.x, p.y) for p in tool['drills']])
+        assert [(a.x, a.y, b.x, b.y) for a, b in pan.tools[tid]['slots']] == \
+            pytest.approx([(a.x, a.y, b.x, b.y) for a, b in tool['slots']])
