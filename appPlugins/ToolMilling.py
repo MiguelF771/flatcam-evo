@@ -25,11 +25,10 @@ import gettext
 import appTranslation as fcTranslate
 import builtins
 
-from appParsers.ParseExcellon import Excellon
 from appDatabase import load_tools_database
 from defaults import AppDefaults
 from matplotlib.backend_bases import KeyEvent as mpl_key_event
-from camlib import grace
+from camlib import Geometry, grace
 
 fcTranslate.apply_language('strings')
 if '_' not in builtins.__dict__:
@@ -83,7 +82,7 @@ class HybridGeoExc:
         self.multitool = True
 
 
-class ToolMilling(Excellon, AppTool):
+class ToolMilling(Geometry, AppTool):
     build_ui_sig = QtCore.pyqtSignal()
     launch_job = QtCore.pyqtSignal()
 
@@ -93,11 +92,11 @@ class ToolMilling(Excellon, AppTool):
 
         AppTool.__init__(self, app)
         app_defaults = getattr(self.app, "defaults", None) or AppDefaults.factory_defaults
-        Excellon.__init__(
+        Geometry.__init__(
             self,
-            excellon_circle_steps=self.app.options.get(
+            geo_steps_per_circle=int(self.app.options.get(
                 "excellon_circle_steps",
-                app_defaults.get("excellon_circle_steps", AppDefaults.factory_defaults.get("excellon_circle_steps"))),
+                app_defaults.get("excellon_circle_steps", AppDefaults.factory_defaults.get("excellon_circle_steps")))),
             app=app)
 
         # #############################################################################

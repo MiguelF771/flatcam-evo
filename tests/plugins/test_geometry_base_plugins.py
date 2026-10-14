@@ -34,6 +34,7 @@ def _build(cls, qapp):
 @pytest.mark.parametrize('module, name', [
     ('appPlugins.ToolPunchGerber', 'ToolPunchGerber'),
     ('appPlugins.ToolDrilling', 'ToolDrilling'),
+    ('appPlugins.ToolMilling', 'ToolMilling'),
 ])
 def test_plugin_bases_and_construction(qapp, module, name):
     import importlib
