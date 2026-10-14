@@ -122,6 +122,8 @@ class LifecycleChecks(DatabaseCase):
         self.app.exc_editor = None
         self.app.grb_editor = None
         self.app.gcode_editor = None
+        # quit_application looks the editors up through App._editor_for (Stage 5); no editor exists here
+        self.app._editor_for = lambda kind: None
         self.app.use_3d_engine = False
         self.app.plotcanvas = MagicMock()
         self.app.mm = MagicMock()
