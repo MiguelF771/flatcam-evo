@@ -35,10 +35,9 @@ import appTranslation as fcTranslate
 import builtins
 
 from appPlugins.ToolNCC.NccGen import NccGen
-from appParsers.ParseGerber import Gerber
 from appDatabase import load_tools_database
 from defaults import AppDefaults
-from camlib import grace, flatten_shapely_geometry
+from camlib import Geometry, grace, flatten_shapely_geometry
 from matplotlib.backend_bases import KeyEvent as mpl_key_event
 
 fcTranslate.apply_language('strings')
@@ -48,7 +47,7 @@ if '_' not in builtins.__dict__:
 log = logging.getLogger('base')
 
 
-class ToolNcc(Gerber, AppTool):
+class ToolNcc(Geometry, AppTool):
 
     optimal_found_sig = QtCore.pyqtSignal(float)
 
@@ -58,9 +57,9 @@ class ToolNcc(Gerber, AppTool):
 
         AppTool.__init__(self, app)
         app_defaults = getattr(self.app, "defaults", None) or AppDefaults.factory_defaults
-        Gerber.__init__(
+        Geometry.__init__(
             self,
-            steps_per_circle=self.app.options.get(
+            geo_steps_per_circle=self.app.options.get(
                 "gerber_circle_steps",
                 app_defaults.get("gerber_circle_steps", AppDefaults.factory_defaults.get("gerber_circle_steps"))),
             app=app)
