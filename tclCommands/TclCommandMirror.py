@@ -45,7 +45,8 @@ class TclCommandMirror(TclCommandSignaled):
                        '- "origin" which means point (0, 0)\n'
                        '- "min_bounds" which means the lower left point of the bounding box made for all objects\n'
                        '- "center" which means the center point of the bounding box made for all objects.\n'
-                       '- a point in format (x,y) with the X and Y coordinates separated by a comma. NO SPACES ALLOWED')
+                       '- a point in format (x,y) with the X and Y coordinates separated by a comma. NO SPACES ALLOWED\n'
+                       'If neither -box nor -origin is used, the reference point is "center".')
         ]),
         'examples': ['mirror obj_name -box box_geo -axis X',
                      'mirror obj_name -axis X -origin 3.2,4.7']
@@ -127,17 +128,13 @@ class TclCommandMirror(TclCommandSignaled):
 
                 try:
                     xmin_b, ymin_b, xmax_b, ymax_b = box.bounds()
-                    px = 0.5 * (xmin_b + xmax_b)
-                    py = 0.5 * (ymin_b + ymax_b)
-
-                    obj.mirror(axis, [px, py])
-                    continue
                 except Exception as e:
                     self.app.log.error("Operation failed: %s" % str(e))
                     return "fail"
-
+                x = 0.5 * (xmin_b + xmax_b)
+                y = 0.5 * (ymin_b + ymax_b)
             # Origin
-            if 'origin' in args:
+            elif 'origin' in args:
                 if args['origin'] == 'origin':
                     x, y = (0, 0)
                 elif args['origin'] == 'min_bounds':
@@ -156,19 +153,24 @@ class TclCommandMirror(TclCommandSignaled):
                     except ValueError:
                         self.app.log.error("Invalid distance: %s" % str(args['origin']))
                         return "fail"
-
-                try:
-                    obj.mirror(axis, [x, y])
-                except Exception as e:
-                    self.app.log.error("Operation failed: %s" % str(e))
-                    return "fail"
+            else:
+                # no -box and no -origin: use the center of the bounding box made for all objects
+                x = xmin + (xmax - xmin) / 2
+                y = ymin + (ymax - ymin) / 2
 
             try:
-                xmin, ymin, xmax, ymax = obj.bounds()
-                obj.obj_options['xmin'] = xmin
-                obj.obj_options['ymin'] = ymin
-                obj.obj_options['xmax'] = xmax
-                obj.obj_options['ymax'] = ymax
+                obj.mirror(axis, [x, y])
+            except Exception as e:
+                self.app.log.error("Operation failed: %s" % str(e))
+                return "fail"
+
+            # use other names: xmin, ymin, xmax, ymax are the bounds of all objects, used for the next object
+            try:
+                o_xmin, o_ymin, o_xmax, o_ymax = obj.bounds()
+                obj.obj_options['xmin'] = o_xmin
+                obj.obj_options['ymin'] = o_ymin
+                obj.obj_options['xmax'] = o_xmax
+                obj.obj_options['ymax'] = o_ymax
             except Exception as e:
                 self.app.log.error("TclCommandMirror -> The object has no bounds properties. %s" % str(e))
                 return "fail"
