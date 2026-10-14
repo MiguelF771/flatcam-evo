@@ -869,6 +869,7 @@ class GerberObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Gerber):
     def on_follow_cb_click(self):
         if self.muted_ui:
             return
+        self.read_form_item('follow')
         self.plot()
 
     def on_aperture_table_visibility_change(self):
@@ -949,12 +950,14 @@ class GerberObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Gerber):
             visible = kwargs['visible']
 
         # if the Follow Geometry checkbox is checked then plot only the follow geometry
-        if self.ui.follow_cb.get_value():
+        if self.obj_options['follow']:
             geometry = self.follow_geometry
         else:
             geometry = self.solid_geometry
 
         random_color = self.random_color
+        # one lookup per plot, not one per polygon
+        no_outline = self._app_option("gerber_plot_line_enable") is False
 
         try:
             plot_geometry = geometry.geoms if isinstance(geometry, (MultiPolygon, MultiLineString)) else geometry
@@ -968,7 +971,7 @@ class GerberObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Gerber):
                         used_color = random_color() if self.obj_options['multicolored'] else 'black'
                         used_face_color = None
 
-                    if self._app_option("gerber_plot_line_enable") is False:
+                    if no_outline:
                         used_color = None
                     if isinstance(g, (Polygon, LineString)):
                         batch.append({
@@ -991,7 +994,7 @@ class GerberObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Gerber):
                     used_color = random_color() if self.obj_options['multicolored'] else 'black'
                     used_face_color = None
 
-                if self._app_option("gerber_plot_line_enable") is False:
+                if no_outline:
                     used_color = None
                 if isinstance(plot_geometry, (Polygon, LineString)):
                     self.add_shape(shape=plot_geometry, color=used_color, face_color=used_face_color, visible=visible)

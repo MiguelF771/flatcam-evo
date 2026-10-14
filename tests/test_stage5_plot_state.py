@@ -145,3 +145,118 @@ def test_excellon_pre_ui_object_with_default_options_plots():
     obj = _prepare_excellon({}, with_ui=False)
     obj.plot()
     assert obj.add_shape.called
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Gerber
+# ---------------------------------------------------------------------------------------------------------------
+
+def _prepare_gerber(settings, line_enable=True, with_ui=True):
+    app = make_app()
+    app.options['gerber_plot_line_enable'] = line_enable
+    obj = make_gerber(app)
+    obj.obj_options.update(settings)
+    obj.ui = _ui_for(settings) if with_ui else None
+    obj.random_color = _counter_colors()
+    obj.add_shapes_batch = Mock(side_effect=lambda batch, **kw: list(range(len(batch))))
+    obj.add_shape = Mock()
+    obj.shapes = Mock(_indexes=[])
+    obj.calls = []
+    real = obj._app_option
+
+    def counting(key, *a, **kw):
+        obj.calls.append(key)
+        return real(key, *a, **kw)
+    obj._app_option = counting
+    return obj
+
+
+def _gerber_batch(obj):
+    return [(d['shape'].wkt, d['color'], d['face_color']) for d in obj.add_shapes_batch.call_args.args[0]]
+
+
+def _expected_gerber_batch(obj, settings, line_enable):
+    from shapely.geometry import LinearRing, LineString, MultiLineString, MultiPolygon, Polygon
+    geometry = obj.follow_geometry if settings.get('follow') else obj.solid_geometry
+    geoms = geometry.geoms if isinstance(geometry, (MultiPolygon, MultiLineString)) else geometry
+    out = []
+    n = 0
+    for g in geoms:
+        if settings['solid']:
+            color = '#line'
+            if settings['multicolored']:
+                n += 1
+                face = 'c%d' % n
+            else:
+                face = '#fill'
+        else:
+            if settings['multicolored']:
+                n += 1
+                color = 'c%d' % n
+            else:
+                color = 'black'
+            face = None
+        if not line_enable:
+            color = None
+        if isinstance(g, (Polygon, LineString)):
+            out.append((g.wkt, color, face))
+        elif isinstance(g, LinearRing):
+            out.append((LineString(g).wkt, color, face))
+    return out
+
+
+@pytest.mark.parametrize('line_enable', [True, False])
+@pytest.mark.parametrize('follow', [False, True])
+@pytest.mark.parametrize('multicolored', [False, True])
+@pytest.mark.parametrize('solid', [False, True])
+def test_gerber_plot_batch(solid, multicolored, follow, line_enable):
+    settings = {'solid': solid, 'multicolored': multicolored, 'follow': follow, 'plot': True}
+    obj = _prepare_gerber(settings, line_enable)
+    obj.plot(color='#line', face_color='#fill')
+    batch = _gerber_batch(obj)
+    assert batch
+    assert batch == _expected_gerber_batch(obj, settings, line_enable)
+    assert obj.add_shapes_batch.call_args.kwargs['visible'] is True
+
+
+@pytest.mark.skipif(OLD_CODE, reason='counts the new behavior')
+def test_gerber_plot_looks_up_the_line_option_once_per_plot():
+    settings = {'solid': True, 'multicolored': False, 'follow': False, 'plot': True}
+    obj = _prepare_gerber(settings)
+    obj.plot(color='#line', face_color='#fill')
+    assert len(_gerber_batch(obj)) > 1
+    assert obj.calls.count('gerber_plot_line_enable') == 1
+
+
+@pytest.mark.skipif(OLD_CODE, reason='the old code needs the UI')
+def test_gerber_plot_reads_follow_from_the_options_and_works_without_ui():
+    settings = {'solid': True, 'multicolored': False, 'follow': True, 'plot': True}
+    obj = _prepare_gerber(settings, with_ui=False)
+    obj.plot(color='#line', face_color='#fill')
+    assert _gerber_batch(obj) == _expected_gerber_batch(obj, settings, True)
+    obj.obj_options['follow'] = False
+    obj.plot(color='#line', face_color='#fill')
+    assert _gerber_batch(obj) == _expected_gerber_batch(obj, dict(settings, follow=False), True)
+
+
+@pytest.mark.skipif(OLD_CODE, reason='the old code needs the UI')
+def test_gerber_plot_with_raising_ui_stub():
+    settings = {'solid': False, 'multicolored': True, 'follow': False, 'plot': True}
+    obj = _prepare_gerber(settings)
+    obj.ui = RaisingUI()
+    obj.plot()
+    assert _gerber_batch(obj) == _expected_gerber_batch(obj, settings, True)
+
+
+@pytest.mark.skipif(OLD_CODE, reason='the old handler does not write the option')
+def test_gerber_follow_toggle_writes_the_option_before_plot():
+    obj = _prepare_gerber({'solid': True, 'multicolored': False, 'follow': False, 'plot': True})
+    seen = []
+    obj.plot = Mock(side_effect=lambda *a, **k: seen.append(obj.obj_options['follow']))
+    ui = Mock()
+    ui.follow_cb.get_value.return_value = True
+    obj.ui = ui
+    obj.form_fields['follow'] = ui.follow_cb
+    obj.muted_ui = False
+    obj.on_follow_cb_click()
+    assert seen == [True]
