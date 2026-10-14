@@ -446,7 +446,7 @@ QTabBar::close-button:selected {
     image: url(${path}/dark/svg/close__icon-foreground.svg);
 }
 QTabBar::close-button:!selected {
-    image: url(${path}/dark/svg/close__tabbar-button-inselected.svg)
+    image: url(${path}/dark/svg/close__tabbar-button-unselected.svg)
 }
 QTabBar::close-button:disabled {
     image: url(${path}/dark/svg/close__icon-foreground-disabled.svg);
