@@ -318,8 +318,7 @@ class ToolImage(AppTool):
                 if svg_text is not None:
                     geo_obj.source_file = svg_text
                 else:
-                    geo_obj.source_file = app_obj.f_handlers.export_dxf(
-                        obj_name=None, filename=None, local_use=geo_obj, use_thread=False)
+                    geo_obj.regenerate_source()
             else:   # 'gerber'
                 if 0 not in geo_obj.tools:
                     geo_obj.tools[0] = {
@@ -341,8 +340,7 @@ class ToolImage(AppTool):
                         isinstance(geo_obj.solid_geometry, Polygon) else geo_obj.solid_geometry
                     }
                     geo_obj.tools[0]['geometry'].append(new_el)
-                geo_obj.source_file = app_obj.f_handlers.export_gerber(
-                    obj_name=None, filename=None, local_use=geo_obj, use_thread=False)
+                geo_obj.regenerate_source()
 
         with self.app.proc_container.new('%s ...' % _("Importing")):
 

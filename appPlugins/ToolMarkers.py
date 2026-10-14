@@ -746,8 +746,7 @@ class ToolMarkers(AppTool):
             grb_obj.solid_geometry = flatten_shapely_geometry(unary_union(s_list))
             grb_obj.follow_geometry = flatten_shapely_geometry(new_grb_obj.follow_geometry + marker_geometry)
 
-            grb_obj.source_file = app_obj.f_handlers.export_gerber(obj_name=outname, filename=None, local_use=grb_obj,
-                                                                   use_thread=False)
+            grb_obj.regenerate_source(name=outname)
 
         ret = self.app.app_obj.new_object('gerber', outname, initialize, plot=True, autoselected=False)
 
@@ -930,10 +929,7 @@ class ToolMarkers(AppTool):
             obj_inst.tools = {}
             obj_inst.add_tool(tooldia, drills=drill_list, data={})
             obj_inst.create_geometry()
-            obj_inst.source_file = app_inst.f_handlers.export_excellon(obj_name=obj_inst.obj_options['name'],
-                                                                       local_use=obj_inst,
-                                                                       filename=None,
-                                                                       use_thread=False)
+            obj_inst.regenerate_source()
 
         outname = '%s_%s' % (str(self.grb_object.obj_options['name']), 'corner_drills')
         ret_val = self.app.app_obj.new_object("excellon", outname, obj_init, autoselected=False)
@@ -1037,10 +1033,7 @@ class ToolMarkers(AppTool):
                 'tools_drill_cutz': -0.1,
                 'tools_drill_ppname_e': 'Check_points'
             })
-            new_obj.source_file = app_inst.f_handlers.export_excellon(obj_name=new_obj.obj_options['name'],
-                                                                      local_use=new_obj,
-                                                                      filename=None,
-                                                                      use_thread=False)
+            new_obj.regenerate_source()
 
         outname = '%s_%s' % (str(self.grb_object.obj_options['name']), 'verification')
         ret_val = self.app.app_obj.new_object("excellon", outname, obj_init, autoselected=False)

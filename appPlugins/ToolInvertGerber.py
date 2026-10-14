@@ -194,8 +194,7 @@ class ToolInvertGerber(AppTool):
             new_obj.tools = deepcopy(new_apertures)
 
             new_obj.solid_geometry = deepcopy(new_solid_geometry)
-            new_obj.source_file = app_obj.f_handlers.export_gerber(obj_name=outname, filename=None,
-                                                                   local_use=new_obj, use_thread=False)
+            new_obj.regenerate_source(name=outname)
 
         self.app.app_obj.new_object('gerber', outname, init_func)
 

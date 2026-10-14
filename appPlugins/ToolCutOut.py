@@ -939,9 +939,7 @@ class CutOut(AppTool):
                     exc_obj.tools = {}
                     exc_obj.add_tool(mb_dia, drills=holes)
                     exc_obj.create_geometry()
-                    exc_obj.source_file = app_o.f_handlers.export_excellon(obj_name=exc_obj.obj_options['name'],
-                                                                           local_use=exc_obj, filename=None,
-                                                                           use_thread=False)
+                    exc_obj.regenerate_source()
                     # calculate the bounds
                     xmin, ymin, xmax, ymax = CutOut.recursive_bounds(exc_obj.solid_geometry)
                     exc_obj.obj_options['xmin'] = xmin
@@ -1356,10 +1354,7 @@ class CutOut(AppTool):
                     exc_obj.tools = {}
                     exc_obj.add_tool(mb_dia, drills=holes)
                     exc_obj.create_geometry()
-                    exc_obj.source_file = app_o.f_handlers.export_excellon(obj_name=exc_obj.obj_options['name'],
-                                                                           local_use=exc_obj,
-                                                                           filename=None,
-                                                                           use_thread=False)
+                    exc_obj.regenerate_source()
                     # calculate the bounds
                     e_xmin, e_ymin, e_xmax, e_ymax = CutOut.recursive_bounds(exc_obj.solid_geometry)
                     exc_obj.obj_options['xmin'] = e_xmin
@@ -1539,9 +1534,7 @@ class CutOut(AppTool):
             obj_inst.tools = {}
             obj_inst.add_tool(drill_dia, drills=drill_list)
             obj_inst.create_geometry()
-            obj_inst.source_file = app_inst.f_handlers.export_excellon(obj_name=outname, local_use=obj_inst,
-                                                                       filename=None,
-                                                                       use_thread=False)
+            obj_inst.regenerate_source(name=outname)
 
         with self.app.proc_container.new('%s...' % _("Working")):
             try:
@@ -1912,10 +1905,7 @@ class CutOut(AppTool):
                             exc_obj.tools = {}
                             exc_obj.add_tool(mb_dia, drills=holes)
                             exc_obj.create_geometry()
-                            exc_obj.source_file = app_o.f_handlers.export_excellon(obj_name=exc_obj.obj_options['name'],
-                                                                                   local_use=exc_obj,
-                                                                                   filename=None,
-                                                                                   use_thread=False)
+                            exc_obj.regenerate_source()
                             # calculate the bounds
                             xmin, ymin, xmax, ymax = CutOut.recursive_bounds(exc_obj.solid_geometry)
                             exc_obj.obj_options['xmin'] = xmin

@@ -512,10 +512,7 @@ class Panelize(AppTool):
                     obj_fin.zeros = panel_source_obj.zeros
                     obj_fin.units = panel_source_obj.units
                     app_obj.inform.emit('%s' % _("Generating panel ... Adding the source code."))
-                    obj_fin.source_file = self.app.f_handlers.export_excellon(obj_name=self.outname,
-                                                                              filename=None,
-                                                                              local_use=obj_fin,
-                                                                              use_thread=False)
+                    obj_fin.regenerate_source(name=self.outname)
                     app_obj.proc_container.update_view_text('')
 
                 def job_init_geometry(new_obj, app_obj):
@@ -832,8 +829,7 @@ class Panelize(AppTool):
                         del new_obj.tools   # TODO what the hack is this? First we create and then immediately delete?
 
                     app_obj.inform.emit('%s' % _("Generating panel ... Adding the source code."))
-                    new_obj.source_file = self.app.f_handlers.export_dxf(obj_name=self.outname, filename=None,
-                                                                         local_use=new_obj, use_thread=False)
+                    new_obj.regenerate_source(name=self.outname)
 
                     # new_obj.solid_geometry = unary_union(obj_fin.solid_geometry)
                     # app_obj.log.debug("Finished creating a unary_union for the panel.")
@@ -1105,8 +1101,7 @@ class Panelize(AppTool):
 
                     app_obj.inform.emit('%s' % _("Generating panel ... Adding the source code."))
 
-                    new_obj.source_file = self.app.f_handlers.export_gerber(obj_name=self.outname, filename=None,
-                                                                            local_use=new_obj, use_thread=False)
+                    new_obj.regenerate_source(name=self.outname)
 
                     # new_obj.solid_geometry = unary_union(new_obj.solid_geometry)
                     # app_obj.log.debug("Finished creating a unary_union for the panel.")

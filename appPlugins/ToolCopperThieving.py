@@ -366,8 +366,7 @@ class ToolCopperThieving(AppTool):
 
             app_obj.proc_container.update_view_text(' %s' % _("Append source file"))
             # update the source file with the new geometry:
-            grb_obj.source_file = app_obj.f_handlers.export_gerber(obj_name=outname, filename=None, local_use=grb_obj,
-                                                                   use_thread=False)
+            grb_obj.regenerate_source(name=outname)
 
         ret_val = self.app.app_obj.new_object('gerber', outname, initialize, plot=True)
         self.app.proc_container.update_view_text(' %s' % '')
@@ -944,9 +943,7 @@ class ToolCopperThieving(AppTool):
                 grb_obj.follow_geometry = deepcopy(self.grb_object.follow_geometry)
 
                 app_obj.proc_container.update_view_text(' %s' % _("Append source file"))
-                grb_obj.source_file = app_obj.f_handlers.export_gerber(obj_name=outname, filename=None,
-                                                                       local_use=grb_obj,
-                                                                       use_thread=False)
+                grb_obj.regenerate_source(name=outname)
 
             ret_val = self.app.app_obj.new_object('gerber', outname, initialize, plot=True, autoselected=False)
             tool_obj.app.proc_container.update_view_text(' %s' % '')
@@ -1141,8 +1138,7 @@ class ToolCopperThieving(AppTool):
 
             app_obj.proc_container.update_view_text(' %s' % _("Append source file"))
             # update the source file with the new geometry:
-            grb_obj.source_file = app_obj.f_handlers.export_gerber(obj_name=outname, filename=None, local_use=grb_obj,
-                                                                   use_thread=False)
+            grb_obj.regenerate_source(name=outname)
             app_obj.proc_container.update_view_text(' %s' % '')
 
         # Object name

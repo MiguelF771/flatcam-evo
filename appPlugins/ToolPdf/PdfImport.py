@@ -246,8 +246,7 @@ class ToolPDF(AppTool):
                 self.app.log.debug("Could not create geometry for Excellon object.")
                 return "fail"
 
-            new_obj.source_file = app_obj.f_handlers.export_excellon(obj_name=outname, local_use=new_obj,
-                                                                     filename=None, use_thread=False)
+            new_obj.regenerate_source(name=outname)
 
             for tool in new_obj.tools:
                 if new_obj.tools[tool]['solid_geometry']:
@@ -330,8 +329,7 @@ class ToolPDF(AppTool):
 
             grb_obj.solid_geometry = flatten_shapely_geometry(poly_buff)
             grb_obj.follow_geometry = deepcopy(follow_buf)
-            grb_obj.source_file = app_obj.f_handlers.export_gerber(obj_name=outname, filename=None,
-                                                                   local_use=grb_obj, use_thread=False)
+            grb_obj.regenerate_source(name=outname)
 
         with self.app.proc_container.new(_("Rendering PDF layer #%d ...") % int(layer_nr)):
 

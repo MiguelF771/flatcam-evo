@@ -484,8 +484,7 @@ class ToolSub(AppTool):
 
             grb_obj.solid_geometry = deepcopy(poly_buff)
             grb_obj.follow_geometry = deepcopy(follow_buff)
-            grb_obj.source_file = app_obj.f_handlers.export_gerber(obj_name=outname, filename=None,
-                                                                   local_use=grb_obj, use_thread=False)
+            grb_obj.regenerate_source(name=outname)
 
         with self.app.proc_container.new('%s...' % _("Generating")):
             ret = self.app.app_obj.new_object('gerber', outname, obj_init, autoselected=False)

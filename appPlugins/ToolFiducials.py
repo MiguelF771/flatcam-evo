@@ -642,8 +642,7 @@ class ToolFiducials(AppTool):
             grb_obj.solid_geometry = unary_union(s_list)
             grb_obj.follow_geometry = deepcopy(g_obj.follow_geometry) + geo_list
 
-            grb_obj.source_file = app_obj.f_handlers.export_gerber(obj_name=outname, filename=None, local_use=grb_obj,
-                                                                   use_thread=False)
+            grb_obj.regenerate_source(name=outname)
 
         ret = self.app.app_obj.new_object('gerber', outname, initialize, plot=True)
 

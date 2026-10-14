@@ -490,9 +490,7 @@ class ToolExtract(AppTool):
         def obj_init(obj_inst, app_inst):
             obj_inst.tools = deepcopy(tools)
             obj_inst.create_geometry()
-            obj_inst.source_file = app_inst.f_handlers.export_excellon(obj_name=outname, local_use=obj_inst,
-                                                                       filename=None,
-                                                                       use_thread=False)
+            obj_inst.regenerate_source(name=outname)
 
         with self.app.proc_container.new('%s...' % _("Working")):
             self.clear_aperture_marking()
@@ -862,8 +860,7 @@ class ToolExtract(AppTool):
             new_obj.follow_geometry = deepcopy(new_follow_geometry)
 
             try:
-                new_obj.source_file = app_obj.f_handlers.export_gerber(obj_name=outname, filename=None,
-                                                                       local_use=new_obj, use_thread=False)
+                new_obj.regenerate_source(name=outname)
             except (AttributeError, TypeError):
                 pass
 
@@ -937,8 +934,7 @@ class ToolExtract(AppTool):
             new_obj.follow_geometry = [deepcopy(new_geo_follow)]
 
             try:
-                new_obj.source_file = app_obj.f_handlers.export_gerber(obj_name=outname, filename=None,
-                                                                       local_use=new_obj, use_thread=False)
+                new_obj.regenerate_source(name=outname)
             except (AttributeError, TypeError):
                 pass
 
