@@ -585,3 +585,34 @@ class TestExcellonRowSelectionReconnect_0B6:
         src = inspect.getsource(ExcellonObject.build_ui)
         tail = src.rsplit('self.on_row_selection_change()', 1)[1]
         assert 'ui_connect' not in tail
+
+
+class TestGerberMarkedRows_0B6:
+    @staticmethod
+    def _table(checked):
+        table = MagicMock()
+        table.rowCount.return_value = len(checked)
+        table.item.return_value.text.return_value = '10'
+        table.cellWidget.side_effect = lambda r, c: Mock(**{'isChecked.return_value': checked[r]})
+        return table
+
+    def _click(self, marked_rows, checked, row):
+        me = MagicMock()
+        me.marked_rows = marked_rows
+        me.ui.apertures_table = self._table(checked)
+        me.ui.apertures_table.indexAt.return_value.row.return_value = row
+        me._app_option.return_value = '#aabbcc'
+        GerberObject.on_mark_cb_click_table(me)
+        return me
+
+    def test_click_marks_only_the_clicked_row(self):
+        me = self._click([], [False, True, False], 1)
+        assert me.marked_rows == [False, True, False]
+
+    def test_click_keeps_other_rows(self):
+        me = self._click([True, False, False], [True, False, True], 2)
+        assert me.marked_rows == [True, False, True]
+
+    def test_unchecking_clears_only_that_row(self):
+        me = self._click([True, True, False], [True, False, False], 1)
+        assert me.marked_rows == [True, False, False]

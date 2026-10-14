@@ -1110,22 +1110,24 @@ class GerberObject(FlatCAMObj, Gerber):
         except TypeError:
             return
 
-        self.marked_rows[:] = []
-
         try:
             aperture = int(self.ui.apertures_table.item(cw_row, 1).text())
         except AttributeError:
             self.ui_connect()
             return
 
+        # keep one entry per table row, the table rebuild indexes this list by row
+        row_count = self.ui.apertures_table.rowCount()
+        if len(self.marked_rows) != row_count:
+            self.marked_rows[:] = [False] * row_count
+        self.marked_rows[cw_row] = bool(self.ui.apertures_table.cellWidget(cw_row, 5).isChecked())
+
         if self.ui.apertures_table.cellWidget(cw_row, 5).isChecked():
-            self.marked_rows.append(True)
             # self.plot_aperture(color='#2d4606bf', marked_aperture=aperture, visible=True)
             color = self._app_option('global_sel_draw_color')
             color = (color + 'AF') if len(color) == 7 else (color[:-2] + 'AF')
             self.plot_aperture(color=color, marked_aperture=aperture, visible=True, run_thread=True)
         else:
-            self.marked_rows.append(False)
             self.clear_plot_apertures(aperture=aperture)
 
         # make sure that the Mark All is disabled if one of the row mark's are disabled and
@@ -1146,13 +1148,9 @@ class GerberObject(FlatCAMObj, Gerber):
     def on_mark_all_click(self):
         self.ui_disconnect()
         mark_all = self.ui.mark_all_cb.isChecked()
+        # update the mark_rows list: one entry per table row
+        self.marked_rows[:] = [mark_all] * self.ui.apertures_table.rowCount()
         for row in range(self.ui.apertures_table.rowCount()):
-            # update the mark_rows list
-            if mark_all:
-                self.marked_rows.append(True)
-            else:
-                self.marked_rows[:] = []
-
             mark_cb = self.ui.apertures_table.cellWidget(row, 5)
             mark_cb.setChecked(mark_all)
 
@@ -1167,7 +1165,6 @@ class GerberObject(FlatCAMObj, Gerber):
             self.app.ui.grid_snap_btn.trigger()
         else:
             self.clear_plot_apertures()
-            self.marked_rows[:] = []
 
         self.ui_connect()
 
