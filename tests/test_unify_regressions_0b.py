@@ -411,7 +411,6 @@ class TestSmallBugs_0B6:
         assert obj.add_shapes_batch.called
         assert obj.shape_indexes_dict == {1: [11]}
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason="fixed in Stage 0B.6")
     def test_restore_project_objects_sets_change_callback(self):
         app = MagicMock()  # appIO.__init__ reads many app attributes
         app.options = {}

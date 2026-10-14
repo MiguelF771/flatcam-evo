@@ -3003,6 +3003,8 @@ class appIO(QtCore.QObject):
                             app_inst.log.error('appIO.open_project() make a LoudDict--> ' + str(except_error))
                             return 'fail'
 
+                        # the new dict has no callback; set it like the object __init__ does
+                        new_obj_options.set_change_callback(new_obj.on_options_change)
                         new_obj.obj_options = new_obj_options
 
                         # #############################################################################################
