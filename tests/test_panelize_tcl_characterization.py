@@ -14,6 +14,7 @@ import pytest
 
 from appHandlers.appIO import appIO
 from appObjects.ExcellonObject import ExcellonObject
+from appObjects.GeometryObject import GeometryObject
 from appObjects.GerberObject import GerberObject
 from tclCommands.TclCommandPanelize import TclCommandPanelize
 
@@ -29,7 +30,7 @@ def run_panelize(app, src, *argv):
     created = {}
 
     def new_object(kind, name, initialize, plot=True, **kwargs):
-        cls = {'gerber': GerberObject, 'excellon': ExcellonObject}[kind]
+        cls = {'gerber': GerberObject, 'excellon': ExcellonObject, 'geometry': GeometryObject}[kind]
         obj = cls(name, app)
         initialize(obj, app)
         created[name] = obj
@@ -158,3 +159,44 @@ class TestExcellonPanel:
         assert {k: (len(v['drills']), len(v['slots'])) for k, v in src.tools.items()} == \
             {1: (3, 0), 2: (2, 1), 3: (1, 2)}
         assert all(isinstance(s, tuple) and len(s) == 2 for t in pan.tools.values() for s in t['slots'])
+
+# ---------------------------------------------------------------------------------------------------------------
+# Changed on purpose by the panelize core (Stage 5): not part of the pre-refactor capture above
+# ---------------------------------------------------------------------------------------------------------------
+
+def test_gerber_panel_inherits_export_as_regions_and_macros(app):
+    src = make_gerber(app, name='g')
+    src.export_as_regions = True
+    res, created = run_panelize(app, src, 'g', '-rows', '1', '-columns', '2', '-outname', 'p')
+    pan = created['p']
+    assert pan.export_as_regions is True
+    assert set(pan.aperture_macros) == set(src.aperture_macros) and pan.aperture_macros
+
+
+def make_geometry(app, multigeo):
+    from shapely.geometry import LineString, box
+    src = GeometryObject('src', app)
+    src.multigeo = multigeo
+    src.units = 'MM'
+    src.solid_geometry = [box(0, 0, 10, 10), [LineString([(0, 0), (10, 10)]), [box(2, 2, 3, 3)]]]
+    src.tools = {1: {'tooldia': 1.0, 'data': {}, 'solid_geometry': [LineString([(0, 0), (10, 0)])]}}
+    return src
+
+
+@pytest.mark.parametrize('multigeo', [False, True])
+def test_geometry_panel_solid_geometry_is_flat(app, multigeo):
+    # the old Tcl output nested the lists (one list per copy / per source list); the plugin always flattened
+    src = make_geometry(app, multigeo)
+    res, created = run_panelize(app, src, 'src', '-rows', '2', '-columns', '2', '-outname', 'p')
+    pan = created['p']
+    assert res is None
+    assert isinstance(pan.solid_geometry, list)
+    assert not any(isinstance(g, (list, tuple)) for g in pan.solid_geometry)
+    assert len(pan.solid_geometry) == 4 * 3
+    if multigeo:
+        # bounds() of a multigeo object looks at the tools only: a 10 x 0 box, pitch (15, 5)
+        assert pan.bounds() == pytest.approx((0, 0, 25, 5))
+        assert len(pan.tools[1]['solid_geometry']) == 4
+    else:
+        assert pan.bounds() == pytest.approx((0, 0, 25, 25))
+        assert len(src.tools[1]['solid_geometry']) == 1
