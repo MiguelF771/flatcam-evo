@@ -22,9 +22,8 @@ import gettext
 import appTranslation as fcTranslate
 import builtins
 
-from appParsers.ParseGerber import Gerber
 from matplotlib.backend_bases import KeyEvent as mpl_key_event
-from camlib import flatten_shapely_geometry
+from camlib import Geometry, flatten_shapely_geometry
 
 fcTranslate.apply_language('strings')
 if '_' not in builtins.__dict__:
@@ -33,7 +32,7 @@ if '_' not in builtins.__dict__:
 log = logging.getLogger('base')
 
 
-class ToolFollow(Gerber, AppTool):
+class ToolFollow(Geometry, AppTool):
 
     optimal_found_sig = QtCore.pyqtSignal(float)
 
@@ -43,9 +42,9 @@ class ToolFollow(Gerber, AppTool):
 
         AppTool.__init__(self, app)
         app_defaults = getattr(self.app, "defaults", None) or AppDefaults.factory_defaults
-        Gerber.__init__(
+        Geometry.__init__(
             self,
-            steps_per_circle=self.app.options.get(
+            geo_steps_per_circle=self.app.options.get(
                 "gerber_circle_steps",
                 app_defaults.get("gerber_circle_steps", AppDefaults.factory_defaults.get("gerber_circle_steps"))),
             app=app)
