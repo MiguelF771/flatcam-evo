@@ -1301,11 +1301,14 @@ class ExcellonObject(FlatCAMObj, Excellon):
     @staticmethod
     def _tool_data_equal(data_a, data_b):
         """
-        True if two tool ``data`` dicts are equal, ignoring the per-object 'name' key. A missing data counts as {}.
+        True if two tool ``data`` dicts hold the same tool parameters: the keys that start with 'tools_'
+        (tools_drill_*, tools_mill_*). The tool data is a copy of the object options, so it also holds per-object keys
+        (name, the bounds xmin ... ymax, the file format and zeros, plot, units ...) that differ between source
+        objects and say nothing about how the tool is used; they are not compared. A missing data counts as {}.
         A comparison that raises (e.g. a numpy array value) counts as "not equal", so the tools stay separate.
         """
-        a = {k: v for k, v in (data_a or {}).items() if k != 'name'}
-        b = {k: v for k, v in (data_b or {}).items() if k != 'name'}
+        a = {k: v for k, v in (data_a or {}).items() if str(k).startswith('tools_')}
+        b = {k: v for k, v in (data_b or {}).items() if str(k).startswith('tools_')}
         try:
             return bool(a == b)
         except Exception:
@@ -1321,8 +1324,8 @@ class ExcellonObject(FlatCAMObj, Excellon):
 
         With fuse_tools=True two tools are fused into one only when both conditions hold:
         - their diameters are equal after rounding to ``decimals``;
-        - their ``data`` dicts are equal (``==`` on the copies) once the per-object 'name' key is ignored. That key
-          differs between source objects and says nothing about how the tool is used.
+        - their tool parameters are equal: the ``data`` keys that start with 'tools_' (see _tool_data_equal). The
+          per-object keys that the data also holds (name, bounds, file format, plot ...) are not compared.
         Tools of the same diameter with different data stay separate tools, each keeping its own data, drills and
         slots (no silent metadata loss). Tools with a ``data`` that cannot be compared with == stay separate.
         The result tools are numbered 1..n in the order of their first appearance.

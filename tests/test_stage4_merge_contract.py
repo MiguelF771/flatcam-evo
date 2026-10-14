@@ -1,8 +1,10 @@
 """Stage 4 merge contract: ExcellonObject.merge fuses tools by diameter only if their data is equal.
 
-Rule under test: with ``fuse_tools=True`` two tools fuse when their rounded diameters match AND their ``data``
-dicts are equal (the per-object ``'name'`` key is ignored, it differs between source objects). Tools of the same
-diameter with different data stay separate, each with its own data, drills and slots. Nothing is lost silently.
+Rule under test: with ``fuse_tools=True`` two tools fuse when their rounded diameters match AND their tool
+parameters are equal: the ``data`` keys that start with 'tools_'. The tool data is a copy of the object options, so
+it also holds per-object keys (name, bounds, zeros, plot ...) that differ between source objects; they are not
+compared. Tools of the same diameter with different tool parameters stay separate, each with its own data, drills and
+slots. Nothing is lost silently.
 
 Headless: real ExcellonObject instances, ShapeCollection patched out (fixtures come from the characterization
 tests).
@@ -18,8 +20,17 @@ from appObjects.ExcellonObject import ExcellonObject
 
 from test_unify_characterization import _headless_qt, app  # noqa: F401  (the fixtures must be visible here)
 
-DATA_A = {'cutz': -1.7, 'multidepth': True, 'depthperpass': 0.4, 'tag': 'first'}
-DATA_B = {'cutz': -2.4, 'multidepth': False, 'depthperpass': 0.8, 'tag': 'second'}
+DATA_A = {'tools_drill_cutz': -1.7, 'tools_drill_multidepth': True, 'tools_drill_depthperpass': 0.4,
+          'tools_drill_ppname_e': 'first'}
+DATA_B = {'tools_drill_cutz': -2.4, 'tools_drill_multidepth': False, 'tools_drill_depthperpass': 0.8,
+          'tools_drill_ppname_e': 'second'}
+
+
+def object_keys(name):
+    """Per-object option keys that the tool data holds; they differ from 1 source object to the next."""
+    n = float(len(name)) + sum(map(ord, name)) / 1000.0
+    return {'name': name, 'xmin': -n, 'ymin': -2 * n, 'xmax': n, 'ymax': 2 * n,
+            'zeros': 'L' if len(name) % 2 else 'T', 'plot': len(name) % 2 == 0, 'units': 'MM'}
 
 
 def make_exc(app, name, specs):
@@ -33,7 +44,8 @@ def make_exc(app, name, specs):
             'drills': [Point(p) for p in drills],
             'slots': [(Point(a), Point(b)) for a, b in slots],
             'solid_geometry': [],
-            'data': dict(data, name=name),  # as in practice, the data holds the per-object 'name'
+            # as in practice, the data is a copy of the object options: it holds per-object keys too
+            'data': dict(data, **object_keys(name)),
         }
     assert obj.create_geometry() is None
     return obj
@@ -54,10 +66,20 @@ def slots_xy(slots):
 
 
 def strip_name(data):
-    return {k: v for k, v in data.items() if k != 'name'}
+    """The tool parameters of a tool data (the 'tools_' keys)."""
+    return {k: v for k, v in data.items() if k.startswith('tools_')}
 
 
 class TestFuseEqualData:
+    def test_per_object_keys_do_not_block_the_fuse(self, app):
+        a = make_exc(app, 'a', [(1.0, [(0, 0)], [], DATA_A)])
+        bb = make_exc(app, 'bb', [(1.0, [(5, 0)], [], DATA_A)])
+        # name, bounds, zeros and plot differ between the 2 objects; the tool parameters are equal
+        assert a.tools[1]['data'] != bb.tools[1]['data']
+        final = merge(app, [a, bb])
+        assert list(final.tools) == [1]
+        assert pts(final.tools[1]['drills']) == [(0, 0), (5, 0)]
+
     def test_same_diameter_equal_data_fuses_into_one_tool(self, app):
         a = make_exc(app, 'a', [(1.0, [(0, 0), (1, 0)], [((0, 5), (3, 5))], DATA_A),
                                 (0.8, [(9, 9)], [], DATA_B)])
@@ -116,7 +138,7 @@ class TestKeepDifferentData:
         b = make_exc(app, 'b', [(1.0, [(2, 0)], [], DATA_A), (1.0, [(3, 0)], [], DATA_B)])
         final = merge(app, [a, b])
         assert len(final.tools) == 2
-        by_tag = {t['data']['tag']: t for t in final.tools.values()}
+        by_tag = {t['data']['tools_drill_ppname_e']: t for t in final.tools.values()}
         assert pts(by_tag['first']['drills']) == [(0, 0), (2, 0)]
         assert pts(by_tag['second']['drills']) == [(1, 0), (3, 0)]
 
@@ -142,20 +164,20 @@ class TestIndependenceAndTypes:
         # change the sources after the merge: the result stays
         a.tools[1]['drills'].append(Point(99, 99))
         a.tools[1]['slots'].append((Point(8, 8), Point(9, 9)))
-        a.tools[1]['data']['cutz'] = 5.0
+        a.tools[1]['data']['tools_drill_cutz'] = 5.0
         b.tools[1]['drills'][0] = Point(77, 77)
-        b.tools[1]['data']['tag'] = 'changed'
+        b.tools[1]['data']['tools_drill_ppname_e'] = 'changed'
         assert pts(sum((t['drills'] for t in final.tools.values()), [])) == \
             pts(sum((t['drills'] for t in before.values()), []))
-        assert all(t['data'].get('cutz') == -1.7 and t['data'].get('tag') == 'first' for t in final.tools.values())
+        assert all(t['data'].get('tools_drill_cutz') == -1.7 and t['data'].get('tools_drill_ppname_e') == 'first' for t in final.tools.values())
 
         # change the result: the sources stay (compare against the snapshot taken before the merge)
         a2 = make_exc(app, 'a', [(1.0, [(0, 0)], [((0, 1), (1, 1))], DATA_A)])
         final2 = merge(app, [a2, make_exc(app, 'b', [(1.0, [(5, 0)], [], DATA_A)])], fuse=fuse)
         final2.tools[1]['drills'].append(Point(1, 1))
-        final2.tools[1]['data']['cutz'] = 9.9
+        final2.tools[1]['data']['tools_drill_cutz'] = 9.9
         assert pts(a2.tools[1]['drills']) == [(0, 0)]
-        assert a2.tools[1]['data']['cutz'] == -1.7
+        assert a2.tools[1]['data']['tools_drill_cutz'] == -1.7
         assert pts(snap_a[1]['drills']) == [(0, 0)] and pts(snap_b[1]['drills']) == [(5, 0)]
 
     @pytest.mark.parametrize('fuse', [True, False])
