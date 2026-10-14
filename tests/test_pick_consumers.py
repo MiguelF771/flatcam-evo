@@ -161,14 +161,15 @@ class TestDblSided:
         points, exits = dbl_click(exc, (5.0, 5.1))
         assert points == [pytest.approx((5.0, 5.0))] and exits == 1
 
-    def test_each_tool_can_still_hit(self, app):
-        # the old inner "break" left only the loop of 1 tool
+    def test_overlapping_drills_of_two_tools_give_one_point(self, app):
+        # the old inner "break" left only the loop of 1 tool, so a 2nd tool set the point again and called
+        # on_exit() a 2nd time; the first hit now ends the search
         exc = _custom_excellon(app, {
             1: {'tooldia': 1.0, 'drills': [Point(5, 5)], 'slots': [], 'solid_geometry': [], 'data': {}},
             2: {'tooldia': 2.0, 'drills': [Point(5, 5.2)], 'slots': [], 'solid_geometry': [], 'data': {}},
         })
         points, exits = dbl_click(exc, (5.0, 5.1))
-        assert points == [pytest.approx((5.0, 5.0)), pytest.approx((5.0, 5.2))] and exits == 2
+        assert points == [pytest.approx((5.0, 5.0))] and exits == 1
 
 
 # ---------------------------------------------------------------------------------------------------------------

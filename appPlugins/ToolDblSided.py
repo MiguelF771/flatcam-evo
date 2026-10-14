@@ -430,13 +430,9 @@ class DblSidedTool(AppTool):
                 self.app.selection_type = None
             else:
                 if self.exc_hole_obj.kind.lower() == 'excellon':
-                    # a hit ends the search inside its tool; the next tool is still searched
-                    hit_tool = None
+                    # the first hit sets the reference point and ends the tool, so the search stops there
                     for rec in iter_features(self.exc_hole_obj):
-                        if hit_tool is not None and rec.item_key == hit_tool:
-                            continue
                         if click_pt.within(rec.solid):
-                            hit_tool = rec.item_key
                             center_pt = rec.solid.centroid
                             center_pt_coords = (
                                 self.app.dec_format(center_pt.x, self.decimals),
@@ -450,6 +446,7 @@ class DblSidedTool(AppTool):
 
                             self.on_exit()
                             self.app.inform.emit('[success] %s' % _("Mirror reference point set."))
+                            break
 
         elif event.button == right_button and self.app.event_is_dragging is False:
             self.on_exit(cancelled=True)
