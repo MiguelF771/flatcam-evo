@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
 import pytest
+from PyQt6 import QtCore
 
 from appObjects.AppObjectTemplate import FlatCAMObj
 from appObjects.CNCJobObject import CNCJobObject
@@ -174,3 +175,40 @@ def test_set_offset_values_writes_the_bounds_centre(cls, no_shape_collection):  
     with patch.object(cls, 'bounds', return_value=(1.0, 2.0, 5.0, 3.0)):
         obj.set_offset_values()
     obj.ui.offsetvector_entry.set_value.assert_called_once_with('(3.0, 2.5)')
+
+
+# ------------------------------------------------------------ optionChanged
+
+@pytest.mark.parametrize('cls', ALL_CLASSES)
+def test_option_changed_is_declared_once_on_flatcamobj(cls):
+    assert 'optionChanged' not in vars(cls)
+    assert defining_class(cls, 'optionChanged') is FlatCAMObj
+
+
+@pytest.mark.parametrize('cls', [GerberObject, ExcellonObject, GeometryObject, CNCJobObject])
+def test_option_changed_emits_the_key_for_built_objects(cls, no_shape_collection):  # noqa: F811
+    obj = make_obj(cls)
+    slot = Mock()
+    obj.optionChanged.connect(slot)
+    with patch.object(cls, 'set_form_item'):
+        obj.on_options_change('multicolored')
+    slot.assert_called_once_with('multicolored')
+
+
+@pytest.mark.parametrize('cls', [ScriptObject, DocumentObject])
+def test_option_changed_emits_the_key_for_script_and_document(cls):
+    # these 2 cannot be built with the headless app (their __init__ passes app= to QObject), so only the QObject part
+    # is initialized: enough to bind and emit the inherited signal
+    obj = cls.__new__(cls)
+    QtCore.QObject.__init__(obj)
+    slot = Mock()
+    obj.optionChanged.connect(slot)
+    obj.optionChanged.emit('plot')
+    slot.assert_called_once_with('plot')
+
+
+def test_option_changed_signature_is_a_single_str(no_shape_collection):  # noqa: F811
+    # emitting anything but a str is rejected, as with the per-class declarations before
+    obj = make_obj(GerberObject)
+    with pytest.raises(TypeError):
+        obj.optionChanged.emit(1.5)

@@ -53,8 +53,6 @@ class GerberObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Gerber):
     # default_alpha_level: fixed default alpha level when alpha_fill_option is None.
     alpha_fill_option = 'gerber_plot_fill'
     default_alpha_level = None
-
-    optionChanged = QtCore.pyqtSignal(str)
     replotApertures = QtCore.pyqtSignal()
 
     do_buffer_signal = QtCore.pyqtSignal()

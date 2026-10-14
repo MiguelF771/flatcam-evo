@@ -56,8 +56,6 @@ class CNCJobObject(PropertiesPanelMixin, FlatCAMObj, CNCjob):
     # default_alpha_level: fixed default alpha level when alpha_fill_option is None.
     alpha_fill_option = None
     default_alpha_level = None
-
-    optionChanged = QtCore.pyqtSignal(str)
     build_al_table_sig = QtCore.pyqtSignal()
 
     ui_type = CNCObjectUI

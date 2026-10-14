@@ -47,8 +47,6 @@ class DocumentObject(FlatCAMObj):
     # default_alpha_level: fixed default alpha level when alpha_fill_option is None.
     alpha_fill_option = None
     default_alpha_level = None
-
-    optionChanged = QtCore.pyqtSignal(str)
     ui_type = DocumentObjectUI
 
     def __init__(self, name, app):

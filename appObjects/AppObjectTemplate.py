@@ -115,6 +115,8 @@ class FlatCAMObj(QtCore.QObject):
     # default_alpha_level: fixed default alpha level when alpha_fill_option is None.
     alpha_fill_option = None
     default_alpha_level = None
+    # emitted by on_options_change with the key of the option that changed
+    optionChanged = QtCore.pyqtSignal(str)
 
     # signal to plot a single object
     plot_single_object = QtCore.pyqtSignal()

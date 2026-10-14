@@ -55,7 +55,6 @@ class ExcellonObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Excellon):
 
 
     ui_type = ExcellonObjectUI
-    optionChanged = QtCore.pyqtSignal(str)
     multicolored_build_sig = QtCore.pyqtSignal()
 
     def __init__(self, name, app):

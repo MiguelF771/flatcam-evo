@@ -61,8 +61,6 @@ class GeometryObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Geometry):
     # default_alpha_level: fixed default alpha level when alpha_fill_option is None.
     alpha_fill_option = None
     default_alpha_level = 'FF'
-
-    optionChanged = QtCore.pyqtSignal(str)
     build_ui_sig = QtCore.pyqtSignal()
     launch_job = QtCore.pyqtSignal()
 
