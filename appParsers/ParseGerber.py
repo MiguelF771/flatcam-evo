@@ -285,8 +285,7 @@ class Gerber(Geometry):
         # The export then writes the composed solid_geometry as regions. A project without it loads as False.
         self.export_as_regions: bool = False
 
-        self.ser_attrs += ['tools', 'int_digits', 'frac_digits', 'aperture_macros', 'solid_geometry', 'source_file',
-                           'export_as_regions']
+        self.ser_attrs += ['int_digits', 'frac_digits', 'aperture_macros', 'source_file', 'export_as_regions']
 
         self._Gerber_inited = True
 
