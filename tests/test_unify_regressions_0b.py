@@ -139,14 +139,9 @@ def _merge_final():
 
 
 def _call_merge(grb_list, grb_final, log=None):
-    """Call merge with the new signature if it exists, else with the old one (app=...)."""
-    params = inspect.signature(GerberObject.merge).parameters
-    if 'log' in params:
-        return GerberObject.merge(grb_list=grb_list, grb_final=grb_final, log=log)
-    return GerberObject.merge(grb_list=grb_list, grb_final=grb_final, app=SimpleNamespace(log=log))
+    return GerberObject.merge(grb_list=grb_list, grb_final=grb_final, log=log)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="fixed in Stage 0B.1")
 class TestMerge_0B1:
     def test_signature_is_list_final_optional_log(self):
         params = inspect.signature(GerberObject.merge).parameters

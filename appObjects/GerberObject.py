@@ -1682,52 +1682,61 @@ class GerberObject(FlatCAMObj, Gerber):
         return gerber_code
 
     @staticmethod
-    def merge(grb_list, grb_final, app):
+    def merge(grb_list, grb_final, log=None):
         """
-        Merges the geometry of objects in geo_list into
-        the geometry of geo_final.
+        Merges the geometry of objects in grb_list into
+        the geometry of grb_final.
 
         :param grb_list:    List of GerberObject Objects to join.
-        :param grb_final:   Destination GeometryObject object.
-        :param app:         the App class
+        :param grb_final:   Destination GerberObject object.
+        :param log:         Optional logger used for warnings
         :return:            None
         """
 
         if grb_final.solid_geometry is None:
             grb_final.solid_geometry = []
+        elif type(grb_final.solid_geometry) is not list:
+            grb_final.solid_geometry = [grb_final.solid_geometry]
+
+        follow_final = getattr(grb_final, 'follow_geometry', None)
+        if follow_final is None:
             grb_final.follow_geometry = []
+        elif type(follow_final) is not list:
+            grb_final.follow_geometry = [follow_final]
 
         if not grb_final.tools:
             grb_final.tools = {}
-
-        if type(grb_final.solid_geometry) is not list:
-            grb_final.solid_geometry = [grb_final.solid_geometry]
-            grb_final.follow_geometry = [grb_final.follow_geometry]
 
         for grb in grb_list:
 
             # Expand lists
             if type(grb) is list:
-                GerberObject.merge(grb_list=grb, grb_final=grb_final)
+                GerberObject.merge(grb_list=grb, grb_final=grb_final, log=log)
             else:   # If not list, just append
                 for option in grb.obj_options:
                     if option != 'name':
                         try:
                             grb_final.obj_options[option] = grb.obj_options[option]
                         except KeyError:
-                            app.log.warning("Failed to copy option.", option)
+                            if log:
+                                log.warning("Failed to copy option: %s" % option)
 
                 try:
                     for geos in grb.solid_geometry:
                         grb_final.solid_geometry.append(geos)
-                        grb_final.follow_geometry.append(geos)
                 except TypeError:
                     grb_final.solid_geometry.append(grb.solid_geometry)
-                    grb_final.follow_geometry.append(grb.solid_geometry)
+
+                follow_src = getattr(grb, 'follow_geometry', None)
+                if follow_src is not None:
+                    if type(follow_src) is list:
+                        grb_final.follow_geometry.extend(follow_src)
+                    else:
+                        grb_final.follow_geometry.append(follow_src)
 
                 for ap in grb.tools:
                     if ap not in grb_final.tools:
-                        grb_final.tools[ap] = grb.tools[ap]
+                        grb_final.tools[ap] = deepcopy(grb.tools[ap])
                     else:
                         # create a list of integers out of the grb.tools keys and find the max of that value
                         # then, the aperture duplicate is assigned an id value incremented with 1,
