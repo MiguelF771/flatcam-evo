@@ -2105,11 +2105,7 @@ class appIO(QtCore.QObject):
                 try:
                     if obj.obj_options.get('pcbdoc_import', False):
                         # Union overlaps so region holes don't clear other solids. Draw islands last.
-                        solid = unary_union(obj.solid_geometry)
-                        polygons = [solid] if solid.geom_type == 'Polygon' else list(solid.geoms)
-                        obj.tools = {0: {'type': 'REG', 'size': 0, 'geometry': [
-                            {'solid': geo} for geo in sorted(polygons, key=lambda geo: Polygon(geo.exterior).area,
-                                                           reverse=True)]}}
+                        obj.tools = obj.region_export_tools()
                         gerber_code = obj.export_gerber(g_whole, g_fract, g_zeros='L', factor=factor)
                         if g_zeros == 'T':
                             # Pad the magnitude, not the sign, for valid negative region coordinates.
