@@ -59,8 +59,18 @@ Rules:
 
 ## 4. Gate run
 
+Run the full suite 1 time at the end of a stage (about 4 minutes):
+
 ```
 .venv/Scripts/python.exe -m pytest tests -q -rA -p no:cacheprovider
+```
+
+For each commit, run the identity gate (section 3) and the area gate below. It holds the tests of the Gerber /
+Excellon parsers, objects, transforms, export and the Tcl transform commands (about 1.5 minutes; without the 5
+`*_e2e.py` files about 15 seconds). Add the tests of any other area that the commit changes.
+
+```
+.venv/Scripts/python.exe -m pytest tests/test_unify_characterization.py tests/test_unify_regressions_0b.py tests/test_unify_stage0c.py tests/test_unify_stage0c_transforms.py tests/test_tcl_transform_and_export_format.py tests/test_gerber_polygon_aperture.py tests/test_gerber_parser.py tests/test_pcbdoc_e2e.py tests/test_kicad_pcb_e2e.py tests/test_eagle_brd_e2e.py tests/test_allegro_brd_e2e.py tests/test_sprint_layout_e2e.py -q -rA -p no:cacheprovider
 ```
 
 `-rA` prints the full outcome list: passed / failed / skipped / xfailed / xpassed. Read it like this:
