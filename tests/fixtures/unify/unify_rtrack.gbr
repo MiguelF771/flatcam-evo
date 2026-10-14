@@ -1,0 +1,10 @@
+G04 Stage 0C fixture: a track drawn with an R aperture (an axis-aligned move)*
+%FSLAX46Y46*%
+%MOMM*%
+%ADD11R,0.8X0.6*%
+G01*
+%LPD*%
+D11*
+X5000000Y5000000D02*
+X15000000Y5000000D01*
+M02*

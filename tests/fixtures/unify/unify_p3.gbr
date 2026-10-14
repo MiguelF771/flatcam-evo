@@ -1,0 +1,10 @@
+G04 Stage 0C fixture: a triangle (P, 3 vertices) with a non-zero rotation, 2 flashes*
+%FSLAX46Y46*%
+%MOMM*%
+%ADD20P,4.0X3X20*%
+G01*
+%LPD*%
+D20*
+X10000000Y10000000D03*
+X22000000Y14000000D03*
+M02*

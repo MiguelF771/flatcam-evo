@@ -1,0 +1,10 @@
+G04 Stage 0C fixture: a non-square rectangle (R 3.0 x 1.2), 2 flashes, native only*
+%FSLAX46Y46*%
+%MOMM*%
+%ADD11R,3.0X1.2*%
+G01*
+%LPD*%
+D11*
+X10000000Y10000000D03*
+X20000000Y16000000D03*
+M02*

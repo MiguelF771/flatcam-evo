@@ -1,0 +1,9 @@
+G04 Stage 0C fixture: an odd-sided polygon (P, 7 vertices) with a rotation, 1 flash*
+%FSLAX46Y46*%
+%MOMM*%
+%ADD21P,3.0X7X10*%
+G01*
+%LPD*%
+D21*
+X12000000Y8000000D03*
+M02*

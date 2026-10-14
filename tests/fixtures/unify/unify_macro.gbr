@@ -1,0 +1,12 @@
+G04 Stage 0C fixture: an outline macro aperture (AM), 2 flashes*
+%FSLAX46Y46*%
+%MOMM*%
+%AMOUTL*
+4,1,4,0,0,2,0,2,1,0,1,0,0,0*%
+%ADD14OUTL*%
+G01*
+%LPD*%
+D14*
+X10000000Y10000000D03*
+X18000000Y12000000D03*
+M02*
