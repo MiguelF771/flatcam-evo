@@ -1312,7 +1312,11 @@ class ExcellonObject(FlatCAMObj, Excellon):
         except TypeError:
             self.solid_geometry = [self.solid_geometry]
 
-        visible = visible if visible else self.ui.plot_cb.get_value()
+        if visible is None:
+            visible = self.ui.plot_cb.get_value()
+
+        # the shape indexes of a previous plot are not valid anymore
+        self.shape_indexes_dict.clear()
 
         try:
             # Plot Excellon (All polygons?)
