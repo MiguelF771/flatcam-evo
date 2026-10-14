@@ -89,3 +89,105 @@ class TestDispatchAttr:
     def test_the_attribute_of_the_object_wins(self):
         stand_in = SimpleNamespace(kind='gerber', status_color='pink')
         assert dispatch_attr(stand_in, 'status_color') == 'pink'
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# AppObject (new_object option copy, on_object_created status message and colors)
+# ---------------------------------------------------------------------------------------------------------------
+
+from collections import defaultdict  # noqa: E402
+from appObjects.AppObject import AppObject  # noqa: E402
+
+KINDS = sorted(CLASSES)
+# ScriptObject / DocumentObject cannot be constructed at this commit: FlatCAMObj.__init__ passes app= to QObject
+# (TypeError, not part of this change), so the tests that need a constructor skip them.
+BUILDABLE = [k for k in KINDS if k not in ('script', 'document')]
+
+
+def make_app_object():
+    app = make_app()
+    app.on_plots_updated = Mock()
+    app.main_thread = QtCore.QThread.currentThread()
+    app.edit_class = Mock()
+    app.inform_shell = Mock()
+    app.preprocessors = defaultdict(Mock)
+    app.all_objects_list = []
+    app.collection.group_items = {'gerber': Mock(child_count=Mock(return_value=1))}
+    return app, AppObject(app)
+
+
+def build_obj(kind, app, name='nm'):
+    cls = CLASSES[kind]
+    if kind in BUILDABLE:
+        return cls(name, app)
+    obj = cls.__new__(cls)
+    QtCore.QObject.__init__(obj)
+    obj.obj_options = {}
+    obj.kind = kind
+    return obj
+
+
+def old_obj_options(kind, base, options):
+    """obj_options as the OLD new_object chains filled them (in order), starting from the constructor state."""
+    res = dict(base)
+    for option in options:
+        if option.find(kind + "_") == 0:
+            res[option[len(kind) + 1:]] = options[option]
+    if kind == 'excellon':
+        for option in options:
+            if option.find('tools_drill_') == 0:
+                res[option] = options[option]
+    if kind == 'gerber':
+        for option in options:
+            if option.find('tools_iso_') == 0:
+                res[option] = options[option]
+    if kind in ['excellon', 'gerber', 'geometry', 'cncjob']:
+        for option in options:
+            if option.find('tools_mill_') == 0:
+                res[option] = options[option]
+        for option in options:
+            if option.find('tools_') == 0:
+                res[option] = options[option]
+    return res
+
+
+class TestAppObjectNewObject:
+    @pytest.mark.parametrize('kind', BUILDABLE)
+    def test_options_copied_like_the_old_chains(self, kind, _headless_qt):
+        app, app_obj = make_app_object()
+        base = build_obj(kind, app, 'n').obj_options
+        seen = []
+
+        def initialize(obj, _app):
+            seen.append(obj)
+            return 'fail'
+
+        assert app_obj.new_object(kind, 'n', initialize) == 'fail'
+        got = seen[0].obj_options
+        expected = old_obj_options(kind, base, app.options)
+        assert got == expected
+        assert list(got) == list(expected)
+        if kind in ('gerber', 'excellon'):
+            prefix = 'tools_iso_' if kind == 'gerber' else 'tools_drill_'
+            assert any(k.startswith(prefix) for k in got)
+
+
+class TestAppObjectOnObjectCreated:
+    @pytest.mark.parametrize('kind', KINDS)
+    def test_status_message_and_colors(self, kind, _headless_qt):
+        app, app_obj = make_app_object()
+        obj = build_obj(kind, app)
+        obj.obj_options['name'] = 'nm'
+        before = getattr(obj, 'fill_color', None)
+
+        app_obj.on_object_created(obj, False, True, None, [])
+
+        calls = [c.args[0] for c in app.inform.emit.call_args_list]
+        assert calls == ['[selected] %s created/selected: <span style="color:%s;">nm</span>'
+                         % (kind.capitalize(), EXPECTED[kind]['status_color'])]
+        app.log.error.assert_not_called()
+        if kind in ('excellon', 'gerber'):
+            assert obj.fill_color == app.options[kind + '_plot_fill']
+            assert obj.outline_color == app.options[kind + '_plot_line']
+        else:
+            assert getattr(obj, 'fill_color', None) == before

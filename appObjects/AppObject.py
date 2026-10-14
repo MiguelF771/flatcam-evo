@@ -147,17 +147,14 @@ class AppObject(QtCore.QObject):
 
         # add some of the FlatCAM Tools related properties
         # it is done like this to preserve some kind of order in the keys
-        if kind == 'excellon':
+        tool_option_prefix = obj.tool_option_prefix
+        if tool_option_prefix:
             for option in self.app.options:
-                if option.find('tools_drill_') == 0:
-                    obj.obj_options[option] = self._app_option(option)
-        if kind == 'gerber':
-            for option in self.app.options:
-                if option.find('tools_iso_') == 0:
+                if option.find(tool_option_prefix) == 0:
                     obj.obj_options[option] = self._app_option(option)
 
         # the milling options should be inherited by all manufacturing objects
-        if kind in ['excellon', 'gerber', 'geometry', 'cncjob']:
+        if obj.inherits_mill_options:
             for option in self.app.options:
                 if option.find('tools_mill_') == 0:
                     obj.obj_options[option] = self._app_option(option)
@@ -272,47 +269,18 @@ class AppObject(QtCore.QObject):
         # #############################################################################################################
         # ######################  Set colors for the message in the Status Bar  #######################################
         # #############################################################################################################
-        if obj.kind == 'gerber':
+        status_color = obj.status_color
+        if status_color is not None:
             self.app.inform.emit('[selected] {kind} {tx}: <span style="color:{color};">{name}</span>'.format(
                 kind=obj.kind.capitalize(),
-                color='green',
-                name=str(obj.obj_options['name']), tx=_("created/selected"))
-            )
-        elif obj.kind == 'excellon':
-            self.app.inform.emit('[selected] {kind} {tx}: <span style="color:{color};">{name}</span>'.format(
-                kind=obj.kind.capitalize(),
-                color='brown',
-                name=str(obj.obj_options['name']), tx=_("created/selected"))
-            )
-        elif obj.kind == 'cncjob':
-            self.app.inform.emit('[selected] {kind} {tx}: <span style="color:{color};">{name}</span>'.format(
-                kind=obj.kind.capitalize(),
-                color='blue',
-                name=str(obj.obj_options['name']), tx=_("created/selected"))
-            )
-        elif obj.kind == 'geometry':
-            self.app.inform.emit('[selected] {kind} {tx}: <span style="color:{color};">{name}</span>'.format(
-                kind=obj.kind.capitalize(),
-                color='red',
-                name=str(obj.obj_options['name']), tx=_("created/selected"))
-            )
-        elif obj.kind == 'script':
-            self.app.inform.emit('[selected] {kind} {tx}: <span style="color:{color};">{name}</span>'.format(
-                kind=obj.kind.capitalize(),
-                color='orange',
-                name=str(obj.obj_options['name']), tx=_("created/selected"))
-            )
-        elif obj.kind == 'document':
-            self.app.inform.emit('[selected] {kind} {tx}: <span style="color:{color};">{name}</span>'.format(
-                kind=obj.kind.capitalize(),
-                color='darkCyan',
+                color=status_color,
                 name=str(obj.obj_options['name']), tx=_("created/selected"))
             )
 
         # ############################################################################################################
         # Set the colors for the objects that have geometry
         # ############################################################################################################
-        if obj.kind in ['excellon', 'gerber']:
+        if obj.has_plot_colors:
             try:
                 if obj.kind == 'gerber' and "gerber_color_list" not in self.app.options:
                     self.app.options["gerber_color_list"] = deepcopy(self._app_option("gerber_color_list", []))
