@@ -9,6 +9,7 @@ from PyQt6 import QtWidgets, QtGui, QtCore
 from appTool import AppTool
 from appGUI.GUIElements import VerticalScrollArea, FCLabel, FCButton, FCFrame, GLay, FCComboBox, RadioSet
 from defaults import AppDefaults
+from appParsers.feature_access import iter_features
 
 from shapely import Point
 from shapely.affinity import translate
@@ -250,31 +251,29 @@ class AlignObjects(AppTool):
                 self.app.selection_type = None
             else:
                 if self.target_obj.kind.lower() == 'excellon':
-                    for tool, tool_dict in self.target_obj.tools.items():
-                        for geo in tool_dict['solid_geometry']:
-                            if click_pt.within(geo):
-                                center_pt = geo.centroid
-                                self.clicked_points.append(
-                                    [
-                                        float('%.*f' % (self.decimals, center_pt.x)),
-                                        float('%.*f' % (self.decimals, center_pt.y))
-                                    ]
-                                )
-                                self.check_points()
+                    # every drill and every slot counts; the center is the centroid of its solid
+                    for rec in iter_features(self.target_obj):
+                        if click_pt.within(rec.solid):
+                            center_pt = rec.solid.centroid
+                            self.clicked_points.append(
+                                [
+                                    float('%.*f' % (self.decimals, center_pt.x)),
+                                    float('%.*f' % (self.decimals, center_pt.y))
+                                ]
+                            )
+                            self.check_points()
                 elif self.target_obj.kind.lower() == 'gerber':
-                    for apid, apid_val in self.target_obj.tools.items():
-                        for geo_el in apid_val['geometry']:
-                            if 'solid' in geo_el:
-                                if click_pt.within(geo_el['solid']):
-                                    if isinstance(geo_el['follow'], Point):
-                                        center_pt = geo_el['solid'].centroid
-                                        self.clicked_points.append(
-                                            [
-                                                float('%.*f' % (self.decimals, center_pt.x)),
-                                                float('%.*f' % (self.decimals, center_pt.y))
-                                            ]
-                                        )
-                                        self.check_points()
+                    # only dark flashes (the follow is a Point) count; the center is the centroid of the solid
+                    for rec in iter_features(self.target_obj):
+                        if rec.polarity == 'dark' and isinstance(rec.follow, Point) and click_pt.within(rec.solid):
+                            center_pt = rec.solid.centroid
+                            self.clicked_points.append(
+                                [
+                                    float('%.*f' % (self.decimals, center_pt.x)),
+                                    float('%.*f' % (self.decimals, center_pt.y))
+                                ]
+                            )
+                            self.check_points()
 
         elif event.button == right_button and self.app.event_is_dragging is False:
             self.reset_color()
