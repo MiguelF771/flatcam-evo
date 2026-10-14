@@ -39,3 +39,33 @@ def test_source_excellon_without_slots_or_drills_keys_is_not_changed(app):
     assert {tid: sorted(tool) for tid, tool in src.tools.items()} == keys_before
     # the panel still has both keys everywhere
     assert all('drills' in t and 'slots' in t for t in created['e_panelized'].tools.values())
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# 'Done' was shown before the worker ran
+# ---------------------------------------------------------------------------------------------------------------
+
+def test_done_message_comes_from_the_job_not_from_the_gui_thread(app):
+    src = make_gerber(app, name='g')
+    before = []
+    created, informs = run_plugin(app, src, rows=1, cols=2, before=before)
+    assert 'g_panelized' in created
+    assert not any('Done' in m or 'successfully' in m for m in before)
+    assert informs[-1] == '[success] Panel created successfully.'
+
+
+def test_no_success_message_when_the_job_fails(app):
+    src = make_gerber(app, name='g')
+    created, informs = run_plugin(app, src, rows=1, cols=2, fail_job=True)
+    assert not created
+    assert not any('Done' in m or 'successfully' in m for m in informs)
+    assert any('boom' in str(c) for c in app.log.error.call_args_list)
+
+def test_constrain_warning_comes_from_the_job_with_the_final_grid(app):
+    src = make_gerber(app, name='g')
+    xmin, ymin, xmax, ymax = src.bounds()
+    w, h = xmax - xmin, ymax - ymin
+    before = []
+    created, informs = run_plugin(app, src, rows=3, cols=4, constrain=(2 * w + 5.5, h + 1.0), before=before)
+    assert not any('constrain' in m for m in before)
+    assert informs[-1].startswith('[WARNING]') and '2 columns and 1 rows' in informs[-1]

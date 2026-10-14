@@ -51,9 +51,6 @@ class Panelize(AppTool):
         # final name for the panel object
         self.outname = ""
 
-        # flag to signal the constrain was activated
-        self.constrain_flag = False
-
     def run(self, toggle=True):
         self.app.defaults.report_usage("ToolPanelize()")
 
@@ -377,12 +374,11 @@ class Panelize(AppTool):
         box_bounds = box_obj.bounds()
 
         # check if constrain within an area is desired
+        constrained = False
         if self.ui.constrain_cb.isChecked():
             # adjust the number of columns and/or rows so the panel will fit within the panel constraint area
             rows, columns, constrained = panelize_core.constrain_grid(
                 box_bounds, rows, columns, spacing_columns, spacing_rows, constrain_dx, constrain_dy)
-            if constrained:
-                self.constrain_flag = True
 
         offsets = panelize_core.grid_offsets(box_bounds, rows, columns, spacing_columns, spacing_rows)
 
@@ -585,22 +581,21 @@ class Panelize(AppTool):
                         self.app.app_obj.new_object(
                             'gerber', self.outname, job_init_gerber, plot=True, autoselected=False)
 
-        if self.constrain_flag is False:
-            self.app.inform.emit('[success] %s' % _("Done."))
-        else:
-            self.constrain_flag = False
-            self.app.inform.emit(_("{text} Too big for the constrain area. "
-                                   "Final panel has {col} columns and {row} rows").format(
-                text='[WARNING] ', col=columns, row=rows))
-
         def job_thread(app_obj):
             with self.app.proc_container.new('%s...' % _("Working")):
                 try:
                     panelize_worker()
-                    app_obj.inform.emit('[success] %s' % _("Panel created successfully."))
                 except Exception as ee:
                     self.app.log.error(str(ee))
                     return
+
+                # reported after the panel exists, not before the worker ran
+                if constrained:
+                    app_obj.inform.emit(_("{text} Too big for the constrain area. "
+                                          "Final panel has {col} columns and {row} rows").format(
+                        text='[WARNING] ', col=columns, row=rows))
+                else:
+                    app_obj.inform.emit('[success] %s' % _("Panel created successfully."))
 
         self.app.collection.promise(self.outname)
         self.app.worker_task.emit({'fcn': job_thread, 'params': [self.app]})
