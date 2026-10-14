@@ -57,8 +57,8 @@ class GeometryObject(FlatCAMObj, Geometry):
 
         self.circle_steps = int(self._app_option("geometry_circle_steps"))
 
-        FlatCAMObj.__init__(self, name, app=app)
         Geometry.__init__(self, geo_steps_per_circle=self.circle_steps, app=app)
+        FlatCAMObj.__init__(self, name, app=app)
 
         self.kind = "geometry"
 

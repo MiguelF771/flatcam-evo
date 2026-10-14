@@ -117,6 +117,9 @@ class Gerber(Geometry):
         :return: Gerber object
         :rtype: Gerber
         """
+        if self.__dict__.get('_Gerber_inited'):
+            return
+
         # Import app type (for type hinting) here to avoid circular import.
         from appMain import App
 
@@ -290,6 +293,8 @@ class Gerber(Geometry):
         # Always append to it because it carries contents
         # from Geometry.
         self.ser_attrs += ['tools', 'int_digits', 'frac_digits', 'aperture_macros', 'solid_geometry', 'source_file']
+
+        self._Gerber_inited = True
 
     def aperture_parse(
         self,

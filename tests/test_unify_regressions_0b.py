@@ -203,7 +203,6 @@ def _temp_shapes_count(app):
     return app.plotcanvas.new_shape_collection.call_count
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="fixed in Stage 0B.2")
 class TestDoubleInit_0B2:
     def test_excellon_object_keeps_circle_steps_preference(self, no_shape_collection):
         app = make_app(excellon_circle_steps=21)

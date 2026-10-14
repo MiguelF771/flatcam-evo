@@ -563,6 +563,9 @@ class Geometry(object):
     multigeo: bool
 
     def __init__(self, app, geo_steps_per_circle=None):
+        if self.__dict__.get('_Geometry_inited'):
+            return
+
         # Units (in or mm)
         self.app = app
         self.units = self.app.app_units
@@ -601,6 +604,8 @@ class Geometry(object):
 
         # Attributes to be included in serialization
         self.ser_attrs = ["units", 'solid_geometry', 'follow_geometry', 'tools']
+
+        self._Geometry_inited = True
 
     def _app_option(self, key, fallback=None):
         defaults = getattr(self.app, "defaults", None)
@@ -2856,6 +2861,8 @@ class CNCjob(Geometry):
                  seg_x=None,
                  seg_y=None,
                  steps_per_circle=None):
+        if self.__dict__.get('_CNCjob_inited'):
+            return
 
         self.app = app
         self.decimals = self.app.decimals
@@ -2988,6 +2995,8 @@ class CNCjob(Geometry):
         self.ser_attrs += ['kind', 'z_cut', 'z_move', 'z_toolchange', 'feedrate', 'z_feedrate', 'feedrate_rapid',
                            'tooldia', 'gcode', 'input_geometry_bounds', 'gcode_parsed', 'steps_per_circle',
                            'z_depthpercut', 'spindlespeed', 'dwell', 'dwelltime', 'travel_distance', 'routing_time']
+
+        self._CNCjob_inited = True
 
     @property
     def postdata(self):

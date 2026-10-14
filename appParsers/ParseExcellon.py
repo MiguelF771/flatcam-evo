@@ -69,6 +69,9 @@ class Excellon(Geometry):
         :return: Excellon object.
         :rtype: Excellon
         """
+        if self.__dict__.get('_Excellon_inited'):
+            return
+
         self.app = app
 
         self.decimals = self.app.decimals
@@ -217,6 +220,8 @@ class Excellon(Geometry):
 
         # Repeating command
         self.repeat_re = re.compile(r'R(\d+)')
+
+        self._Excellon_inited = True
 
     def parse_file(self, filename=None, file_obj=None):
         """
