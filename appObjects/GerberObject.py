@@ -1047,6 +1047,8 @@ class GerberObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Gerber):
             with self.app.proc_container.new('%s ...' % _("Plotting")):
                 try:
                     if aperture_to_plot_mark in app_obj.tools:
+                        # an aperture added after build_ui has no storage key yet
+                        mark_storage = app_obj.mark_shapes_storage.setdefault(aperture_to_plot_mark, [])
                         for elem in app_obj.tools[aperture_to_plot_mark]['geometry']:
                             if 'solid' in elem:
                                 if only_flashes and not isinstance(elem['follow'], Point):
@@ -1057,11 +1059,11 @@ class GerberObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Gerber):
                                     for el in s_geo:
                                         shape_key = app_obj.add_mark_shape(shape=el, color=color, face_color=color,
                                                                            visible=visibility)
-                                        app_obj.mark_shapes_storage[aperture_to_plot_mark].append(shape_key)
+                                        mark_storage.append(shape_key)
                                 except TypeError:
                                     shape_key = app_obj.add_mark_shape(shape=s_geo, color=color, face_color=color,
                                                                        visible=visibility)
-                                    app_obj.mark_shapes_storage[aperture_to_plot_mark].append(shape_key)
+                                    mark_storage.append(shape_key)
                     app_obj.mark_shapes.redraw()
                 except (ObjectDeleted, AttributeError):
                     app_obj.clear_plot_apertures()
@@ -1086,7 +1088,7 @@ class GerberObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Gerber):
                 val = True if self.app.use_3d_engine else False
                 self.mark_shapes.clear(update=val)
             else:
-                for shape_key in self.mark_shapes_storage[aperture]:
+                for shape_key in self.mark_shapes_storage.get(aperture, []):
                     try:
                         self.mark_shapes.remove(shape_key)
                     except Exception as e:
