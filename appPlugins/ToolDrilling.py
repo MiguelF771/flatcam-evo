@@ -13,6 +13,7 @@ from appGUI.GUIElements import VerticalScrollArea, FCLabel, FCButton, FCFrame, G
     OptionalInputSection, OptionalHideInputSection
 from appParsers.ParseExcellon import Excellon
 from appDatabase import load_tools_database
+from camlib import flatten_shapely_geometry
 
 from matplotlib.backend_bases import KeyEvent as mpl_key_event
 
@@ -35,6 +36,40 @@ if '_' not in builtins.__dict__:
     _ = gettext.gettext
 
 log = logging.getLogger('base')
+
+
+def merge_same_diameter_tools(tools):
+    """
+    Merges the Excellon tools that have the same diameter. After a replacement from the Tools DB, more than one
+    original tool can fit in the tolerance of one DB tool and get its diameter. The first tool keeps its data and
+    gets the drills, slots and solid geometry of the others.
+
+    :param tools:   Excellon tools, {tool_id: {'tooldia': float, 'drills': list, 'slots': list, ...}}
+    :type tools:    dict
+    :return:        the same dict if no diameter repeats, else a new dict with consecutive tool IDs from 1
+    :rtype:         dict
+    """
+    diameters = [tool_val['tooldia'] for tool_val in tools.values()]
+    if len(diameters) == len(set(diameters)):
+        return tools
+
+    merged = {}
+    id_by_dia = {}
+    for tool_val in tools.values():
+        dia = tool_val['tooldia']
+        if dia not in id_by_dia:
+            id_by_dia[dia] = len(merged) + 1
+            merged[id_by_dia[dia]] = deepcopy(tool_val)
+            continue
+
+        target = merged[id_by_dia[dia]]
+        for key in ('drills', 'slots'):
+            if tool_val.get(key):
+                target[key] = list(target.get(key) or []) + list(tool_val[key])
+        if tool_val.get('solid_geometry'):
+            target['solid_geometry'] = flatten_shapely_geometry(
+                [target.get('solid_geometry') or [], tool_val['solid_geometry']])
+    return merged
 
 
 class ToolDrilling(Excellon, AppTool):
@@ -723,12 +758,8 @@ class ToolDrilling(Excellon, AppTool):
             }
             for idx, v in enumerate(new_tools.values(), start=1):
                 self.excellon_tools[idx] = v
-        else:
-            try:
-                self.excellon_tools = self.excellon_obj.tools
-            except AttributeError:
-                # when no object was loaded yet
-                pass
+        # for the 'Default' order keep self.excellon_tools as it is; set_tool_ui() and on_object_changed() load it
+        # from the object, and resetting it here undoes replace_tools() and rebuild_ui()
 
         if self.excellon_obj and self.excellon_tools:
             self.ui.exc_param_frame.setDisabled(False)
@@ -1253,7 +1284,8 @@ class ToolDrilling(Excellon, AppTool):
                     self.blockSignals(False)
                     return
 
-            self.excellon_tools = new_tools_dict
+            # more than one original tool can fit in the tolerance of the same DB tool
+            self.excellon_tools = merge_same_diameter_tools(new_tools_dict)
             self.build_tool_ui()
 
     def on_toggle_all_rows(self):

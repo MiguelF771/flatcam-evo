@@ -976,6 +976,45 @@ class ConsumerChecks(DatabaseCase):
         stub.excellon_tools[1]['data']['tools_drill_feedrate_z'] = 99.0
         self.assertEqual(321.0, tool['data']['tools_drill_feedrate_z'])
 
+    def test_drilling_tolerance_merges_tools_with_the_same_db_diameter(self):
+        from shapely import Point
+        from appPlugins.ToolDrilling import ToolDrilling
+        tool = record(2, 0.8)
+        tool['data']['tol_min'], tool['data']['tol_max'] = (0.75, 0.85)
+        stub = SimpleNamespace(
+            app=self.app, excellon_obj=object(),
+            excellon_tools={
+                1: {'tooldia': 0.8, 'drills': [Point(0, 0)], 'slots': [],
+                    'solid_geometry': [Point(0, 0).buffer(0.4)], 'data': {}},
+                2: {'tooldia': 1.0, 'drills': [Point(5, 5)], 'slots': [],
+                    'solid_geometry': [Point(5, 5).buffer(0.5)], 'data': {}},
+                3: {'tooldia': 0.82, 'drills': [Point(1, 1), Point(2, 2)], 'slots': [((3, 3), (4, 3))],
+                    'solid_geometry': [Point(1, 1).buffer(0.41), Point(2, 2).buffer(0.41)], 'data': {}},
+            },
+            tools_db_dict={'1': tool}, build_tool_ui=MagicMock(), blockSignals=MagicMock())
+        object_tools = stub.excellon_tools
+
+        ToolDrilling.replace_tools(stub)
+
+        self.assertEqual([1, 2], sorted(stub.excellon_tools))
+        merged, other = stub.excellon_tools[1], stub.excellon_tools[2]
+        self.assertEqual(0.8, merged['tooldia'])
+        self.assertEqual([(0, 0), (1, 1), (2, 2)], [(p.x, p.y) for p in merged['drills']])
+        self.assertEqual([((3, 3), (4, 3))], merged['slots'])
+        self.assertEqual(3, len(merged['solid_geometry']))
+        self.assertEqual(tool['data']['tools_drill_feedrate_z'], merged['data']['tools_drill_feedrate_z'])
+        self.assertEqual(1.0, other['tooldia'])
+        self.assertEqual(1, len(other['drills']))
+        stub.build_tool_ui.assert_called_once()
+        # the tools of the Excellon object must not change
+        self.assertEqual([0.8, 1.0, 0.82], [t['tooldia'] for t in object_tools.values()])
+        self.assertEqual([1, 1, 2], [len(t['drills']) for t in object_tools.values()])
+
+    def test_drilling_merge_keeps_tools_without_repeated_diameter(self):
+        from appPlugins.ToolDrilling import merge_same_diameter_tools
+        tools = {3: {'tooldia': 0.8}, 7: {'tooldia': 1.0}}
+        self.assertIs(tools, merge_same_diameter_tools(tools))
+
     def test_cutout_picker_does_not_mutate_database_record(self):
         from appPlugins.ToolCutOut import CutOut
         tool = record(6)
