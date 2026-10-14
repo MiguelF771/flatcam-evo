@@ -38,7 +38,7 @@ class TclCommandScale(TclCommand):
     ])
 
     # array of mandatory options for current Tcl command: required = {'name','outname'}
-    required = ['name']
+    required = []
 
     # structured help for current command, args needs to be ordered
     help = {
