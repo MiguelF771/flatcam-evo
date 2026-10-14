@@ -6,7 +6,7 @@
 # MIT Licence                                                 #
 # ########################################################## ##
 
-from camlib import Geometry, grace, translate_geometry
+from camlib import Geometry, grace, translate_geometry, map_geometry
 
 import shapely
 import shapely.affinity as affinity
@@ -1252,6 +1252,37 @@ class Excellon(Geometry):
         self.create_geometry()
         return factor
 
+    def _transform_tools(self, fn, any_iterable=False):
+        """
+        Apply fn (1 shapely.affinity call on 1 geometry) to the drills, the slot ends and the solid_geometry of every
+        tool and show the progress per tool. The caller recreates the geometry (create_geometry) and applies the
+        tooldia rules.
+
+        :param fn:           callable(geometry) -> transformed geometry
+        :param any_iterable: passed to map_geometry for the solid_geometry (mirror / skew walk any iterable)
+        """
+        # variables to display the percentage of work done
+        self.geo_len = len(self.tools)
+        self.old_disp_number = 0
+        self.el_count = 0
+
+        for tool in self.tools:
+            if 'drills' in self.tools[tool]:
+                self.tools[tool]['drills'] = [fn(drill) for drill in self.tools[tool]['drills']]
+
+            if 'slots' in self.tools[tool]:
+                self.tools[tool]['slots'] = [(fn(slot[0]), fn(slot[1])) for slot in self.tools[tool]['slots']]
+
+            self.tools[tool]['solid_geometry'] = map_geometry(self.tools[tool]['solid_geometry'], fn,
+                                                              any_iterable=any_iterable)
+
+            # update status display
+            self.el_count += 1
+            disp_number = int(np.interp(self.el_count, [0, self.geo_len], [0, 100]))
+            if self.old_disp_number < disp_number <= 100:
+                self.app.proc_container.update_view_text(' %d%%' % disp_number)
+                self.old_disp_number = disp_number
+
     def scale(self, xfactor, yfactor=None, point=None):
         """
         Scales geometry on the XY plane in the object by a given factor.
@@ -1283,54 +1314,7 @@ class Excellon(Geometry):
 
         uniform = abs(xfactor) == abs(yfactor)
 
-        def scale_geom(obj):
-            if type(obj) is list:
-                new_obj = []
-                for g in obj:
-                    new_obj.append(scale_geom(g))
-                return new_obj
-            else:
-                try:
-                    return affinity.scale(obj, xfactor, yfactor, origin=(px, py))
-                except AttributeError:
-                    return obj
-
-        # variables to display the percentage of work done
-        self.geo_len = 0
-        try:
-            self.geo_len = len(self.tools)
-        except TypeError:
-            self.geo_len = 1
-        self.old_disp_number = 0
-        self.el_count = 0
-
-        for tool in self.tools:
-            # Scale Drills
-            if 'drills' in self.tools[tool]:
-                new_drills = []
-                for drill in self.tools[tool]['drills']:
-                    new_drills.append(affinity.scale(drill, xfactor, yfactor, origin=(px, py)))
-                self.tools[tool]['drills'] = new_drills
-
-            # Scale Slots
-            if 'slots' in self.tools[tool]:
-                new_slots = []
-                for slot in self.tools[tool]['slots']:
-                    new_start = affinity.scale(slot[0], xfactor, yfactor, origin=(px, py))
-                    new_stop = affinity.scale(slot[1], xfactor, yfactor, origin=(px, py))
-                    new_slot = (new_start, new_stop)
-                    new_slots.append(new_slot)
-                self.tools[tool]['slots'] = new_slots
-
-            # Scale solid_geometry
-            self.tools[tool]['solid_geometry'] = scale_geom(self.tools[tool]['solid_geometry'])
-
-            # update status display
-            self.el_count += 1
-            disp_number = int(np.interp(self.el_count, [0, self.geo_len], [0, 100]))
-            if self.old_disp_number < disp_number <= 100:
-                self.app.proc_container.update_view_text(' %d%%' % disp_number)
-                self.old_disp_number = disp_number
+        self._transform_tools(lambda geo: affinity.scale(geo, xfactor, yfactor, origin=(px, py)))
 
         if uniform:
             for tool in self.tools:
@@ -1419,56 +1403,7 @@ class Excellon(Geometry):
         px, py = point
         xscale, yscale = {"X": (1.0, -1.0), "Y": (-1.0, 1.0)}[axis]
 
-        def mirror_geom(obj):
-            try:
-                new_obj = []
-                for geo in obj:
-                    new_obj.append(mirror_geom(geo))
-                return new_obj
-            except TypeError:
-                try:
-                    return affinity.scale(obj, xscale, yscale, origin=(px, py))
-                except AttributeError:
-                    return obj
-
-        # Modify data
-
-        # variables to display the percentage of work done
-        self.geo_len = 0
-        try:
-            self.geo_len = len(self.tools)
-        except TypeError:
-            self.geo_len = 1
-        self.old_disp_number = 0
-        self.el_count = 0
-
-        for tool in self.tools:
-            # Offset Drills
-            if 'drills' in self.tools[tool]:
-                new_drills = []
-                for drill in self.tools[tool]['drills']:
-                    new_drills.append(affinity.scale(drill, xscale, yscale, origin=(px, py)))
-                self.tools[tool]['drills'] = new_drills
-
-            # Offset Slots
-            if 'slots' in self.tools[tool]:
-                new_slots = []
-                for slot in self.tools[tool]['slots']:
-                    new_start = affinity.scale(slot[0], xscale, yscale, origin=(px, py))
-                    new_stop = affinity.scale(slot[1], xscale, yscale, origin=(px, py))
-                    new_slot = (new_start, new_stop)
-                    new_slots.append(new_slot)
-                self.tools[tool]['slots'] = new_slots
-
-            # Offset solid_geometry
-            self.tools[tool]['solid_geometry'] = mirror_geom(self.tools[tool]['solid_geometry'])
-
-            # update status display
-            self.el_count += 1
-            disp_number = int(np.interp(self.el_count, [0, self.geo_len], [0, 100]))
-            if self.old_disp_number < disp_number <= 100:
-                self.app.proc_container.update_view_text(' %d%%' % disp_number)
-                self.old_disp_number = disp_number
+        self._transform_tools(lambda geo: affinity.scale(geo, xscale, yscale, origin=(px, py)), any_iterable=True)
 
         # Recreate geometry
         self.create_geometry()
@@ -1500,59 +1435,12 @@ class Excellon(Geometry):
         if angle_x == 0 and angle_y == 0:
             return
 
-        def skew_geom(obj):
-            try:
-                new_obj = []
-                for g in obj:
-                    new_obj.append(skew_geom(g))
-                return new_obj
-            except TypeError:
-                try:
-                    return affinity.skew(obj, angle_x, angle_y, origin=(px, py))
-                except AttributeError:
-                    return obj
-
-        # variables to display the percentage of work done
-        self.geo_len = 0
-        try:
-            self.geo_len = len(self.tools)
-        except TypeError:
-            self.geo_len = 1
-        self.old_disp_number = 0
-        self.el_count = 0
-
         if point is None:
             px, py = 0, 0
         else:
             px, py = point
 
-        for tool in self.tools:
-            # Offset Drills
-            if 'drills' in self.tools[tool]:
-                new_drills = []
-                for drill in self.tools[tool]['drills']:
-                    new_drills.append(affinity.skew(drill, angle_x, angle_y, origin=(px, py)))
-                self.tools[tool]['drills'] = new_drills
-
-            # Offset Slots
-            if 'slots' in self.tools[tool]:
-                new_slots = []
-                for slot in self.tools[tool]['slots']:
-                    new_start = affinity.skew(slot[0], angle_x, angle_y, origin=(px, py))
-                    new_stop = affinity.skew(slot[1], angle_x, angle_y, origin=(px, py))
-                    new_slot = (new_start, new_stop)
-                    new_slots.append(new_slot)
-                self.tools[tool]['slots'] = new_slots
-
-            # Offset solid_geometry
-            self.tools[tool]['solid_geometry'] = skew_geom(self.tools[tool]['solid_geometry'])
-
-            # update status display
-            self.el_count += 1
-            disp_number = int(np.interp(self.el_count, [0, self.geo_len], [0, 100]))
-            if self.old_disp_number < disp_number <= 100:
-                self.app.proc_container.update_view_text(' %d%%' % disp_number)
-                self.old_disp_number = disp_number
+        self._transform_tools(lambda geo: affinity.skew(geo, angle_x, angle_y, origin=(px, py)), any_iterable=True)
 
         self.create_geometry()
         self.app.proc_container.new_text = ''
@@ -1570,66 +1458,13 @@ class Excellon(Geometry):
         if angle == 0:
             return
 
-        def rotate_geom(obj, origin=None):
-            if type(obj) is list:
-                new_obj = []
-                for g in obj:
-                    new_obj.append(rotate_geom(g))
-                return new_obj
-            else:
-                if origin:
-                    try:
-                        return affinity.rotate(obj, angle, origin=origin)
-                    except AttributeError:
-                        return obj
-                else:
-                    try:
-                        return affinity.rotate(obj, angle, origin=orig)
-                    except AttributeError:
-                        return obj
-
-        # variables to display the percentage of work done
-        self.geo_len = 0
-        try:
-            self.geo_len = len(self.tools)
-        except TypeError:
-            self.geo_len = 1
-        self.old_disp_number = 0
-        self.el_count = 0
-
         if point is None:
             minx, miny, maxx, maxy = self.bounds()
             orig = ((minx + maxx) / 2.0, (miny + maxy) / 2.0)
         else:
             orig = point
 
-        for tool in self.tools:
-            # Offset Drills
-            if 'drills' in self.tools[tool]:
-                new_drills = []
-                for drill in self.tools[tool]['drills']:
-                    new_drills.append(affinity.rotate(drill, angle, origin=orig))
-                self.tools[tool]['drills'] = new_drills
-
-            # Offset Slots
-            if 'slots' in self.tools[tool]:
-                new_slots = []
-                for slot in self.tools[tool]['slots']:
-                    new_start = affinity.rotate(slot[0], angle, origin=orig)
-                    new_stop = affinity.rotate(slot[1], angle, origin=orig)
-                    new_slot = (new_start, new_stop)
-                    new_slots.append(new_slot)
-                self.tools[tool]['slots'] = new_slots
-
-            # Offset solid_geometry
-            self.tools[tool]['solid_geometry'] = rotate_geom(self.tools[tool]['solid_geometry'], origin=orig)
-
-            # update status display
-            self.el_count += 1
-            disp_number = int(np.interp(self.el_count, [0, self.geo_len], [0, 100]))
-            if self.old_disp_number < disp_number <= 100:
-                self.app.proc_container.update_view_text(' %d%%' % disp_number)
-                self.old_disp_number = disp_number
+        self._transform_tools(lambda geo: affinity.rotate(geo, angle, origin=orig))
 
         self.create_geometry()
         self.app.proc_container.new_text = ''
