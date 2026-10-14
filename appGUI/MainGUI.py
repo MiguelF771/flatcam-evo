@@ -298,6 +298,10 @@ class MainGUI(QtWidgets.QMainWindow):
             QtGui.QIcon(self.app.resource_location + '/import.png'),
             '%s...' % _('Sprint Layout 6 (.lay6)'), self)
         self.menufileimport.addAction(self.menufileimportsprint)
+        self.menufileimporteagle = QtGui.QAction(
+            QtGui.QIcon(self.app.resource_location + '/import.png'),
+            '%s...' % _('Eagle Board (.brd)'), self)
+        self.menufileimport.addAction(self.menufileimporteagle)
         self.menufileimport.addSeparator()
 
         # Export ...

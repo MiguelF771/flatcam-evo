@@ -56,6 +56,7 @@ class AppSignalConnector(QtCore.QObject):
         self.ui.menufileimportpcbdoc.triggered.connect(lambda: self.app.f_handlers.on_file_import_pcbdoc())
         self.ui.menufileimportkicad.triggered.connect(lambda: self.app.f_handlers.on_file_import_kicad_pcb())
         self.ui.menufileimportsprint.triggered.connect(lambda: self.app.f_handlers.on_file_import_sprint_layout())
+        self.ui.menufileimporteagle.triggered.connect(lambda: self.app.f_handlers.on_file_import_eagle_brd())
         self.ui.menufileexportsvg.triggered.connect(self.app.f_handlers.on_file_export_svg)
         self.ui.menufileexportpng.triggered.connect(self.app.f_handlers.on_file_export_png)
         self.ui.menufileexportexcellon.triggered.connect(self.app.f_handlers.on_file_export_excellon)
