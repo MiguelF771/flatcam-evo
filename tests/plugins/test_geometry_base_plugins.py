@@ -25,6 +25,7 @@ def _build(cls, qapp):
     app = make_app()
     app.ui = Mock()
     app.collection = QtGui.QStandardItemModel()
+    app.dec_format = lambda value, dec=4: value
     app.resource_location = os.path.join(ROOT, 'assets', 'resources')
     plugin = cls(app)
     return plugin
@@ -32,6 +33,7 @@ def _build(cls, qapp):
 
 @pytest.mark.parametrize('module, name', [
     ('appPlugins.ToolPunchGerber', 'ToolPunchGerber'),
+    ('appPlugins.ToolDrilling', 'ToolDrilling'),
 ])
 def test_plugin_bases_and_construction(qapp, module, name):
     import importlib

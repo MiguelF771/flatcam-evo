@@ -11,9 +11,8 @@ from defaults import AppDefaults
 from appGUI.GUIElements import VerticalScrollArea, FCLabel, FCButton, FCFrame, GLay, FCComboBox, FCCheckBox, \
     FCComboBox2, RadioSet, FCDoubleSpinner, FCSpinner, NumericalEvalTupleEntry, NumericalEvalEntry, FCTable, \
     OptionalInputSection, OptionalHideInputSection
-from appParsers.ParseExcellon import Excellon
 from appDatabase import load_tools_database
-from camlib import flatten_shapely_geometry
+from camlib import Geometry, flatten_shapely_geometry
 
 from matplotlib.backend_bases import KeyEvent as mpl_key_event
 
@@ -72,7 +71,7 @@ def merge_same_diameter_tools(tools):
     return merged
 
 
-class ToolDrilling(Excellon, AppTool):
+class ToolDrilling(Geometry, AppTool):
     build_ui_sig = QtCore.pyqtSignal()
 
     def __init__(self, app):
@@ -81,11 +80,11 @@ class ToolDrilling(Excellon, AppTool):
 
         AppTool.__init__(self, app)
         app_defaults = getattr(self.app, "defaults", None) or AppDefaults.factory_defaults
-        Excellon.__init__(
+        Geometry.__init__(
             self,
-            excellon_circle_steps=self.app.options.get(
+            geo_steps_per_circle=int(self.app.options.get(
                 "excellon_circle_steps",
-                app_defaults.get("excellon_circle_steps", AppDefaults.factory_defaults.get("excellon_circle_steps"))),
+                app_defaults.get("excellon_circle_steps", AppDefaults.factory_defaults.get("excellon_circle_steps")))),
             app=app)
 
         # #############################################################################
