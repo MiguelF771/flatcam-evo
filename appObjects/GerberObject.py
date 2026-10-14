@@ -13,7 +13,7 @@
 from PyQt6 import QtWidgets, QtCore
 from appGUI.GUIElements import FCCheckBox
 from appGUI.ObjectUI import GerberObjectUI
-from appParsers.ParseGerber import Gerber
+from appParsers.ParseGerber import Gerber, drop_placeholder_record_keys
 from appObjects.AppObjectTemplate import FlatCAMObj, OffsetUiMixin, PropertiesPanelMixin, ObjectDeleted, ValidationError
 
 from camlib import flatten_shapely_geometry
@@ -1678,6 +1678,11 @@ class GerberObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Gerber):
             return 'fail'
 
         return gerber_code
+
+    def from_dict(self, d):
+        FlatCAMObj.from_dict(self, d)
+        # projects saved by older copper thieving code hold [] for missing record keys
+        drop_placeholder_record_keys(self.tools)
 
     @staticmethod
     def merge(grb_list, grb_final, log=None):

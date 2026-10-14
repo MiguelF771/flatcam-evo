@@ -1029,11 +1029,14 @@ class ToolCopperThieving(AppTool):
                 if 'geometry' in self.sm_object.tools[ap_id]:
                     new_geo_list = []
                     for geo_el in self.sm_object.tools[ap_id]['geometry']:
-                        new_el = {
-                            'solid': geo_el['solid'].buffer(ppm_clearance) if 'solid' in geo_el else [],
-                            'follow': geo_el['follow'] if 'follow' in geo_el else [],
-                            'clear': geo_el['clear'] if 'clear' in geo_el else []
-                        }
+                        # keep only the keys of the source record: a record has no empty placeholder values
+                        new_el = {}
+                        if 'solid' in geo_el:
+                            new_el['solid'] = geo_el['solid'].buffer(ppm_clearance)
+                        if 'follow' in geo_el:
+                            new_el['follow'] = geo_el['follow']
+                        if 'clear' in geo_el:
+                            new_el['clear'] = geo_el['clear']
                         new_geo_list.append(deepcopy(new_el))
                     new_apertures[ap_id]['geometry'] = deepcopy(new_geo_list)
 

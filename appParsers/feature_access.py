@@ -85,8 +85,9 @@ def _iter_gerber_tool(key, tool: dict) -> Iterator[FeatureRecord]:
         else:
             kind = 'route'
 
-        solid = record.get('solid')
-        clear = record.get('clear')
+        # a value that is not a geometry (older code stored [] for a missing key) counts as missing
+        solid = _geometry_or_none(record.get('solid'))
+        clear = _geometry_or_none(record.get('clear'))
         if solid is None and clear is None:
             yield FeatureRecord(key, index, kind, 'dark', Polygon(), follow, size)
             continue
@@ -94,6 +95,11 @@ def _iter_gerber_tool(key, tool: dict) -> Iterator[FeatureRecord]:
             yield FeatureRecord(key, index, kind, 'dark', solid, follow, size)
         if clear is not None:
             yield FeatureRecord(key, index, kind, 'clear', clear, follow, size)
+
+
+def _geometry_or_none(value):
+    """The value if it is a shapely geometry, else None."""
+    return value if isinstance(value, BaseGeometry) else None
 
 
 def _iter_excellon_tool(obj, key, tool: dict) -> Iterator[FeatureRecord]:

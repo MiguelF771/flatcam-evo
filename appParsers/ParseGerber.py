@@ -324,7 +324,8 @@ class Gerber(Geometry):
                 return True
             for record in tool.get('geometry', ()):
                 clear = record.get('clear')
-                if clear is not None and not clear.is_empty:
+                # None, or a non-geometry like the [] of older code, counts as no clear geometry
+                if not getattr(clear, 'is_empty', True):
                     return True
                 if tool.get('type') == 'R' and not _is_rectangle_flash(tool, record):
                     return True
@@ -2859,6 +2860,23 @@ _RECTANGLE_FLASH_TOLERANCE = 1e-5   # the parser rounds the corners of a rectang
 _RECTANGLE_AREA_TOLERANCE = 1e-4    # relative
 
 
+def drop_placeholder_record_keys(tools: Dict[Any, Any]) -> Dict[Any, Any]:
+    """
+    Remove the 'solid', 'follow' and 'clear' keys whose value is not a geometry from every aperture record.
+    Older copper thieving code stored [] for a missing key; the readers test the presence of a key ('clear' in
+    record), so such a record counted as a clear feature. The tools are changed in place and returned.
+
+    :param tools:   the apertures dictionary of a Gerber object
+    :return:        the same dictionary
+    """
+    for tool in (tools or {}).values():
+        for record in tool.get('geometry', None) or ():
+            for key in ('solid', 'follow', 'clear'):
+                if key in record and not isinstance(record[key], BaseGeometry):
+                    del record[key]
+    return tools
+
+
 def _is_rectangle_flash(tool: Dict[str, Any], record: Dict[str, Any]) -> bool:
     """
     Tell if the solid geometry of a record of an 'R' aperture is a flash of that aperture, that is, its bounds
@@ -3234,7 +3252,8 @@ def plan_multiplicative_buffer(gerber: Any, factor: float) -> Tuple[Dict[Any, Di
         is_region = apid == 0 or kind == 'REG'
         for record in tool.get('geometry', ()):
             clear = record.get('clear')
-            if clear is not None and not clear.is_empty:
+            # None, or a non-geometry like the [] of older code, counts as no clear geometry
+            if not getattr(clear, 'is_empty', True):
                 raise MultiplicativeBufferRejected(
                     _("the object has clear (negative polarity) features, the polarity can not be composed again"))
             if is_region:
