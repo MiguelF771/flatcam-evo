@@ -5,8 +5,9 @@ The 2 real paths run headless with a factory that creates the object and calls `
 test_unify_characterization.py). For each kind and path, every attribute that copy_from specifies must equal the
 source, and the copy must not share data with the source (mutate either one, the other stays the same).
 
-XFAIL_OLD lists the (kind, path, attribute) combinations the OLD per-path code loses; the Stage 4 commit that adds
-copy_from empties it.
+XFAIL_OLD lists the (kind, path, attribute) combinations the OLD per-path code lost (all fixed by copy_from, so it is empty now).
+Old-code losses: aperture_macros in on_copy_command; follow_geometry and source_file in on_copy_object2 (Gerber);
+multigeo / tooluid (Geometry); multigeo, int_digits, frac_digits (Gerber); the Excellon file format attributes.
 """
 
 import copy
@@ -33,34 +34,7 @@ CLASSES = {'gerber': GerberObject, 'excellon': ExcellonObject, 'geometry': Geome
            'script': ScriptObject, 'document': DocumentObject}
 
 # (kind, path, attribute) lost by the old code (found by running this file on the old code)
-XFAIL_OLD = {
-    ('gerber', 'command', 'aperture_macros'),
-    ('gerber', 'command', 'multigeo'),
-    ('gerber', 'command', 'int_digits'),
-    ('gerber', 'command', 'frac_digits'),
-    ('excellon', 'command', 'zeros'),
-    ('excellon', 'command', 'excellon_format_upper_mm'),
-    ('excellon', 'command', 'excellon_format_lower_mm'),
-    ('excellon', 'command', 'excellon_format_upper_in'),
-    ('excellon', 'command', 'excellon_format_lower_in'),
-    ('excellon', 'command', 'excellon_units'),
-    ('geometry', 'command', 'multigeo'),
-    ('geometry', 'command', 'tooluid'),
-    ('gerber', 'object2', 'follow_geometry'),
-    ('gerber', 'object2', 'source_file'),
-    ('gerber', 'object2', 'multigeo'),
-    ('gerber', 'object2', 'int_digits'),
-    ('gerber', 'object2', 'frac_digits'),
-    ('excellon', 'object2', 'zeros'),
-    ('excellon', 'object2', 'excellon_format_upper_mm'),
-    ('excellon', 'object2', 'excellon_format_lower_mm'),
-    ('excellon', 'object2', 'excellon_format_upper_in'),
-    ('excellon', 'object2', 'excellon_format_lower_in'),
-    ('excellon', 'object2', 'excellon_units'),
-    ('geometry', 'object2', 'multigeo'),
-    ('geometry', 'object2', 'tooluid'),
-    ('geometry', 'object2', 'source_file'),
-}
+XFAIL_OLD = set()
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -320,7 +294,6 @@ def test_cncjob_cannot_be_copied(app):
     app.app_obj.new_object.assert_not_called()
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason='fixed in Stage 4')
 def test_copy_from_exists_on_every_copyable_kind(app):
     for kind, cls in CLASSES.items():
         assert callable(getattr(cls, 'copy_from', None)), kind

@@ -168,6 +168,34 @@ class GeometryObject(FlatCAMObj, Geometry):
         # from predecessors.
         self.ser_attrs += ['obj_options', 'kind', 'multigeo', 'fill_color', 'outline_color', 'alpha_level']
 
+    def copy_from(self, src):
+        """
+        Make this (new, empty) Geometry a copy of ``src``. Used by both copy paths of AppObjectOps. Everything is
+        deep-copied, nothing is shared with ``src``.
+
+        Copied: solid_geometry, follow_geometry, tools (with the per-tool 'data' and, for a multi-geometry, the
+        per-tool solid_geometry), multigeo (without it a multi-geometry copy reads the tools as single-geometry),
+        tooluid (the counter of the tool ids: a copy that restarts at 0 hands out ids that already exist in
+        its tools), units and source_file (only if the source has one, an imported SVG / DXF has).
+
+        Not copied, on purpose: obj_options (the new object takes the current app defaults), sel_tools and the
+        UI / plot state.
+
+        The 2 old paths copied the geometries and tools; ``on_copy_command`` copied source_file,
+        ``on_copy_object2`` did not; both lost multigeo and tooluid.
+
+        :param src: the GeometryObject to copy
+        :return:    None
+        """
+        self.solid_geometry = deepcopy(src.solid_geometry)
+        self.follow_geometry = deepcopy(getattr(src, 'follow_geometry', self.follow_geometry))
+        self.tools = deepcopy(src.tools)
+        self.multigeo = getattr(src, 'multigeo', self.multigeo)
+        self.tooluid = getattr(src, 'tooluid', self.tooluid)
+        self.units = getattr(src, 'units', self.units)
+        if hasattr(src, 'source_file'):
+            self.source_file = deepcopy(src.source_file)
+
     def build_ui(self):
         try:
             self.ui_disconnect()

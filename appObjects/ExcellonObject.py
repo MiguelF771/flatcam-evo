@@ -113,6 +113,38 @@ class ExcellonObject(FlatCAMObj, Excellon):
         # from predecessors.
         self.ser_attrs = ['obj_options', 'kind', 'fill_color', 'outline_color', 'alpha_level'] + self.ser_attrs
 
+    def copy_from(self, src):
+        """
+        Make this (new, empty) Excellon a copy of ``src``. Used by both copy paths of AppObjectOps. Everything is
+        deep-copied, nothing is shared with ``src``.
+
+        Copied: tools (drills, slots, per-tool solid_geometry and the per-tool 'data', so 2 tools of the same
+        diameter with different data stay different), solid_geometry (rebuilt with create_geometry() only if the
+        source has none), source_file, units, and the file format attributes that are serialized with the project:
+        zeros, excellon_format_upper/lower_mm/_in and excellon_units.
+
+        Not copied, on purpose: obj_options (the new object takes the current app defaults) and the UI / plot
+        state. ``on_copy_object2`` then replaces source_file with a freshly exported text under the new name.
+
+        The 2 old paths copied only tools and source_file and rebuilt the geometry with create_geometry(); they
+        lost the format attributes. The caller keeps its own check (fail on an object without tools).
+
+        :param src: the ExcellonObject to copy
+        :return:    None
+        """
+        self.tools = deepcopy(src.tools)
+        self.solid_geometry = deepcopy(src.solid_geometry)
+        self.source_file = deepcopy(getattr(src, 'source_file', self.source_file))
+        self.units = getattr(src, 'units', self.units)
+        self.zeros = getattr(src, 'zeros', self.zeros)
+        self.excellon_format_upper_mm = getattr(src, 'excellon_format_upper_mm', self.excellon_format_upper_mm)
+        self.excellon_format_lower_mm = getattr(src, 'excellon_format_lower_mm', self.excellon_format_lower_mm)
+        self.excellon_format_upper_in = getattr(src, 'excellon_format_upper_in', self.excellon_format_upper_in)
+        self.excellon_format_lower_in = getattr(src, 'excellon_format_lower_in', self.excellon_format_lower_in)
+        self.excellon_units = getattr(src, 'excellon_units', self.excellon_units)
+        if self.tools and not self.solid_geometry:
+            self.create_geometry()
+
     def set_ui(self, ui):
         """
         Configures the user interface for this object.

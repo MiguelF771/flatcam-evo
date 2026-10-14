@@ -10,6 +10,8 @@
 # File modified by: Marius Stanciu                         #
 # ##########################################################
 
+from copy import deepcopy
+
 from PyQt6 import QtCore
 
 from appEditors.appTextEditor import AppTextEditor
@@ -57,6 +59,16 @@ class ScriptObject(FlatCAMObj):
         self.script_filename = ''
 
         self.units_found = self.app.app_units
+
+    def copy_from(self, src):
+        """
+        Make this (new, empty) ScriptObject a copy of ``src``: the text (source_file). Used by ``on_copy_command``.
+        Not copied, on purpose: obj_options (the new object takes the current app defaults) and the editor state.
+
+        :param src: the ScriptObject to copy
+        :return:    None
+        """
+        self.source_file = deepcopy(getattr(src, 'source_file', self.source_file))
 
     def set_ui(self, ui):
         """

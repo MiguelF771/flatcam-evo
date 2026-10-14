@@ -113,6 +113,37 @@ class GerberObject(FlatCAMObj, Gerber):
         # from predecessors.
         self.ser_attrs = ['obj_options', 'kind', 'fill_color', 'outline_color', 'alpha_level'] + self.ser_attrs
 
+    def copy_from(self, src):
+        """
+        Make this (new, empty) Gerber a copy of ``src``. Used by both copy paths of AppObjectOps
+        (``on_copy_command`` and ``on_copy_object2``). Everything is deep-copied, nothing is shared with ``src``.
+
+        Copied: solid_geometry, follow_geometry, tools (the apertures with their geometry), aperture_macros,
+        source_file, export_as_regions (the apertures of a region-exported object do not describe its geometry,
+        the copy must keep exporting regions), multigeo, int_digits / frac_digits (the number format, serialized
+        with the project) and units (``new_object`` converts them to the app units if they differ).
+
+        Not copied, on purpose: obj_options (the new object takes the current app defaults, as every new
+        object) and the UI / plot state (colors, marked apertures, selection).
+
+        The 2 old paths differed: ``on_copy_command`` lost aperture_macros, ``on_copy_object2`` lost
+        follow_geometry and source_file; both lost multigeo and the number format. The union of both is copied.
+        The caller keeps its own checks (``on_copy_object2`` fails on an object without apertures).
+
+        :param src: the GerberObject to copy
+        :return:    None
+        """
+        self.solid_geometry = deepcopy(src.solid_geometry)
+        self.follow_geometry = deepcopy(getattr(src, 'follow_geometry', self.follow_geometry))
+        self.tools = deepcopy(src.tools)
+        self.aperture_macros = deepcopy(getattr(src, 'aperture_macros', self.aperture_macros))
+        self.source_file = deepcopy(getattr(src, 'source_file', self.source_file))
+        self.export_as_regions = bool(getattr(src, 'export_as_regions', False))
+        self.multigeo = getattr(src, 'multigeo', self.multigeo)
+        self.int_digits = getattr(src, 'int_digits', self.int_digits)
+        self.frac_digits = getattr(src, 'frac_digits', self.frac_digits)
+        self.units = getattr(src, 'units', self.units)
+
     def set_ui(self, ui):
         """
         Maps options with GUI inputs.

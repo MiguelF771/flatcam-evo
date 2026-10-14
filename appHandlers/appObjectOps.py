@@ -780,39 +780,25 @@ class AppObjectOps(QtCore.QObject):
             obj_name = obj.obj_options["name"]
 
             def initialize(obj_init, app_obj):
-                obj_init.solid_geometry = deepcopy(obj.solid_geometry)
                 try:
-                    obj_init.follow_geometry = deepcopy(obj.follow_geometry)
-                except AttributeError:
-                    pass
-                try:
-                    if obj.tools:
-                        obj_init.tools = deepcopy(obj.tools)
+                    obj_init.copy_from(obj)
                 except Exception as cerr:
                     app_obj.log.error("App.on_copy_command() --> %s" % str(cerr))
                     return "fail"
-                try:
-                    obj_init.source_file = deepcopy(obj.source_file)
-                except (AttributeError, TypeError):
-                    pass
-                if obj.kind == 'gerber':
-                    obj_init.export_as_regions = getattr(obj, 'export_as_regions', False)
 
             def initialize_excellon(obj_init, app_obj):
-                obj_init.source_file = deepcopy(obj.source_file)
-                obj_init.tools = deepcopy(obj.tools)
-                obj_init.create_geometry()
+                obj_init.copy_from(obj)
                 if not obj_init.tools:
                     app_obj.log.debug("on_copy_command() --> no excellon tools")
                     return 'fail'
 
             def initialize_script(new_obj, app_obj):
                 app_obj.log.debug("Script copied.")
-                new_obj.source_file = deepcopy(obj.source_file)
+                new_obj.copy_from(obj)
 
             def initialize_document(new_obj, app_obj):
                 app_obj.log.debug("Document copied.")
-                new_obj.source_file = deepcopy(obj.source_file)
+                new_obj.copy_from(obj)
 
             try:
                 if obj.kind == 'excellon':
@@ -837,33 +823,16 @@ class AppObjectOps(QtCore.QObject):
             outname = str(obj_name) + custom_name
 
             def initialize_geometry(obj_init, app_obj):
-                obj_init.solid_geometry = deepcopy(obj.solid_geometry)
-                try:
-                    obj_init.follow_geometry = deepcopy(obj.follow_geometry)
-                except AttributeError:
-                    pass
-                try:
-                    obj_init.tools = deepcopy(obj.tools)
-                except AttributeError:
-                    pass
-                try:
-                    if obj.tools:
-                        obj_init.tools = deepcopy(obj.tools)
-                except Exception as ee:
-                    app_obj.log.error("on_copy_object2() --> %s" % str(ee))
+                obj_init.copy_from(obj)
 
             def initialize_gerber(obj_init, app_obj):
-                obj_init.solid_geometry = deepcopy(obj.solid_geometry)
-                obj_init.tools = deepcopy(obj.tools)
-                obj_init.aperture_macros = deepcopy(obj.aperture_macros)
-                obj_init.export_as_regions = getattr(obj, 'export_as_regions', False)
+                obj_init.copy_from(obj)
                 if not obj_init.tools:
                     app_obj.log.debug("on_copy_object2() --> no gerber apertures")
                     return 'fail'
 
             def initialize_excellon(new_obj, app_obj):
-                new_obj.tools = deepcopy(obj.tools)
-                new_obj.create_geometry()
+                new_obj.copy_from(obj)
                 if not new_obj.tools:
                     app_obj.log.debug("on_copy_object2() --> no excellon tools")
                     return 'fail'
