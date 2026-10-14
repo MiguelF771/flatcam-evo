@@ -113,7 +113,11 @@ class TclCommandPanelize(TclCommand):
             try:
                 box = self.app.collection.get_by_name(boxname)
             except Exception:
-                self.app.log.error("Could not retrieve object: %s" % name)
+                self.app.log.error("Could not retrieve object: %s" % boxname)
+                return "fail"
+
+            if box is None:
+                self.app.log.error("Box object not found: %s" % boxname)
                 return "fail"
         else:
             box = obj

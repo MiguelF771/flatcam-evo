@@ -47,3 +47,24 @@ def test_use_thread_is_never_evaluated(app, value):
     assert res == 'fail' and not created
     app.worker_task.emit.assert_not_called()
     assert any('use_thread' in str(c) for c in app.log.error.call_args_list)
+
+# ---------------------------------------------------------------------------------------------------------------
+# a missing -box object raised AttributeError
+# ---------------------------------------------------------------------------------------------------------------
+
+def test_missing_box_object_fails_with_a_message_naming_it(app):
+    src = make_gerber(app, name='g')
+    res, created = run_panelize(app, src, 'g', '-rows', '1', '-columns', '2', '-box', 'no_such_box')
+    assert res == 'fail' and not created
+    messages = [str(c.args[0]) for c in app.log.error.call_args_list]
+    assert any('no_such_box' in m for m in messages)
+    app.app_obj.new_object.assert_not_called()
+
+
+def test_existing_box_object_sets_the_pitch(app):
+    src = make_gerber(app, name='g')
+    res, created = run_panelize(app, src, 'g', '-rows', '1', '-columns', '2', '-spacing_columns', '5',
+                                '-box', 'g', '-outname', 'p')
+    assert res is None
+    w = src.bounds()[2] - src.bounds()[0]
+    assert created['p'].bounds()[2] == pytest.approx(src.bounds()[2] + w + 5.0)
