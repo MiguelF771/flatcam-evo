@@ -334,8 +334,8 @@ class Gerber(Geometry):
         Build a tools dictionary that holds the composed ``solid_geometry`` (polarity already applied) as
         region records under the region 'aperture' 0, ready for ``GerberObject.export_gerber``.
 
-        Method: flatten the geometry, repair every part with ``make_valid``, keep the polygonal parts and
-        union them, so the result is a valid set of disjoint polygons with their holes. The polygons are
+        Method: ``feature_access.normalize_polygonal`` (flatten the geometry, repair every part with
+        ``make_valid``, keep the polygonal parts, union them), so the result is a valid set of disjoint polygons with their holes. The polygons are
         sorted by the area of their exterior, largest first. The writer draws each polygon as a dark region
         for the exterior, followed by clear regions for its interior rings, then switches back to dark.
         A polygon that lies inside the hole of another one has a smaller exterior, so it is drawn after
@@ -345,21 +345,10 @@ class Gerber(Geometry):
 
         :return: tools dictionary with 1 'REG' aperture, key 0
         """
-        parts = []
-        for geo in flatten_shapely_geometry(self.solid_geometry if self.solid_geometry is not None else []):
-            if geo is None or geo.is_empty:
-                continue
-            geo = shapely.make_valid(geo)
-            if isinstance(geo, Polygon):
-                parts.append(geo)
-            elif hasattr(geo, 'geoms'):
-                parts.extend(g for g in flatten_shapely_geometry(geo) if isinstance(g, Polygon))
-        parts = [p for p in parts if not p.is_empty]
-        if parts:
-            solid = unary_union(parts)
-            polygons = [solid] if isinstance(solid, Polygon) else [g for g in solid.geoms if isinstance(g, Polygon)]
-        else:
-            polygons = []
+        # imported here: appParsers.feature_access imports camlib, like this module
+        from appParsers.feature_access import normalize_polygonal
+        solid = normalize_polygonal(self.solid_geometry if self.solid_geometry is not None else [])
+        polygons = [solid] if isinstance(solid, Polygon) else list(solid.geoms)
         polygons = [p for p in polygons if not p.is_empty]
         polygons.sort(key=lambda poly: Polygon(poly.exterior).area, reverse=True)
         return {0: {'type': 'REG', 'size': 0, 'geometry': [{'solid': poly} for poly in polygons]}}
