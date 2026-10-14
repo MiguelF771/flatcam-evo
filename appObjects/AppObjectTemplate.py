@@ -14,7 +14,7 @@ from PyQt6 import QtCore, QtGui
 
 from appGUI.ObjectUI import ObjectUI
 from appCommon.Common import LoudDict
-from camlib import app_option
+from camlib import app_option, Geometry
 from appGUI.VisPyVisuals import ShapeCollection
 
 from shapely.ops import unary_union
@@ -75,7 +75,13 @@ class FlatCAMObj(QtCore.QObject):
         :return: FlatCAMObj
         """
 
-        super().__init__(app=app)
+        if isinstance(self, Geometry):
+            # PyQt6 forwards the keyword to the next class in the MRO, the camlib base. The object classes run that
+            # __init__ first, with their own arguments; the forwarded call returns at once (idempotence guard).
+            super().__init__(app=app)
+        else:
+            # no camlib base follows QObject (ScriptObject, DocumentObject): an 'app' keyword raises TypeError
+            super().__init__()
 
         self.app = app
 
