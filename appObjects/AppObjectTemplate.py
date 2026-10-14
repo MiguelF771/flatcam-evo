@@ -47,6 +47,21 @@ class ValidationError(Exception):
         self.errors = errors
 
 
+class OffsetUiMixin:
+    """
+    Fills the Offset entry of the common ObjectUI section with the center of the object bounds. For the object classes
+    that have `bounds()` and that show the common section (Gerber, Excellon, Geometry).
+    """
+
+    def set_offset_values(self):
+        xmin, ymin, xmax, ymax = self.bounds()
+        center_coords = (
+            self.app.dec_format((xmin + abs((xmax - xmin) / 2)), self.decimals),
+            self.app.dec_format((ymin + abs((ymax - ymin) / 2)), self.decimals)
+        )
+        self.ui.offsetvector_entry.set_value(str(center_coords))
+
+
 class PropertiesPanelMixin:
     """
     The Properties tree of the selected-object tab. For the object classes whose ObjectUI has the `info_frame` and
@@ -216,6 +231,20 @@ class FlatCAMObj(QtCore.QObject):
                                        "Means that we are loading an old project that don't"
                                        "have all attributes in the latest application version." % str(attr))
                     pass
+
+    def change_level(self, level):
+        """
+
+        :param level:   application level: either 'b' or 'a'
+        :type level:    str
+        :return:
+        """
+
+        if level == 'a':
+            self.ui.level.setChecked(True)
+        else:
+            self.ui.level.setChecked(False)
+        self.on_level_changed(self.ui.level.isChecked())
 
     def random_color(self):
         """

@@ -11,7 +11,7 @@
 # ##########################################################
 
 from PyQt6 import QtWidgets, QtCore
-from appObjects.AppObjectTemplate import FlatCAMObj, PropertiesPanelMixin, ObjectDeleted
+from appObjects.AppObjectTemplate import FlatCAMObj, OffsetUiMixin, PropertiesPanelMixin, ObjectDeleted
 from appGUI.GUIElements import FCCheckBox
 from appGUI.ObjectUI import GeometryObjectUI
 
@@ -40,7 +40,7 @@ if '_' not in builtins.__dict__:
     _ = gettext.gettext
 
 
-class GeometryObject(PropertiesPanelMixin, FlatCAMObj, Geometry):
+class GeometryObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Geometry):
     """
     Geometric object not associated with a specific
     format.
@@ -484,28 +484,6 @@ class GeometryObject(PropertiesPanelMixin, FlatCAMObj, Geometry):
             self.ui.geo_tools_table.clearSelection()
         else:
             self.ui.geo_tools_table.selectAll()
-
-    def set_offset_values(self):
-        xmin, ymin, xmax, ymax = self.bounds()
-        center_coords = (
-            self.app.dec_format((xmin + abs((xmax - xmin) / 2)), self.decimals),
-            self.app.dec_format((ymin + abs((ymax - ymin) / 2)), self.decimals)
-        )
-        self.ui.offsetvector_entry.set_value(str(center_coords))
-
-    def change_level(self, level):
-        """
-
-        :param level:   application level: either 'b' or 'a'
-        :type level:    str
-        :return:
-        """
-
-        if level == 'a':
-            self.ui.level.setChecked(True)
-        else:
-            self.ui.level.setChecked(False)
-        self.on_level_changed(self.ui.level.isChecked())
 
     def on_level_changed(self, checked):
         if not checked:

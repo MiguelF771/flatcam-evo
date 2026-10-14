@@ -190,20 +190,6 @@ class ScriptObject(FlatCAMObj):
             self.script_editor_tab.setObjectName(self.obj_options['name'] + "_editor_tab")
             self.app.ui.plot_tab_area.setCurrentWidget(self.script_editor_tab)
 
-    def change_level(self, level):
-        """
-
-        :param level:   application level: either 'b' or 'a'
-        :type level:    str
-        :return:
-        """
-
-        if level == 'a':
-            self.ui.level.setChecked(True)
-        else:
-            self.ui.level.setChecked(False)
-        self.on_level_changed(self.ui.level.isChecked())
-
     def on_level_changed(self, checked):
         if not checked:
             self.ui.level.setText('%s' % _('Beginner'))

@@ -2,6 +2,7 @@
 mixin). Headless: ShapeCollection is patched, the ObjectUI is a Mock."""
 
 import re
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
@@ -128,3 +129,48 @@ def test_on_properties_expanded_resizes_every_column(cls, no_shape_collection): 
     obj.treeWidget.columnCount.return_value = 3
     obj.on_properties_expanded()
     assert [c.args for c in obj.ui.treeWidget.resizeColumnToContents.call_args_list] == [(0,), (1,), (2,)]
+
+
+# ------------------------------------------------------------- change_level
+
+@pytest.mark.parametrize('cls', ALL_CLASSES)
+def test_change_level_resolves_to_flatcamobj(cls):
+    assert defining_class(cls, 'change_level') is FlatCAMObj
+
+
+@pytest.mark.parametrize('cls', ALL_CLASSES)
+@pytest.mark.parametrize('level, checked', [('a', True), ('b', False), ('anything else', False)])
+def test_change_level_sets_the_toggle_then_notifies(cls, level, checked):
+    # ScriptObject and DocumentObject cannot be built with the headless app, so the function found through the class
+    # is called with a stand-in for self (it only uses self.ui.level and self.on_level_changed)
+    me = SimpleNamespace(ui=MagicMock(), on_level_changed=Mock())
+    me.ui.level.isChecked.return_value = checked
+    cls.change_level(me, level)
+    me.ui.level.setChecked.assert_called_once_with(checked)
+    me.on_level_changed.assert_called_once_with(checked)
+
+
+# --------------------------------------------------------- set_offset_values
+
+OFFSET_CLASSES = [GerberObject, ExcellonObject, GeometryObject]
+
+
+@pytest.mark.parametrize('cls', OFFSET_CLASSES)
+def test_set_offset_values_has_one_definition(cls):
+    assert defining_class(cls, 'set_offset_values').__name__ == 'OffsetUiMixin'
+
+
+@pytest.mark.parametrize('cls', [CNCJobObject, ScriptObject, DocumentObject])
+def test_other_classes_do_not_get_set_offset_values(cls):
+    # no bounds-centre offset entry in their UI: the method must not be added to them
+    assert defining_class(cls, 'set_offset_values') is None
+
+
+@pytest.mark.parametrize('cls', OFFSET_CLASSES)
+def test_set_offset_values_writes_the_bounds_centre(cls, no_shape_collection):  # noqa: F811
+    obj = make_obj(cls)
+    obj.ui = MagicMock()
+    obj.app.dec_format = lambda value, decimals: round(value, decimals)
+    with patch.object(cls, 'bounds', return_value=(1.0, 2.0, 5.0, 3.0)):
+        obj.set_offset_values()
+    obj.ui.offsetvector_entry.set_value.assert_called_once_with('(3.0, 2.5)')

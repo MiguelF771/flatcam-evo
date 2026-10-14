@@ -13,7 +13,7 @@
 from PyQt6 import QtWidgets, QtCore, QtGui
 
 from appParsers.ParseExcellon import Excellon
-from appObjects.AppObjectTemplate import FlatCAMObj, PropertiesPanelMixin, ObjectDeleted
+from appObjects.AppObjectTemplate import FlatCAMObj, OffsetUiMixin, PropertiesPanelMixin, ObjectDeleted
 from appGUI.GUIElements import FCCheckBox
 from appGUI.ObjectUI import ExcellonObjectUI
 
@@ -32,7 +32,7 @@ if '_' not in builtins.__dict__:
     _ = gettext.gettext
 
 
-class ExcellonObject(PropertiesPanelMixin, FlatCAMObj, Excellon):
+class ExcellonObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Excellon):
     """
     Represents Excellon/Drill code. An object stored in the FlatCAM objects collection (a dict)
     """
@@ -245,28 +245,6 @@ class ExcellonObject(PropertiesPanelMixin, FlatCAMObj, Excellon):
         # Show/Hide Advanced Options
         app_mode = self._app_option("global_app_level")
         self.change_level(app_mode)
-
-    def set_offset_values(self):
-        xmin, ymin, xmax, ymax = self.bounds()
-        center_coords = (
-            self.app.dec_format((xmin + abs((xmax - xmin) / 2)), self.decimals),
-            self.app.dec_format((ymin + abs((ymax - ymin) / 2)), self.decimals)
-        )
-        self.ui.offsetvector_entry.set_value(str(center_coords))
-
-    def change_level(self, level):
-        """
-
-        :param level:   application level: either 'b' or 'a'
-        :type level:    str
-        :return:
-        """
-
-        if level == 'a':
-            self.ui.level.setChecked(True)
-        else:
-            self.ui.level.setChecked(False)
-        self.on_level_changed(self.ui.level.isChecked())
 
     def on_level_changed(self, checked):
         if not checked:

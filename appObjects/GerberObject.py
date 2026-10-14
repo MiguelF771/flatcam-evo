@@ -14,7 +14,7 @@ from PyQt6 import QtWidgets, QtCore
 from appGUI.GUIElements import FCCheckBox
 from appGUI.ObjectUI import GerberObjectUI
 from appParsers.ParseGerber import Gerber
-from appObjects.AppObjectTemplate import FlatCAMObj, PropertiesPanelMixin, ObjectDeleted, ValidationError
+from appObjects.AppObjectTemplate import FlatCAMObj, OffsetUiMixin, PropertiesPanelMixin, ObjectDeleted, ValidationError
 
 from camlib import flatten_shapely_geometry
 
@@ -33,7 +33,7 @@ if '_' not in builtins.__dict__:
     _ = gettext.gettext
 
 
-class GerberObject(PropertiesPanelMixin, FlatCAMObj, Gerber):
+class GerberObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Gerber):
     """
     Represents Gerber code.
     """
@@ -251,28 +251,6 @@ class GerberObject(PropertiesPanelMixin, FlatCAMObj, Gerber):
         self.units_found = self.app.app_units
 
         self.set_offset_values()
-
-    def set_offset_values(self):
-        xmin, ymin, xmax, ymax = self.bounds()
-        center_coords = (
-            self.app.dec_format((xmin + abs((xmax - xmin) / 2)), self.decimals),
-            self.app.dec_format((ymin + abs((ymax - ymin) / 2)), self.decimals)
-        )
-        self.ui.offsetvector_entry.set_value(str(center_coords))
-
-    def change_level(self, level):
-        """
-
-        :param level:   application level: either 'b' or 'a'
-        :type level:    str
-        :return:
-        """
-
-        if level == 'a':
-            self.ui.level.setChecked(True)
-        else:
-            self.ui.level.setChecked(False)
-        self.on_level_changed(self.ui.level.isChecked())
 
     def on_level_changed(self, checked):
         if not checked:
