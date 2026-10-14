@@ -23,3 +23,19 @@ def test_no_box_message_names_the_source_object(app):
     assert 'g_panelized' in created
     warnings = [m for m in informs if 'No object Box' in m]
     assert warnings and all(m.endswith(': g') for m in warnings) and not any('None' in m for m in warnings)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# the source Excellon got empty 'drills' / 'slots' keys
+# ---------------------------------------------------------------------------------------------------------------
+
+def test_source_excellon_without_slots_or_drills_keys_is_not_changed(app):
+    src = make_excellon(app, name='e')
+    for tool in src.tools.values():
+        del tool['slots']
+    del src.tools[2]['drills']
+    keys_before = {tid: sorted(tool) for tid, tool in src.tools.items()}
+    created, _ = run_plugin(app, src)
+    assert {tid: sorted(tool) for tid, tool in src.tools.items()} == keys_before
+    # the panel still has both keys everywhere
+    assert all('drills' in t and 'slots' in t for t in created['e_panelized'].tools.values())
