@@ -3,6 +3,7 @@ from typing import Literal, Sequence, cast
 from PyQt6 import QtWidgets
 from camlib import Geometry, arc, arc_angle, ApertureMacro, grace, flatten_shapely_geometry, translate_geometry
 
+from appParsers.clipper_fuse import fuse_parts
 from appParsers.ParseDXF import getdxfgeo
 from appParsers.ParseSVG import svgparselength, getsvggeo, svgparse_viewbox
 
@@ -1519,11 +1520,19 @@ class Gerber(Geometry):
             if self.use_buffer_for_union:
                 self.app.log.debug("Union by buffer...")
 
-                new_poly = MultiPolygon(poly_buffer)
                 if use_buffering == 'full':
-                    new_poly = new_poly.buffer(0.00000001)
-                    new_poly = new_poly.buffer(-0.00000001)
+                    fused = fuse_parts(poly_buffer) if len(poly_buffer) > 0 else None
+                    if fused:
+                        new_poly = MultiPolygon(fused)
+                        self.app.log.debug("Union by Clipper2 done.")
+                    else:
+                        new_poly = MultiPolygon(poly_buffer)
+                        new_poly = new_poly.buffer(0.00000001)
+                        new_poly = new_poly.buffer(-0.00000001)
+                        self.app.log.debug("Union by GEOS buffer done (Clipper2 not used).")
                     self.app.log.warning("Union(buffer) done.")
+                else:
+                    new_poly = MultiPolygon(poly_buffer)
 
             else:
                 self.app.log.debug("Union by union()...")

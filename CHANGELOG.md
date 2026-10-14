@@ -14,6 +14,9 @@ Gerber parser:
 
 - the polarity changes (LPC/LPD) are composed 1 time at the end of the file, about 4 times faster on files with many polarity changes; the geometry is the same
 - a path that is open at a polarity change is stored with its own polarity (before, it got the new polarity)
+- the fusion of the Gerber geometry at the end of the parse uses Clipper2 (pyclipr) if it is installed: about 2-4 times faster on large files; the result is the same within 1e-7 mm, with fewer vertices. Install it with: pip install -r requirements-optional.txt
+- if pyclipr is missing or the geometry is not safe for it (invalid polygons, coordinates out of range, rings smaller than 1e-9 units), the old GEOS fusion runs
+- fixed: the old fusion could make a false hole where 2 parts overlap (seen on an Eagle top layer)
 
 Other:
 
