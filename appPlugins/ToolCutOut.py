@@ -10,6 +10,7 @@ from appTool import AppTool
 from appGUI.GUIElements import VerticalScrollArea, FCLabel, FCButton, FCFrame, GLay, FCComboBox, RadioSet, \
     FCDoubleSpinner, FCComboBox2, OptionalInputSection, FCCheckBox
 from camlib import flatten_shapely_geometry
+from appParsers.feature_access import fused_solid
 from appDatabase import load_tools_database
 from defaults import AppDefaults
 
@@ -38,6 +39,19 @@ if '_' not in builtins.__dict__:
     _ = gettext.gettext
 
 log = logging.getLogger('base')
+
+
+def gerber_cutout_geometry(cutout_obj, convex_box):
+    """
+    The geometry of a Gerber object that a freeform cutout goes around: its copper as one valid Polygon /
+    MultiPolygon (``fused_solid``), or the convex hull of it. The object is not changed.
+    """
+    copper = fused_solid(cutout_obj)
+    try:
+        return copper.convex_hull if convex_box else copper
+    except Exception as err:
+        log.error("CutOut.on_freeform_cutout().geo_init() --> %s" % str(err))
+        return copper
 
 
 class CutOut(AppTool):
@@ -727,16 +741,7 @@ class CutOut(AppTool):
                 thin_entry = self.ui.thin_depth_entry.get_value()
 
                 if cutout_obj.kind == 'gerber':
-                    if isinstance(cutout_obj.solid_geometry, list):
-                        cutout_obj.solid_geometry = unary_union(cutout_obj.solid_geometry)
-                    try:
-                        if convex_box:
-                            object_geo = cutout_obj.solid_geometry.convex_hull
-                        else:
-                            object_geo = cutout_obj.solid_geometry
-                    except Exception as err:
-                        self.app.log.error("CutOut.on_freeform_cutout().geo_init() --> %s" % str(err))
-                        object_geo = cutout_obj.solid_geometry
+                    object_geo = gerber_cutout_geometry(cutout_obj, convex_box)
                 else:
                     if cutout_obj.multigeo is False:
                         object_geo = cutout_obj.solid_geometry
