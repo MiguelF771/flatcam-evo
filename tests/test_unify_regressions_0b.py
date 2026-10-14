@@ -230,7 +230,6 @@ class TestDoubleInit_0B2:
 # 0B.3  Excellon scale and unit conversion
 # ---------------------------------------------------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="fixed in Stage 0B.3")
 class TestExcellonScaleUnits_0B3:
     def test_uniform_scale_doubles_tooldia_and_geometry(self):
         ex = make_excellon(default_data={})

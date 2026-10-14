@@ -2432,7 +2432,6 @@ class Gerber(Geometry):
                         self.tools[apid]['height'] *= xfactor
                     elif str(self.tools[apid]['type']) == 'P':
                         self.tools[apid]['diam'] *= xfactor
-                        self.tools[apid]['nVertices'] *= xfactor
                 except KeyError:
                     pass
 
