@@ -101,8 +101,9 @@ class TclCommandBuffer(TclCommand):
         if 'join' not in args:
             join = 1
         else:
-            if args['join'] in ['square', 'Square', '2', 2]:
-                join = "square"
+            if args['join'] in ['square', 'Square', 'mitre', 'Mitre', '2', 2]:
+                # the square corner is the Shapely 'mitre' join ('square' is a cap style, Shapely rejects it)
+                join = "mitre"
             elif args['join'] in ['bevel', 'Bevel', '3', 3]:
                 join = "bevel"
             else:

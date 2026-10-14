@@ -155,3 +155,25 @@ class TestExcellonExportNumberFormat:
             assert len(again.tools[t].get('slots', [])) == len(tool['slots']), msg
             assert _flat(char.slot_flat(again.tools[t].get('slots', []))) == \
                 pytest.approx(_flat(char.slot_flat(tool['slots'])), abs=tol), msg
+
+
+class TestTclBufferJoin:
+    """-join 2 / square is the square corner join: the Shapely 'mitre' join ('square' is a cap style)."""
+
+    @pytest.mark.parametrize('join', ['2', 'square', 'mitre'])
+    def test_square_join_buffers_the_gerber(self, join):
+        from appParsers.ParseGerber import Gerber
+        from tclCommands.TclCommandBuffer import TclCommandBuffer
+        grb = Gerber(make_app())
+        grb.parse_lines(["%FSLAX24Y24*%", "%MOMM*%", "%ADD10R,2.0X1.0*%", "D10*", "X100000Y50000D03*", "M02*"])
+        grb.obj_options = {}
+        grb.kind = 'gerber'
+        xmin, ymin, xmax, ymax = grb.bounds()
+
+        app = make_app()
+        app.collection.get_by_name.return_value = grb
+        cmd = TclCommandBuffer(app)
+        args, unnamed = cmd.check_args(('grb', '-dist', '0.1', '-join', join))
+        assert cmd.execute(args, unnamed) != 'fail'
+
+        assert grb.bounds() == pytest.approx((xmin - 0.1, ymin - 0.1, xmax + 0.1, ymax + 0.1), abs=1e-6)
