@@ -4,6 +4,7 @@ from appTool import AppTool
 from appGUI.GUIElements import VerticalScrollArea, FCLabel, FCButton, FCFrame, GLay, FCComboBox, RadioSet, \
     FCDoubleSpinner, FCComboBox2, NumericalEvalTupleEntry
 from defaults import AppDefaults
+from appParsers.feature_access import iter_features
 
 import logging
 from copy import deepcopy
@@ -429,23 +430,26 @@ class DblSidedTool(AppTool):
                 self.app.selection_type = None
             else:
                 if self.exc_hole_obj.kind.lower() == 'excellon':
-                    for tool, tool_dict in self.exc_hole_obj.tools.items():
-                        for geo in tool_dict['solid_geometry']:
-                            if click_pt.within(geo):
-                                center_pt = geo.centroid
-                                center_pt_coords = (
-                                    self.app.dec_format(center_pt.x, self.decimals),
-                                    self.app.dec_format(center_pt.y, self.decimals)
-                                )
-                                self.app.delete_selection_shape()
+                    # a hit ends the search inside its tool; the next tool is still searched
+                    hit_tool = None
+                    for rec in iter_features(self.exc_hole_obj):
+                        if hit_tool is not None and rec.item_key == hit_tool:
+                            continue
+                        if click_pt.within(rec.solid):
+                            hit_tool = rec.item_key
+                            center_pt = rec.solid.centroid
+                            center_pt_coords = (
+                                self.app.dec_format(center_pt.x, self.decimals),
+                                self.app.dec_format(center_pt.y, self.decimals)
+                            )
+                            self.app.delete_selection_shape()
 
-                                self.ui.axis_location.set_value('point')
-                                # set the reference point for mirror
-                                self.ui.point_entry.set_value(center_pt_coords)
+                            self.ui.axis_location.set_value('point')
+                            # set the reference point for mirror
+                            self.ui.point_entry.set_value(center_pt_coords)
 
-                                self.on_exit()
-                                self.app.inform.emit('[success] %s' % _("Mirror reference point set."))
-                                break
+                            self.on_exit()
+                            self.app.inform.emit('[success] %s' % _("Mirror reference point set."))
 
         elif event.button == right_button and self.app.event_is_dragging is False:
             self.on_exit(cancelled=True)
