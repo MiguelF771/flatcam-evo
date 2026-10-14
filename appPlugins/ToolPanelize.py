@@ -542,7 +542,8 @@ class Panelize(AppTool):
                             for tool in panel_source_obj.tools:
                                 new_obj.tools[tool]['solid_geometry'] = []
                         else:
-                            new_obj.solid_geometry = panel_source_obj.solid_geometry
+                            # a new list: the loop below iterates the source list and appends the copies here
+                            new_obj.solid_geometry = []
                     elif panel_source_obj.kind == 'gerber':
                         new_obj.tools = copied_apertures
                         for ap in new_obj.tools:
@@ -862,7 +863,8 @@ class Panelize(AppTool):
                             for tool in panel_source_obj.tools:
                                 new_obj.tools[tool]['solid_geometry'] = []
                         else:
-                            new_obj.solid_geometry = panel_source_obj.solid_geometry
+                            # a new list: the loop below iterates the source list and appends the copies here
+                            new_obj.solid_geometry = []
                     elif panel_source_obj.kind == 'gerber':
                         new_obj.tools = copied_apertures
                         for ap in new_obj.tools:
