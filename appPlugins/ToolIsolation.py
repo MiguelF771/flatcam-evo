@@ -2323,11 +2323,9 @@ class ToolIsolation(Gerber, AppTool):
                     self.app.inform.emit('[ERROR_NOTCL] %s' % _("Isolation geometry could not be generated."))
                     continue
 
-                if isinstance(iso_geo, (MultiLineString, MultiPolygon)):
-                    for geo in iso_geo.geoms:
-                        solid_geo.append(geo)
-                else:
-                    solid_geo.append(iso_geo)
+                # generate_envelope() can return a list or a GeometrySequence; keep solid_geo flat so
+                # unary_union() for the extra pad passes works
+                solid_geo.extend(flatten_shapely_geometry(iso_geo))
 
             # Extra Pads isolations
             pad_geo = []

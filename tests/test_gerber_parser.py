@@ -258,6 +258,23 @@ class TestGerberParserEdgeCases:
         else:
             assert False, 'strings must not be recursively flattened'
 
+    def test_flatten_shapely_geometry_keeps_envelopes_unionable(self):
+        # ToolIsolation.combined_normal() collects the generate_envelope() results, which can be a
+        # list or a GeometrySequence, and passes them to unary_union() for the extra pad passes
+        from shapely.ops import unary_union
+
+        poly1 = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+        poly2 = Polygon([(2, 0), (3, 0), (3, 1), (2, 1)])
+        poly3 = Polygon([(4, 0), (5, 0), (5, 1), (4, 1)])
+        envelopes = [MultiPolygon([poly1, poly2]).geoms, [poly3], poly1]
+
+        solid_geo = []
+        for iso_geo in envelopes:
+            solid_geo.extend(flatten_shapely_geometry(iso_geo))
+
+        assert len(solid_geo) == 4
+        assert unary_union(solid_geo).bounds == (0.0, 0.0, 5.0, 1.0)
+
 
 class TestGerberParserUnits:
     """Test unit handling."""

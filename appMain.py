@@ -1238,7 +1238,21 @@ class App(QtCore.QObject):
         self.workers = WorkerStack(workers_number=w_number)
 
         self.worker_task.connect(self.workers.add_task)
+        self.thread_exception.connect(self.on_thread_exception)
         self.log.debug("Finished creating Workers crew.")
+
+    def on_thread_exception(self, err):
+        """
+        Reports an unhandled exception from a worker task. The worker catches the exception,
+        so without this the user gets no message in the GUI.
+
+        :param err:     the exception raised in the worker task
+        :type err:      Exception
+        :return:        None
+        """
+        self.log.error("Unhandled exception in a worker task:\n%s" %
+                       ''.join(traceback.format_exception(type(err), err, err.__traceback__)))
+        self.inform.emit('[ERROR_NOTCL] %s: %s' % (_("The task failed"), str(err)))
 
     def _setup_canvas_and_plotting(self):
         """Phase 1: Setup tool/editor stubs, bookmarks, tools database, shell, editors, and exclusion areas."""
