@@ -24,7 +24,7 @@ class FakeShapes:
         self.redraws += 1
 
 
-def _prepare(checked_by_tool):
+def _prepare(checked_by_tool, without_row=()):
     obj = make_excellon(make_app())
     tool_keys = list(obj.tools)
     obj.ui_connect = Mock()
@@ -33,11 +33,20 @@ def _prepare(checked_by_tool):
 
     items = {}
     cells = {}
-    for row, key in enumerate(tool_keys):
+    row = 0
+    for key in tool_keys:
+        if key in without_row:
+            continue
         items[row] = Mock(text=Mock(return_value=str(key)))
         cells[row] = Mock(isChecked=Mock(return_value=checked_by_tool[key]))
+        row += 1
+    # like the real table: 2 total rows (drills, slots) with an empty id cell and no plot checkbox
+    for _ in range(2):
+        items[row] = Mock(text=Mock(return_value=''))
+        cells[row] = None
+        row += 1
     table = Mock()
-    table.rowCount.return_value = len(tool_keys)
+    table.rowCount.return_value = row
     table.item.side_effect = lambda row, col: items[row]
     table.cellWidget.side_effect = lambda row, col: cells[row]
     obj.ui = Mock(tools_table=table)
@@ -67,6 +76,22 @@ def test_tool_without_plotted_shapes_is_skipped_without_error():
 
     assert obj.shapes.visibility_calls == [(True, [7])]
     assert obj.shapes.redraws == 1
+
+
+def test_tool_without_a_table_row_keeps_its_visibility_and_reads_no_other_row():
+    keys = list(make_excellon(make_app()).tools)
+    assert len(keys) >= 3
+    # the 2nd tool has no row; the 1st is checked, the 3rd is not
+    checked = {k: (i == 0) for i, k in enumerate(keys)}
+    obj, keys = _prepare(checked, without_row=(keys[1],))
+    obj.shape_indexes_dict = {k: [100 + i] for i, k in enumerate(keys)}
+
+    obj.on_plot_cb_click_table()
+
+    expected = [(checked[k], [100 + i]) for i, k in enumerate(keys) if i != 1]
+    assert obj.shapes.visibility_calls == expected
+    assert obj.shapes.redraws == 1
+    obj.ui_connect.assert_called_once()
 
 
 def test_other_errors_are_not_hidden():

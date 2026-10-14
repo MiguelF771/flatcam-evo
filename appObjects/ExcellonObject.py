@@ -1186,18 +1186,26 @@ class ExcellonObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Excellon):
 
     def on_plot_cb_click_table(self):
         self.ui_disconnect()
-        check_row = 0
+
+        # the plot checkbox of each tool, by tool id; the 2 total rows at the end have no id and no checkbox
+        plot_cb_by_tool = {}
+        for row in range(self.ui.tools_table.rowCount()):
+            id_item = self.ui.tools_table.item(row, 0)
+            plot_cb = self.ui.tools_table.cellWidget(row, 5)
+            try:
+                tool_id = int(float(id_item.text()))
+            except (AttributeError, ValueError):
+                continue
+            if plot_cb is not None:
+                plot_cb_by_tool[tool_id] = plot_cb
 
         for tool_key in self.tools:
-            # find the geo_plugin_table row associated with the tool_key
-            for row in range(self.ui.tools_table.rowCount()):
-                tool_item = int(float(self.ui.tools_table.item(row, 0).text()))
-                if tool_item == int(tool_key):
-                    check_row = row
-                    break
-            state = self.ui.tools_table.cellWidget(check_row, 5).isChecked()
+            plot_cb = plot_cb_by_tool.get(int(tool_key))
+            if plot_cb is None:
+                # the table has no row for this tool: keep its visibility
+                continue
             try:
-                self.shapes.update_visibility(state, indexes=self.shape_indexes_dict[tool_key])
+                self.shapes.update_visibility(plot_cb.isChecked(), indexes=self.shape_indexes_dict[tool_key])
             except KeyError:
                 # this tool has no plotted shapes
                 pass
