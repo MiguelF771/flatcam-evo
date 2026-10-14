@@ -9,16 +9,14 @@ from PyQt6 import QtWidgets, QtCore, QtGui
 from appTool import AppTool
 from appGUI.GUIElements import VerticalScrollArea, FCLabel, FCButton, FCFrame, GLay, FCComboBox, FCCheckBox, \
     RadioSet, FCDoubleSpinner, FCSpinner, OptionalInputSection
-from camlib import grace
+from appParsers import panelize_core
 from defaults import AppDefaults
 
 import logging
 from copy import deepcopy
-import numpy as np
 
-from shapely import LineString, MultiLineString, Polygon, MultiPolygon
-from shapely.ops import unary_union, linemerge, snap
-from shapely.affinity import translate
+from shapely import Polygon
+from shapely.ops import unary_union, linemerge
 
 import gettext
 import appTranslation as fcTranslate
@@ -376,43 +374,30 @@ class Panelize(AppTool):
                                  _("Columns or Rows are zero value. Change them to a positive integer."))
             return
 
-        xmin, ymin, xmax, ymax = box_obj.bounds()
-        lenghtx = xmax - xmin + spacing_columns
-        lenghty = ymax - ymin + spacing_rows
+        box_bounds = box_obj.bounds()
 
         # check if constrain within an area is desired
         if self.ui.constrain_cb.isChecked():
-            panel_lengthx = ((xmax - xmin) * columns) + (spacing_columns * (columns - 1))
-            panel_lengthy = ((ymax - ymin) * rows) + (spacing_rows * (rows - 1))
-
             # adjust the number of columns and/or rows so the panel will fit within the panel constraint area
-            if (panel_lengthx > constrain_dx) or (panel_lengthy > constrain_dy):
+            rows, columns, constrained = panelize_core.constrain_grid(
+                box_bounds, rows, columns, spacing_columns, spacing_rows, constrain_dx, constrain_dy)
+            if constrained:
                 self.constrain_flag = True
 
-                while panel_lengthx > constrain_dx:
-                    columns -= 1
-                    panel_lengthx = ((xmax - xmin) * columns) + (spacing_columns * (columns - 1))
-                while panel_lengthy > constrain_dy:
-                    rows -= 1
-                    panel_lengthy = ((ymax - ymin) * rows) + (spacing_rows * (rows - 1))
-
-        # ############################################################################################################
-        # make a copy of the panelized Excellon or Geometry tools
-        # ############################################################################################################
-        if panel_source_obj.kind == 'excellon' or panel_source_obj.kind == 'geometry':
-            copied_tools = {}
-            for tt, tt_val in list(panel_source_obj.tools.items()):
-                copied_tools[tt] = deepcopy(tt_val)
-
-        # ############################################################################################################
-        # make a copy of the panelized Gerber apertures
-        # ############################################################################################################
-        if panel_source_obj.kind == 'gerber':
-            copied_apertures = {}
-            for tt, tt_val in list(panel_source_obj.tools.items()):
-                copied_apertures[tt] = deepcopy(tt_val)
+        offsets = panelize_core.grid_offsets(box_bounds, rows, columns, spacing_columns, spacing_rows)
 
         to_optimize = self.ui.optimization_cb.get_value()
+
+        def abort():
+            return self.app.abort_flag
+
+        last_shown = {}
+
+        def progress(element, percent, tag):
+            # show a change only, the core reports every record
+            if last_shown.get((element, tag)) != percent:
+                last_shown[(element, tag)] = percent
+                self.app.proc_container.update_view_text(' %s: %d %s%d%%' % (_("Copy"), element, tag, percent))
 
         def panelize_worker():
             if panel_source_obj is not None:
@@ -420,13 +405,8 @@ class Panelize(AppTool):
 
                 def job_init_excellon(obj_fin, app_obj):
                     obj_fin.multitool = True
-
-                    currenty = 0.0
-                    # init the storage for drills and for slots
-                    for tool in copied_tools:
-                        copied_tools[tool]['drills'] = []
-                        copied_tools[tool]['slots'] = []
-                    obj_fin.tools = copied_tools
+                    obj_fin.tools = panelize_core.panelize_excellon(
+                        panel_source_obj.tools, offsets, abort=abort, progress=progress)
                     obj_fin.solid_geometry = []
 
                     for option in panel_source_obj.obj_options:
@@ -436,78 +416,6 @@ class Panelize(AppTool):
                             except KeyError:
                                 app_obj.log.warning("Failed to copy option. %s" % str(option))
 
-                    # calculate the total number of drills and slots
-                    geo_len_drills = 0
-                    geo_len_slots = 0
-                    for tool in copied_tools:
-                        geo_len_drills += len(copied_tools[tool]['drills'])
-                        geo_len_slots += len(copied_tools[tool]['slots'])
-
-                    # panelization
-                    element = 0
-                    for row in range(rows):
-                        currentx = 0.0
-                        for col in range(columns):
-                            element += 1
-                            old_disp_number = 0
-
-                            for tool in panel_source_obj.tools:
-                                if 'drills' in panel_source_obj.tools[tool]:
-                                    if panel_source_obj.tools[tool]['drills']:
-                                        drill_nr = 0
-                                        for drill in panel_source_obj.tools[tool]['drills']:
-                                            # graceful abort requested by the user
-                                            if self.app.abort_flag:
-                                                raise grace
-
-                                            # offset / panelization
-                                            point_offseted = translate(drill, currentx, currenty)
-                                            obj_fin.tools[tool]['drills'].append(point_offseted)
-
-                                            # update progress
-                                            drill_nr += 1
-                                            disp_number = int(np.interp(drill_nr, [0, geo_len_drills], [0, 100]))
-                                            if old_disp_number < disp_number <= 100:
-                                                self.app.proc_container.update_view_text(' %s: %d D:%d%%' %
-                                                                                         (_("Copy"),
-                                                                                          int(element),
-                                                                                          disp_number))
-                                                old_disp_number = disp_number
-                                else:
-                                    panel_source_obj.tools[tool]['drills'] = []
-
-                                if 'slots' in panel_source_obj.tools[tool]:
-                                    if panel_source_obj.tools[tool]['slots']:
-                                        slot_nr = 0
-                                        for slot in panel_source_obj.tools[tool]['slots']:
-                                            # graceful abort requested by the user
-                                            if self.app.abort_flag:
-                                                raise grace
-
-                                            # offset / panelization
-                                            start_offseted = translate(slot[0], currentx, currenty)
-                                            stop_offseted = translate(slot[1], currentx, currenty)
-                                            offseted_slot = (
-                                                start_offseted,
-                                                stop_offseted
-                                            )
-                                            obj_fin.tools[tool]['slots'].append(offseted_slot)
-
-                                            # update progress
-                                            slot_nr += 1
-                                            disp_number = int(np.interp(slot_nr, [0, geo_len_slots], [0, 100]))
-                                            if old_disp_number < disp_number <= 100:
-                                                self.app.proc_container.update_view_text(' %s: %d S:%d%%' %
-                                                                                         (_("Copy"),
-                                                                                          int(element),
-                                                                                          disp_number))
-                                                old_disp_number = disp_number
-                                else:
-                                    panel_source_obj.tools[tool]['slots'] = []
-
-                            currentx += lenghtx
-                        currenty += lenghty
-
                     obj_fin.create_geometry()
                     obj_fin.zeros = panel_source_obj.zeros
                     obj_fin.units = panel_source_obj.units
@@ -516,230 +424,15 @@ class Panelize(AppTool):
                     app_obj.proc_container.update_view_text('')
 
                 def job_init_geometry(new_obj, app_obj):
-                    currentx = 0.0
-                    currenty = 0.0
-
-                    def translate_recursion(geom):
-                        if type(geom) == list:
-                            geoms = []
-                            for local_geom in geom:
-                                res_geo = translate_recursion(local_geom)
-                                try:
-                                    geoms += res_geo
-                                except TypeError:
-                                    geoms.append(res_geo)
-                            return geoms
-                        else:
-                            return translate(geom, xoff=currentx, yoff=currenty)
-
-                    new_obj.solid_geometry = []
-
-                    # create the initial structure on which to create the panel
                     if panel_source_obj.kind == 'geometry':
                         new_obj.multigeo = panel_source_obj.multigeo
-                        new_obj.tools = copied_tools
-                        if panel_source_obj.multigeo is True:
-                            for tool in panel_source_obj.tools:
-                                new_obj.tools[tool]['solid_geometry'] = []
-                        else:
-                            # a new list: the loop below iterates the source list and appends the copies here
-                            new_obj.solid_geometry = []
+                        new_obj.tools, new_obj.solid_geometry = panelize_core.panelize_geometry(
+                            panel_source_obj.tools, panel_source_obj.solid_geometry, panel_source_obj.multigeo,
+                            offsets, abort=abort, progress=progress)
                     elif panel_source_obj.kind == 'gerber':
-                        new_obj.tools = copied_apertures
-                        for ap in new_obj.tools:
-                            new_obj.tools[ap]['geometry'] = []
-
-                    # find the number of polygons in the source solid_geometry
-                    geo_len = 0
-                    if panel_source_obj.kind == 'geometry':
-                        if panel_source_obj.multigeo is True:
-                            for tool in panel_source_obj.tools:
-                                try:
-                                    source_geo = panel_source_obj.tools[tool]['solid_geometry']
-                                    work_geo = source_geo.geoms if \
-                                        isinstance(source_geo, (MultiPolygon, MultiLineString)) else source_geo
-                                    geo_len += len(work_geo)
-                                except TypeError:
-                                    geo_len += 1
-                        else:
-                            try:
-                                source_geo = panel_source_obj.solid_geometry
-                                work_geo = source_geo.geoms if \
-                                    isinstance(source_geo, (MultiPolygon, MultiLineString)) else source_geo
-                                geo_len = len(work_geo)
-                            except TypeError:
-                                geo_len = 1
-                    elif panel_source_obj.kind == 'gerber':
-                        for ap in panel_source_obj.tools:
-                            if 'geometry' in panel_source_obj.tools[ap]:
-                                try:
-                                    source_geo = panel_source_obj.tools[ap]['geometry']
-                                    work_geo = source_geo.geoms if isinstance(source_geo, MultiPolygon) else source_geo
-                                    geo_len += len(work_geo)
-                                except TypeError:
-                                    geo_len += 1
-
-                    element = 0
-                    for row in range(rows):
-                        currentx = 0.0
-
-                        for col in range(columns):
-                            element += 1
-                            old_disp_number = 0
-
-                            # Will panelize a Geometry Object
-                            if panel_source_obj.kind == 'geometry':
-                                if panel_source_obj.multigeo is True:
-                                    for tool in panel_source_obj.tools:
-                                        # graceful abort requested by the user
-                                        if app_obj.abort_flag:
-                                            raise grace
-
-                                        # calculate the number of polygons
-                                        try:
-                                            source_geo = panel_source_obj.tools[tool]['solid_geometry']
-                                            work_geo = source_geo.geoms if \
-                                                isinstance(source_geo, (MultiPolygon, MultiLineString)) else source_geo
-                                            geo_len = len(work_geo)
-                                        except TypeError as err:
-                                            self.app.log.error(
-                                                "Panelize.on_panelize.panelize_worker() -> %s" % str(err))
-                                            geo_len = 1
-
-                                        # panelization
-                                        pol_nr = 0
-
-                                        trans_geo = translate_recursion(panel_source_obj.tools[tool]['solid_geometry'])
-                                        try:
-                                            work_geo = trans_geo.geoms if \
-                                                isinstance(trans_geo, (MultiPolygon, MultiLineString)) else trans_geo
-                                            for trans_it in work_geo:
-                                                if not trans_it.is_empty:
-                                                    new_obj.tools[tool]['solid_geometry'].append(trans_it)
-
-                                                # update progress
-                                                pol_nr += 1
-                                                disp_number = int(np.interp(pol_nr, [0, geo_len], [0, 100]))
-                                                if old_disp_number < disp_number <= 100:
-                                                    app_obj.proc_container.update_view_text(
-                                                        ' %s: %d %d%%' % (_("Copy"), int(element), disp_number))
-                                                    old_disp_number = disp_number
-                                        except TypeError:
-                                            if not trans_geo.is_empty:
-                                                new_obj.tools[tool]['solid_geometry'].append(trans_geo)
-
-                                            # update progress
-                                            pol_nr += 1
-                                            disp_number = int(np.interp(pol_nr, [0, geo_len], [0, 100]))
-                                            if old_disp_number < disp_number <= 100:
-                                                app_obj.proc_container.update_view_text(
-                                                    ' %s: %d %d%%' % (_("Copy"), int(element), disp_number))
-                                                old_disp_number = disp_number
-
-                                # #####################################################################################
-                                # ##########   Panelize the solid_geometry - always done  #############################
-                                # #####################################################################################
-                                # graceful abort requested by the user
-                                if app_obj.abort_flag:
-                                    raise grace
-
-                                # calculate the number of polygons
-                                try:
-                                    source_geo = panel_source_obj.solid_geometry
-                                    work_geo = source_geo.geoms if \
-                                        isinstance(source_geo, (MultiPolygon, MultiLineString)) else source_geo
-                                    geo_len = len(work_geo)
-                                except TypeError:
-                                    geo_len = 1
-
-                                # panelization
-                                pol_nr = 0
-                                try:
-                                    sol_geo = panel_source_obj.solid_geometry
-                                    work_geo = sol_geo.geoms if \
-                                        isinstance(sol_geo, (MultiPolygon, MultiLineString)) else sol_geo
-                                    for geo_el in work_geo:
-                                        if app_obj.abort_flag:
-                                            # graceful abort requested by the user
-                                            raise grace
-
-                                        trans_geo = translate_recursion(geo_el)
-                                        new_obj.solid_geometry.append(trans_geo)
-
-                                        # update progress
-                                        pol_nr += 1
-                                        disp_number = int(np.interp(pol_nr, [0, geo_len], [0, 100]))
-                                        if old_disp_number < disp_number <= 100:
-                                            app_obj.proc_container.update_view_text(
-                                                ' %s: %d %d%%' % (_("Copy"), int(element), disp_number))
-                                            old_disp_number = disp_number
-
-                                except TypeError:
-                                    trans_geo = translate_recursion(panel_source_obj.solid_geometry)
-                                    new_obj.solid_geometry.append(trans_geo)
-
-                            # Will panelize a Gerber Object
-                            if panel_source_obj.kind == 'gerber':
-                                # graceful abort requested by the user
-                                if self.app.abort_flag:
-                                    raise grace
-
-                                for apid in panel_source_obj.tools:
-                                    # graceful abort requested by the user
-                                    if app_obj.abort_flag:
-                                        raise grace
-
-                                    if 'geometry' in panel_source_obj.tools[apid]:
-                                        # calculate the number of polygons
-                                        try:
-                                            geo_len = len(panel_source_obj.tools[apid]['geometry'])
-                                        except TypeError:
-                                            geo_len = 1
-
-                                        # panelization -> tools
-                                        pol_nr = 0
-                                        for el in panel_source_obj.tools[apid]['geometry']:
-                                            if app_obj.abort_flag:
-                                                # graceful abort requested by the user
-                                                raise grace
-
-                                            new_el = {}
-                                            if 'solid' in el:
-                                                geo_aper = translate_recursion(el['solid'])
-                                                new_el['solid'] = geo_aper
-                                            if 'clear' in el:
-                                                geo_aper = translate_recursion(el['clear'])
-                                                new_el['clear'] = geo_aper
-                                            if 'follow' in el:
-                                                geo_aper = translate_recursion(el['follow'])
-                                                new_el['follow'] = geo_aper
-                                            new_obj.tools[apid]['geometry'].append(deepcopy(new_el))
-
-                                            # update progress
-                                            pol_nr += 1
-                                            disp_number = int(np.interp(pol_nr, [0, geo_len], [0, 100]))
-                                            if old_disp_number < disp_number <= 100:
-                                                app_obj.proc_container.update_view_text(
-                                                    ' %s: %d %d%%' % (_("Copy"), int(element), disp_number))
-                                                old_disp_number = disp_number
-
-                                # #####################################################################################
-                                # ##########   Panelize the solid_geometry - always done  #############################
-                                # #####################################################################################
-                                try:
-                                    for geo_el in panel_source_obj.solid_geometry:
-                                        # graceful abort requested by the user
-                                        if app_obj.abort_flag:
-                                            raise grace
-
-                                        trans_geo = translate_recursion(geo_el)
-                                        new_obj.solid_geometry.append(trans_geo)
-                                except TypeError:
-                                    trans_geo = translate_recursion(panel_source_obj.solid_geometry)
-                                    new_obj.solid_geometry.append(trans_geo)
-
-                            currentx += lenghtx
-                        currenty += lenghty
+                        new_obj.tools, new_obj.solid_geometry = panelize_core.panelize_gerber(
+                            panel_source_obj.tools, panel_source_obj.solid_geometry, offsets, abort=abort,
+                            progress=progress)
 
                     # #################################################################################################
                     # ###########################   Path Optimization   ###############################################
@@ -748,38 +441,10 @@ class Panelize(AppTool):
                         # I'm going to do this only here as a fix for panelizing cutouts
                         # I'm going to separate linestrings out of the solid geometry from other
                         # possible type of elements and apply unary_union on them to fuse them
-
                         if to_optimize is True:
                             app_obj.inform.emit('%s' % _("Optimizing the overlapping paths."))
 
-                        for tool in new_obj.tools:
-                            lines = []
-                            other_geo = []
-                            for geo in new_obj.tools[tool]['solid_geometry']:
-                                if isinstance(geo, LineString):
-                                    lines.append(geo)
-                                elif isinstance(geo, MultiLineString):
-                                    for line in geo.geoms:
-                                        lines.append(line)
-                                else:
-                                    other_geo.append(geo)
-
-                            if to_optimize is True:
-                                for idx, line in enumerate(lines):
-                                    for idx_s in range(idx+1, len(lines)):
-                                        line_mod = lines[idx_s]
-                                        # dist = line.distance(line_mod)
-                                        # if dist < 1e-8:
-                                        #     print("Disjoint %d: %d -> %s" % (idx, idx_s, str(dist)))
-                                        #     print("Distance %f" % dist)
-                                        res = snap(line_mod, line, tolerance=1e-7)
-                                        if res and not res.is_empty:
-                                            lines[idx_s] = res
-
-                            fused_lines = linemerge(lines)
-                            fused_lines = [unary_union(fused_lines)] if not fused_lines.is_empty else []
-
-                            new_obj.tools[tool]['solid_geometry'] = fused_lines + other_geo
+                        panelize_core.merge_tool_lines(new_obj.tools, snap_overlaps=to_optimize is True, abort=abort)
 
                         if to_optimize is True:
                             app_obj.inform.emit('%s' % _("Optimization complete."))
@@ -837,217 +502,16 @@ class Panelize(AppTool):
                     app_obj.proc_container.update_view_text('')
 
                 def job_init_gerber(new_obj, app_obj):
-                    currentx = 0.0
-                    currenty = 0.0
-
-                    def translate_recursion(geom):
-                        if type(geom) == list:
-                            geoms = []
-                            for local_geom in geom:
-                                res_geo = translate_recursion(local_geom)
-                                try:
-                                    geoms += res_geo
-                                except TypeError:
-                                    geoms.append(res_geo)
-                            return geoms
-                        else:
-                            return translate(geom, xoff=currentx, yoff=currenty)
-
-                    new_obj.solid_geometry = []
-
-                    # create the initial structure on which to create the panel
-                    if panel_source_obj.kind == 'geometry':
+                    if panel_source_obj.kind == 'gerber':
+                        new_obj.tools, new_obj.solid_geometry = panelize_core.panelize_gerber(
+                            panel_source_obj.tools, panel_source_obj.solid_geometry, offsets, abort=abort,
+                            progress=progress)
+                        panelize_core.copy_gerber_attributes(new_obj, panel_source_obj)
+                    else:
                         new_obj.multigeo = panel_source_obj.multigeo
-                        new_obj.tools = copied_tools
-                        if panel_source_obj.multigeo is True:
-                            for tool in panel_source_obj.tools:
-                                new_obj.tools[tool]['solid_geometry'] = []
-                        else:
-                            # a new list: the loop below iterates the source list and appends the copies here
-                            new_obj.solid_geometry = []
-                    elif panel_source_obj.kind == 'gerber':
-                        new_obj.tools = copied_apertures
-                        for ap in new_obj.tools:
-                            new_obj.tools[ap]['geometry'] = []
-
-                    # find the number of polygons in the source solid_geometry
-                    geo_len = 0
-                    if panel_source_obj.kind == 'geometry':
-                        if panel_source_obj.multigeo is True:
-                            for tool in panel_source_obj.tools:
-                                try:
-                                    work_geo = panel_source_obj.tools[tool]['solid_geometry']
-                                    geo_len += len(
-                                        work_geo.geoms if isinstance(work_geo, (MultiPolygon, MultiLineString)) else
-                                        work_geo
-                                    )
-                                except TypeError:
-                                    geo_len += 1
-                        else:
-                            try:
-                                work_geo = panel_source_obj.solid_geometry
-                                geo_len = len(
-                                    work_geo.geoms if isinstance(work_geo, (MultiPolygon, MultiLineString)) else
-                                    work_geo
-                                )
-                            except TypeError:
-                                geo_len = 1
-                    elif panel_source_obj.kind == 'gerber':
-                        for ap in panel_source_obj.tools:
-                            if 'geometry' in panel_source_obj.tools[ap]:
-                                try:
-                                    geo_len += len(panel_source_obj.tools[ap]['geometry'])
-                                except TypeError:
-                                    geo_len += 1
-
-                    element = 0
-                    for row in range(rows):
-                        currentx = 0.0
-
-                        for col in range(columns):
-                            element += 1
-                            old_disp_number = 0
-
-                            # Will panelize a Geometry Object
-                            if panel_source_obj.kind == 'geometry':
-                                if panel_source_obj.multigeo is True:
-                                    for tool in panel_source_obj.tools:
-                                        # graceful abort requested by the user
-                                        if app_obj.abort_flag:
-                                            raise grace
-
-                                        # calculate the number of polygons
-                                        try:
-                                            work_geo = panel_source_obj.tools[tool]['solid_geometry']
-                                            geo_len = len(
-                                                work_geo.geoms if isinstance(work_geo, (MultiPolygon, MultiLineString))
-                                                else work_geo
-                                            )
-                                        except TypeError:
-                                            geo_len = 1
-
-                                        # panelization
-                                        pol_nr = 0
-                                        work_geo = panel_source_obj.tools[tool]['solid_geometry']
-                                        i_wg = work_geo.geoms if isinstance(work_geo, (MultiPolygon, MultiLineString)) \
-                                            else work_geo
-                                        for geo_el in i_wg:
-                                            trans_geo = translate_recursion(geo_el)
-                                            if not trans_geo.is_empty:
-                                                new_obj.tools[tool]['solid_geometry'].append(trans_geo)
-
-                                            # update progress
-                                            pol_nr += 1
-                                            disp_number = int(np.interp(pol_nr, [0, geo_len], [0, 100]))
-                                            if old_disp_number < disp_number <= 100:
-                                                app_obj.proc_container.update_view_text(
-                                                    ' %s: %d %d%%' % (_("Copy"), int(element), disp_number))
-                                                old_disp_number = disp_number
-
-                                # #####################################################################################
-                                # ##########   Panelize the solid_geometry - always done  #############################
-                                # #####################################################################################
-                                # graceful abort requested by the user
-                                if app_obj.abort_flag:
-                                    raise grace
-
-                                # calculate the number of polygons
-                                try:
-                                    work_geo = panel_source_obj.solid_geometry
-                                    geo_len = len(
-                                        work_geo.geoms if isinstance(work_geo, (MultiPolygon, MultiLineString))
-                                        else work_geo
-                                    )
-                                except TypeError:
-                                    geo_len = 1
-
-                                # panelization
-                                pol_nr = 0
-                                try:
-                                    work_geo = panel_source_obj.solid_geometry
-                                    i_wg = work_geo.geoms if isinstance(work_geo, (MultiPolygon, MultiLineString)) \
-                                        else work_geo
-                                    for geo_el in i_wg:
-                                        if app_obj.abort_flag:
-                                            # graceful abort requested by the user
-                                            raise grace
-
-                                        trans_geo = translate_recursion(geo_el)
-                                        new_obj.solid_geometry.append(trans_geo)
-
-                                        # update progress
-                                        pol_nr += 1
-                                        disp_number = int(np.interp(pol_nr, [0, geo_len], [0, 100]))
-                                        if old_disp_number < disp_number <= 100:
-                                            app_obj.proc_container.update_view_text(
-                                                ' %s: %d %d%%' % (_("Copy"), int(element), disp_number))
-                                            old_disp_number = disp_number
-
-                                except TypeError:
-                                    trans_geo = translate_recursion(panel_source_obj.solid_geometry)
-                                    new_obj.solid_geometry.append(trans_geo)
-                            # Will panelize a Gerber Object
-                            else:
-                                # graceful abort requested by the user
-                                if self.app.abort_flag:
-                                    raise grace
-
-                                for apid in panel_source_obj.tools:
-                                    # graceful abort requested by the user
-                                    if app_obj.abort_flag:
-                                        raise grace
-
-                                    if 'geometry' in panel_source_obj.tools[apid]:
-                                        # calculate the number of polygons
-                                        try:
-                                            geo_len = len(panel_source_obj.tools[apid]['geometry'])
-                                        except TypeError:
-                                            geo_len = 1
-
-                                        # panelization -> apertures
-                                        pol_nr = 0
-                                        for el in panel_source_obj.tools[apid]['geometry']:
-                                            if app_obj.abort_flag:
-                                                # graceful abort requested by the user
-                                                raise grace
-
-                                            new_el = {}
-                                            if 'solid' in el:
-                                                geo_aper = translate_recursion(el['solid'])
-                                                new_el['solid'] = geo_aper
-                                            if 'clear' in el:
-                                                geo_aper = translate_recursion(el['clear'])
-                                                new_el['clear'] = geo_aper
-                                            if 'follow' in el:
-                                                geo_aper = translate_recursion(el['follow'])
-                                                new_el['follow'] = geo_aper
-                                            new_obj.tools[apid]['geometry'].append(deepcopy(new_el))
-
-                                            # update progress
-                                            pol_nr += 1
-                                            disp_number = int(np.interp(pol_nr, [0, geo_len], [0, 100]))
-                                            if old_disp_number < disp_number <= 100:
-                                                app_obj.proc_container.update_view_text(
-                                                    ' %s: %d %d%%' % (_("Copy"), int(element), disp_number))
-                                                old_disp_number = disp_number
-
-                                # #####################################################################################
-                                # ##########   Panelize the solid_geometry - always done  #############################
-                                # #####################################################################################
-                                try:
-                                    for geo_el in panel_source_obj.solid_geometry:
-                                        # graceful abort requested by the user
-                                        if app_obj.abort_flag:
-                                            raise grace
-
-                                        trans_geo = translate_recursion(geo_el)
-                                        new_obj.solid_geometry.append(trans_geo)
-                                except TypeError:
-                                    trans_geo = translate_recursion(panel_source_obj.solid_geometry)
-                                    new_obj.solid_geometry.append(trans_geo)
-
-                            currentx += lenghtx
-                        currenty += lenghty
+                        new_obj.tools, new_obj.solid_geometry = panelize_core.panelize_geometry(
+                            panel_source_obj.tools, panel_source_obj.solid_geometry, panel_source_obj.multigeo,
+                            offsets, abort=abort, progress=progress)
 
                     if panel_source_obj.kind == 'geometry':
                         new_obj.multitool = False
