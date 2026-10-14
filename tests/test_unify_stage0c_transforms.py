@@ -362,21 +362,27 @@ class TestTableFlagAndMetadata:
 
 
 class TestBufferByFactor:
-    """The multiplicative buffer is owned by Stage 3: its geometry is not part of this stage. Its metadata is not
-    guaranteed, so the flag is set whenever the object has any record."""
+    """The multiplicative buffer (Stage 3): the metadata follows the geometry, so the flag is set only for what the
+    metadata can not describe (an aperture macro). The geometry and the rejections are in
+    test_gerber_multiplicative_buffer."""
 
-    # O and P are left out: the multiplicative buffer raises a KeyError on them today (it does not rebuild their
-    # 'solid'); that is Stage 3's to fix
-    @pytest.mark.parametrize('kind', ['C', 'R', 'RT', 'AM'])
+    @pytest.mark.parametrize('kind', ['AM'])
     def test_flag_is_set_when_there_are_records(self, app, kind):
         obj, _ = load(app, kind)
         obj.buffer(1.2, 'mitre', True)
         assert obj.export_as_regions is True
 
-    def test_region_records_count_too(self, app):
-        obj = make_gerber(app, fx('region_hole'), name='hole')
-        obj.buffer(1.1, 'mitre', True)
-        assert obj.export_as_regions is True
+    @pytest.mark.parametrize('kind', ['C', 'R', 'O', 'P3', 'P7'])
+    def test_a_representable_aperture_does_not_set_the_flag(self, app, kind):
+        obj, _ = load(app, kind)
+        obj.buffer(1.2, 'mitre', True)
+        assert obj.export_as_regions is False
+
+    @pytest.mark.parametrize('kind', ['RT'])
+    def test_a_rejected_object_keeps_the_flag(self, app, kind):
+        obj, _ = load(app, kind)
+        obj.buffer(1.2, 'mitre', True)
+        assert obj.export_as_regions is False
 
     def test_an_object_without_records_stays_false(self, app):
         obj = GerberObject('empty', app)

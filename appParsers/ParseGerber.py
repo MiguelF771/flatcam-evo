@@ -2759,8 +2759,6 @@ class Gerber(Geometry):
         if distance == 0:
             return
 
-        steps = self._app_option("gerber_circle_steps", 64)
-
         # variables to display the percentage of work done
         self.geo_len = 0
         try:
@@ -2815,78 +2813,28 @@ class Gerber(Geometry):
                 self.app.log.error('ParseGerber.Gerber.buffer() Exception --> %s' % str(e))
                 return 'fail'
         else:
-            # The multiplicative buffer (Stage 3 owns it) rebuilds the records from 'follow' and 'size' and does not
-            # keep the metadata in agreement with the geometry in every case: the export must use the composed
-            # geometry as soon as there is any record.
-            if any(tool.get('geometry') for tool in self.tools.values()):
-                self.export_as_regions = True
-
+            # Multiplicative buffer (Stage 3): see plan_multiplicative_buffer(). Nothing is assigned until every step
+            # has succeeded, so a rejection or a failure leaves the object unchanged.
             try:
-                for apid in self.tools:
-                    try:
-                        if str(self.tools[apid]['type']) == 'R' or str(self.tools[apid]['type']) == 'O':
-                            self.tools[apid]['width'] *= distance
-                            self.tools[apid]['height'] *= distance
-                        elif str(self.tools[apid]['type']) == 'P':
-                            self.tools[apid]['diam'] *= distance
-                    except KeyError:
-                        pass
-
-                    try:
-                        if self.tools[apid]['size'] is not None:
-                            self.tools[apid]['size'] = float(self.tools[apid]['size']) * distance
-                    except KeyError:
-                        pass
-
-                    new_geometry = []
-                    if 'geometry' in self.tools[apid]:
-                        for geo_el in self.tools[apid]['geometry']:
-                            new_geo_el = {}
-                            if 'follow' in geo_el:
-                                new_geo_el['follow'] = geo_el['follow']
-                                size = float(self.tools[apid]['size'])
-                                if isinstance(new_geo_el['follow'], Point):
-                                    if str(self.tools[apid]['type']) == 'C':
-                                        new_geo_el['solid'] = geo_el['follow'].buffer(
-                                            size / 1.9999,
-                                            resolution=steps
-                                        )
-                                    elif str(self.tools[apid]['type']) == 'R':
-                                        width = self.tools[apid]['width']
-                                        height = self.tools[apid]['height']
-                                        minx = new_geo_el['follow'].x - width / 2
-                                        maxx = new_geo_el['follow'].x + width / 2
-                                        miny = new_geo_el['follow'].y - height / 2
-                                        maxy = new_geo_el['follow'].y + height / 2
-
-                                        geo_p = shply_box(minx, miny, maxx, maxy)
-                                        new_geo_el['solid'] = geo_p
-                                    else:
-                                        self.app.log.debug(
-                                            "appParsers.ParseGerber.Gerber.buffer() --> ap type not supported")
-                                else:
-                                    new_geo_el['solid'] = geo_el['follow'].buffer(
-                                        size/1.9999,
-                                        resolution=steps
-                                    )
-                            if 'clear' in geo_el:
-                                new_geo_el['clear'] = geo_el['clear']
-                            new_geometry.append(new_geo_el)
-
-                    self.tools[apid]['geometry'] = deepcopy(new_geometry)
+                if not (np.isfinite(distance) and distance > 0):
+                    raise MultiplicativeBufferRejected(_("The factor must be a positive number."))
+                new_tools, new_solid, new_flag = plan_multiplicative_buffer(self, float(distance))
+            except MultiplicativeBufferRejected as e:
+                self.app.log.debug('ParseGerber.Gerber.buffer() rejected --> %s' % str(e))
+                self.app.inform.emit('[WARNING_NOTCL] %s: %s' % (_("Gerber buffer by a factor was not done"), str(e)))
+                self.app.proc_container.new_text = ''
+                return 'fail'
             except Exception as e:
                 self.app.log.error('ParseGerber.Gerber.buffer() Exception --> %s' % str(e))
+                self.app.inform.emit('[ERROR_NOTCL] %s: %s' % (_("Gerber buffer by a factor failed"), str(e)))
+                self.app.proc_container.new_text = ''
                 return 'fail'
 
-            # make the new solid_geometry
-            new_solid_geo = []
-            for apid in self.tools:
-                if 'geometry' in self.tools[apid]:
-                    new_solid_geo += [geo_el['solid'] for geo_el in self.tools[apid]['geometry']]
-
-            self.solid_geometry = MultiPolygon(new_solid_geo)
-            self.solid_geometry = self.solid_geometry.buffer(0.000001)
-            self.solid_geometry = self.solid_geometry.buffer(-0.000001)
+            # commit: plain assignments, together
+            for apid, new_tool in new_tools.items():
+                self.tools[apid] = new_tool
+            self.solid_geometry = new_solid
+            self.export_as_regions = new_flag
         if muted is False:
             self.app.inform.emit('[success] %s' % _("Gerber Buffer done."))
         self.app.proc_container.new_text = ''
@@ -3221,6 +3169,130 @@ def update_buffer_metadata(gerber: Any, distance: float, join: Any) -> None:
 
         if not representable:
             _flag_regions(gerber, tool)
+
+
+class MultiplicativeBufferRejected(Exception):
+    """The multiplicative buffer can not be done on this object; the message is for the user."""
+
+
+def _scale_metadata_by_factor(tool: Dict[str, Any], factor: float) -> bool:
+    """
+    Update the aperture metadata of a COPY of an aperture after every flash was scaled by ``factor`` about its own
+    point and every C track was rebuilt with the width ``size * factor``.
+
+    * C: size * f.
+    * R, O: width, height * f; size = hypot(width, height), as the parser makes it.
+    * P: diam * f and size (= diam); nVertices and rotation are kept.
+    * AM: not representable (the macro modifiers are not scaled): returns False.
+    * REG: unchanged.
+
+    :param tool:    the copy of the aperture, changed in place
+    :param factor:  the positive factor
+    :return:        False if the metadata can no longer describe the records (the regions export is needed)
+    """
+    kind = str(tool.get('type'))
+    if kind == 'REG':
+        return True
+    if kind == 'AM':
+        return False
+    if not _is_well_formed(tool):
+        return False
+    if kind in ('R', 'O'):
+        _set_rectangle(tool, tool['width'] * factor, tool['height'] * factor)
+    elif kind == 'P':
+        tool['diam'] = float(tool['diam'] * factor)
+        tool['size'] = tool['diam']
+    else:
+        _scale_size(tool, factor)
+    return True
+
+
+def plan_multiplicative_buffer(gerber: Any, factor: float) -> Tuple[Dict[Any, Dict[str, Any]], BaseGeometry, bool]:
+    """
+    Plan the multiplicative buffer of a Gerber by ``factor`` (> 0) without changing the object.
+
+    Supported: the flashes of every aperture type (the solid of the record is scaled about its 'follow' point), the
+    tracks drawn with a C aperture (rebuilt from 'follow' with the width ``size * factor``, as the parser draws
+    them: ``follow.buffer(width / 1.999, steps_per_circle)``) and the regions (aperture 0 / 'REG', unchanged).
+
+    Rejected (MultiplicativeBufferRejected): a record with a non-empty 'clear' geometry (the records do not hold the
+    global order of the file, so the polarity can not be composed again), a track drawn with another aperture than
+    C (it has no defined width), a record that is not a flash or a track the parser makes, and an object whose
+    composed geometry is not empty while its records hold no solid.
+
+    :param gerber:  the Gerber object, not changed
+    :param factor:  the positive factor
+    :return:        (new apertures {apid: new dict}, new composed solid_geometry, new export_as_regions)
+    """
+    from appParsers.feature_access import normalize_polygonal    # imported here, like Gerber.needs_region_export
+
+    steps = int(gerber.steps_per_circle)
+
+    # (a) scan: nothing is built before the whole object is known to be supported
+    for apid, tool in gerber.tools.items():
+        kind = str(tool.get('type'))
+        is_region = apid == 0 or kind == 'REG'
+        for record in tool.get('geometry', ()):
+            clear = record.get('clear')
+            if clear is not None and not clear.is_empty:
+                raise MultiplicativeBufferRejected(
+                    _("the object has clear (negative polarity) features, the polarity can not be composed again"))
+            if is_region:
+                continue
+            solid = record.get('solid')
+            follow = record.get('follow')
+            if follow is None:
+                if solid is not None and not solid.is_empty:
+                    raise MultiplicativeBufferRejected(
+                        _("a feature of the aperture %s has no position to scale about") % str(apid))
+            elif isinstance(follow, Point):
+                if kind == 'R' and not _is_rectangle_flash(tool, record):
+                    raise MultiplicativeBufferRejected(
+                        _("the aperture %s is rectangular and draws a track, which has no defined width") % str(apid))
+            elif kind != 'C':
+                raise MultiplicativeBufferRejected(
+                    _("the aperture %s draws a track and is not circular, a track has no defined width")
+                    % str(apid))
+            elif solid is not None:
+                expected = follow.buffer(float(tool['size']) / 1.999, steps)
+                if solid.symmetric_difference(expected).area > 1e-6 + 1e-4 * expected.area:
+                    raise MultiplicativeBufferRejected(
+                        _("a track of the aperture %s was not drawn by the Gerber parser") % str(apid))
+
+    # (b) build the new apertures, records and metadata in copies
+    new_tools = {}
+    flag = bool(getattr(gerber, 'export_as_regions', False))
+    dark = []
+    for apid, tool in gerber.tools.items():
+        new_tool = dict(tool)
+        is_region = apid == 0 or str(tool.get('type')) == 'REG'
+        new_records = []
+        has_records = bool(tool.get('geometry'))
+        if not is_region:
+            if not _scale_metadata_by_factor(new_tool, factor) and has_records:
+                flag = True
+        for record in tool.get('geometry', ()):
+            new_record = dict(record)
+            solid = record.get('solid')
+            follow = record.get('follow')
+            if not is_region and solid is not None and follow is not None:
+                if isinstance(follow, Point):
+                    new_record['solid'] = affinity.scale(solid, factor, factor, origin=follow)
+                else:
+                    new_record['solid'] = follow.buffer(float(tool['size']) * factor / 1.999, steps)
+            new_records.append(new_record)
+            if new_record.get('solid') is not None:
+                dark.append(new_record['solid'])
+        if 'geometry' in tool:
+            new_tool['geometry'] = new_records
+        new_tools[apid] = new_tool
+
+    # (c) the candidate aggregate from the new dark footprints of ALL the records (the polarity is checked above)
+    if not dark and any(not g.is_empty for g in flatten_shapely_geometry(gerber.solid_geometry or [])):
+        raise MultiplicativeBufferRejected(_("the object has no aperture records to rebuild its geometry from"))
+    candidate = normalize_polygonal(dark)
+
+    return new_tools, candidate, flag
 
 
 def _grow_size(tool: Dict[str, Any], grow: float) -> None:

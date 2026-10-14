@@ -20,11 +20,6 @@ from test_unify_characterization import (  # noqa: F401  (the fixtures must be v
     FIXTURES, MIXED_GBR, _headless_qt, app, export_gerber_text, make_gerber, parts, polygon_union, reparse_gerber,
 )
 
-# the behavior fixed by Stage 3: the test fails today with an AssertionError (a KeyError of the old code is turned into
-# an AssertionError by multiply())
-STAGE3 = pytest.mark.xfail(strict=True, raises=AssertionError, reason="fixed in Stage 3")
-
-STEPS = 64          # gerber_circle_steps of the default options (the parser uses it for the tracks)
 
 
 def fx(name):
@@ -158,17 +153,16 @@ def flash_records(obj, apid):
 # flashes
 # ---------------------------------------------------------------------------------------------------------------
 
-@STAGE3
 @pytest.mark.parametrize('factor', [1.5, 0.5])
 @pytest.mark.parametrize('kind', FLASH_KINDS)
 class TestFlashes:
     def test_each_flash_is_scaled_about_its_own_point(self, app, kind, factor):
         fixture, apid = FLASH_KINDS[kind]
         obj = make_gerber(app, fx(fixture))
-        before = [(rec['solid'], rec['follow']) for rec in obj.tools[apid]['geometry']]
+        before = [(rec['solid'], rec['follow']) for rec in flash_records(obj, apid)]
         assert before
         assert multiply(obj, factor) is None
-        after = obj.tools[apid]['geometry']
+        after = flash_records(obj, apid)
         assert len(after) == len(before)
         for rec, (solid, follow) in zip(after, before):
             assert rec['follow'].equals(follow)
@@ -181,7 +175,8 @@ class TestFlashes:
             nminx, nminy, nmaxx, nmaxy = rec['solid'].bounds
             assert nmaxx - nminx == pytest.approx((maxx - minx) * factor, rel=1e-9)
             assert nmaxy - nminy == pytest.approx((maxy - miny) * factor, rel=1e-9)
-        assert_composed_equal(obj.solid_geometry, [rec['solid'] for rec in after], 'composed')
+        every_solid = [rec['solid'] for tool in obj.tools.values() for rec in tool['geometry']]
+        assert_composed_equal(obj.solid_geometry, every_solid, 'composed')
 
     def test_metadata_follows_the_plan(self, app, kind, factor):
         fixture, apid = FLASH_KINDS[kind]
@@ -222,7 +217,6 @@ class TestFlashes:
 # ---------------------------------------------------------------------------------------------------------------
 
 class TestTracksAndRegions:
-    @STAGE3
     @pytest.mark.parametrize('factor', [1.5, 0.5])
     def test_c_track_is_rebuilt_with_the_scaled_width(self, app, tmp_path, factor):
         obj = make_gerber(app, fx('circle'))
@@ -232,7 +226,7 @@ class TestTracksAndRegions:
         new_track = [rec for rec in obj.tools[10]['geometry'] if isinstance(rec['follow'], LineString)][0]
         assert obj.tools[10]['size'] == pytest.approx(1.5 * factor)
         assert new_track['follow'].equals(follow)
-        expected = follow.buffer(1.5 * factor / 1.999, STEPS)
+        expected = follow.buffer(1.5 * factor / 1.999, int(obj.steps_per_circle))
         assert new_track['solid'].symmetric_difference(expected).area <= 1e-9
         # the width of the track: twice the distance from the axis to the outline, in the middle of a segment
         mid = Point(15.0, 20.0)
@@ -243,7 +237,6 @@ class TestTracksAndRegions:
         assert again.tools[10]['size'] == pytest.approx(1.5 * factor)
         assert_composed_equal(again.solid_geometry, obj.solid_geometry, 'round trip')
 
-    @STAGE3
     def test_regions_are_unchanged(self, app, tmp_path):
         path = write(tmp_path, 'region_flash', REGION_AND_FLASH)
         obj = make_gerber(app, path)
@@ -262,7 +255,6 @@ class TestTracksAndRegions:
         again = reparse_gerber(app, export_gerber_text(app, obj), tmp_path)
         assert_composed_equal(again.solid_geometry, obj.solid_geometry, 'round trip')
 
-    @STAGE3
     @pytest.mark.parametrize('factor', [1.5, 0.5])
     def test_every_supported_record_kind_together(self, app, tmp_path, factor):
         path = write(tmp_path, 'all', ALL_SUPPORTED)
@@ -280,7 +272,7 @@ class TestTracksAndRegions:
                     assert rec['solid'].area == pytest.approx(solid.area * factor ** 2, rel=1e-9)
                     expected.append(rec['solid'])
                 else:
-                    expected.append(follow.buffer(0.5 * factor / 1.999, STEPS))
+                    expected.append(follow.buffer(0.5 * factor / 1.999, int(obj.steps_per_circle)))
         assert_composed_equal(obj.solid_geometry, expected, 'composed')
         assert obj.tools[16]['size'] == pytest.approx(0.5 * factor)
         assert obj.export_as_regions is True          # the macro
@@ -318,7 +310,6 @@ def load_rejected(app, tmp_path, name):
     raise AssertionError(name)
 
 
-@STAGE3
 @pytest.mark.parametrize('name', ['dark_clear_dark', 'region_hole', 'r_track', 'o_track'])
 class TestRejected:
     def test_nothing_changes_and_the_user_is_told(self, app, tmp_path, name):
@@ -336,7 +327,6 @@ class TestRejected:
         assert obj.export_as_regions is False
 
 
-@STAGE3
 def test_the_object_wrapper_survives_a_rejection(app):
     # ToolTransform, the Gerber editor plugin and TclCommandBuffer call GerberObject.buffer, which discards the result
     obj = make_gerber(app, MIXED_GBR)
@@ -348,7 +338,6 @@ def test_the_object_wrapper_survives_a_rejection(app):
 
 
 class TestFactorMustBePositive:
-    @STAGE3
     def test_a_negative_factor_is_rejected_without_a_change(self, app):
         obj = make_gerber(app, fx('circle'))
         before = full_state(obj)
@@ -368,7 +357,6 @@ class TestFactorMustBePositive:
 # atomicity
 # ---------------------------------------------------------------------------------------------------------------
 
-@STAGE3
 class TestAtomicity:
     def test_a_failing_aggregate_leaves_the_object_unchanged(self, app, monkeypatch):
         import appParsers.feature_access as feature_access
