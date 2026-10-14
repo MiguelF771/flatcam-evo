@@ -1361,6 +1361,7 @@ class ExcellonObject(FlatCAMObj, Excellon):
                                 self.shape_indexes_dict[tool] = [idx]
 
             self.shapes.redraw()
+            self.mark_full_plot()
         except (ObjectDeleted, AttributeError) as e:
             self.app.log.debug("ExcellonObject.plot() -> %s" % str(e))
             self.shapes.clear(update=True)

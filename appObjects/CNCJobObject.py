@@ -1244,7 +1244,34 @@ class CNCJobObject(FlatCAMObj, CNCjob):
             pass
         self.ui_connect()
 
-        self.plot(kind=kind)
+        # a toggle only changes the visibility; a new plot of a big object blocks the UI
+        if not self.show_plotted_shapes(cb_flag, kind=kind):
+            self.plot(kind=kind)
+
+    def show_plotted_shapes(self, visible, kind=None):
+        """
+        Show or hide the shapes of the last full plot, and the annotations. See FlatCAMObj.show_plotted_shapes().
+
+        :param visible: True to show the shapes, False to hide them
+        :param kind:    "all", "travel" or "cut" (None is "all", as in plot()); it must be the kind of the last full plot
+        :return:        True if done. False if the shapes are not the last full plot; then call plot().
+        """
+        if (kind or 'all') != getattr(self, '_full_plot_kind', None):
+            return False
+        if not super().show_plotted_shapes(visible, kind=kind):
+            return False
+
+        # same as the annotations part of plot()
+        try:
+            if self.app.use_3d_engine:
+                if self.ui.annotation_cb.get_value() and visible:
+                    self.plot_annotations(obj=self, visible=True)
+                else:
+                    self.plot_annotations(obj=self, visible=False)
+        except (ObjectDeleted, AttributeError):
+            if self.app.use_3d_engine:
+                self.annotation.clear(update=True)
+        return True
 
     def on_plot_cb_click_table(self):
         """
@@ -1366,6 +1393,9 @@ class CNCJobObject(FlatCAMObj, CNCjob):
                             self.plot2(tooldia=dia_plot, obj=self, visible=visible, gcode_parsed=gcode_parsed,
                                        kind=kind)
             self.shapes.redraw()
+            if dia is None:
+                self._full_plot_kind = kind
+                self.mark_full_plot()
         except (ObjectDeleted, AttributeError) as err:
             self.app.log.debug("CNCJobObject.plot() --> %s" % str(err))
             self.shapes.clear(update=True)

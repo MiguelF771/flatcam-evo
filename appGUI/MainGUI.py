@@ -3374,10 +3374,10 @@ class MainGUI(QtWidgets.QMainWindow):
                             select.muted_ui = True
                             select.obj_options['plot'] = not select.obj_options['plot']
                             select.muted_ui = False
-                            if select.kind == 'cncjob':
-                                select.plot(kind=self.app.options.get("cncjob_plot_kind", "all"))
-                            else:
-                                select.plot()
+                            kind = self.app.options.get("cncjob_plot_kind", "all") if select.kind == 'cncjob' \
+                                else None
+                            if not select.show_plotted_shapes(select.obj_options['plot'], kind=kind):
+                                select.plot(kind=kind) if kind else select.plot()
                         QtWidgets.QApplication.processEvents()
                     self.app.collection.update_view()
                     self.app.delete_selection_shape()

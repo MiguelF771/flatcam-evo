@@ -113,6 +113,9 @@ class FlatCAMObj(QtCore.QObject):
 
         self.item = None  # Link with project view item
 
+        # signature of the shapes made by the last full plot; see mark_full_plot() and show_plotted_shapes()
+        self._full_plot_sig = None
+
         self.muted_ui = False
         self.deleted = False
 
@@ -192,7 +195,67 @@ class FlatCAMObj(QtCore.QObject):
             return False
 
         self.clear()
+        self._full_plot_sig = None
         return True
+
+    def _shapes_signature(self):
+        # only the VisPy shape group keeps the keys of its shapes
+        if not self.app.use_3d_engine:
+            return None
+        try:
+            idx = self.shapes._indexes
+        except AttributeError:
+            return None
+        if not idx:
+            return None
+        return len(idx), idx[0], idx[-1]
+
+    def mark_full_plot(self):
+        """
+        Call this at the end of a plot() that added all the shapes of the object, with the current options.
+        After this, show_plotted_shapes() can show or hide these shapes without a new plot.
+
+        :return: None
+        """
+        self._full_plot_sig = self._shapes_signature()
+
+    def show_plotted_shapes(self, visible, kind=None):
+        """
+        Show or hide the shapes of the last full plot. There is no new tessellation of the geometry,
+        so this is much faster than plot() for big objects.
+
+        :param visible: True to show the shapes, False to hide them
+        :param kind:    Used by only some of the FlatCAM objects
+        :return:        True if done. False if the shapes are not the last full plot; then call plot().
+        """
+        if not self._has_full_plot():
+            return False
+
+        self.shapes.visible = visible
+        return True
+
+    def bring_to_top(self):
+        """
+        Draw the shapes of the last full plot over the shapes of the other objects. There is no new tessellation
+        of the geometry, so this is much faster than plot() for big objects.
+
+        :return:        True if done. False if the shapes are not the last full plot; then call plot().
+        """
+        if not self._has_full_plot():
+            return False
+
+        self.shapes.move_to_top()
+        return True
+
+    def _has_full_plot(self):
+        # True if the shapes of the last full plot are still on the canvas
+        sig = self._shapes_signature()
+        if sig is None or sig != self._full_plot_sig:
+            return False
+
+        # a clear of all the canvas removes the shapes but not the keys in the group
+        data = self.shapes._collection.data
+        return sig[1] in data and sig[2] in data
 
     def single_object_plot(self):
         def plot_task():

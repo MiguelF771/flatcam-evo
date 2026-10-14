@@ -829,7 +829,9 @@ class GerberObject(FlatCAMObj, Gerber):
         if self.muted_ui:
             return
         self.read_form_item('plot')
-        self.plot()
+        # a toggle only changes the visibility; a new plot of a big object blocks the UI
+        if not self.show_plotted_shapes(self.obj_options['plot']):
+            self.plot()
 
     def on_solid_cb_click(self, *args):
         if self.muted_ui:
@@ -999,6 +1001,7 @@ class GerberObject(FlatCAMObj, Gerber):
                 # update_colors=(self.fill_color, self.outline_color),
                 # indexes=self.app.plotcanvas.shape_collection.data.keys()
             )
+            self.mark_full_plot()
         except (ObjectDeleted, AttributeError):
             self.shapes.clear(update=True)
         except Exception as e:

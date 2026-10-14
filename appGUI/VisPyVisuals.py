@@ -11,6 +11,7 @@ from vispy.scene.visuals import VisualNode, generate_docstring, visuals
 from vispy.gloo import set_state
 from vispy.color import Color
 from shapely import Polygon, LineString, LinearRing
+import itertools
 import threading
 import numpy as np
 from appGUI.VisPyTesselators import GLUTess
@@ -211,9 +212,13 @@ class ShapeGroup(object):
         :param value: bool
         """
         self._visible = value
+        data = self._collection.data
         for i in self._indexes:
-            self._collection.data[i]['visible'] = value
+            if i in data:
+                data[i]['visible'] = value
 
+        # the collection skips the update if it is not marked dirty
+        self._collection._dirty = True
         self._collection.redraw([])
 
     @property
@@ -233,15 +238,28 @@ class ShapeGroup(object):
         """
         self._collection.enabled = value
 
+    def move_to_top(self):
+        """
+        Draw the shapes of the group over all the other shapes of the collection
+        """
+        if self._collection.move_to_top(self._indexes):
+            self._collection.redraw([])
+
     def update_visibility(self, state, indexes=None):
+        data = self._collection.data
         if indexes:
+            # a set: a membership test on the list is O(n) for each index
+            group_indexes = set(self._indexes)
             for i in indexes:
-                if i in self._indexes:
-                    self._collection.data[i]['visible'] = state
+                if i in group_indexes and i in data:
+                    data[i]['visible'] = state
         else:
             for i in self._indexes:
-                self._collection.data[i]['visible'] = state
+                if i in data:
+                    data[i]['visible'] = state
 
+        # the collection skips the update if it is not marked dirty
+        self._collection._dirty = True
         self._collection.redraw([])
 
 
@@ -465,6 +483,35 @@ class ShapeCollectionVisual(CompoundVisual):
         
         if update:
             self.__update()
+
+    def move_to_top(self, keys):
+        """
+        Move the shapes to the end of the data, so they are drawn over the other shapes of the same layer.
+        The shapes keep their keys and their buffers; there is no new tessellation.
+
+        :param keys:    list of shape keys, in the order to draw them
+        :return:        True if the order changed, False if the shapes are already on top
+        """
+        keys = [k for k in keys if k in self.data]
+        if not keys:
+            return False
+
+        # the shapes are already on top if they are the last ones in the data
+        key_set = set(keys)
+        if set(itertools.islice(reversed(self.data), len(keys))) == key_set:
+            return False
+
+        # Lock sub-visuals updates; a key that is deleted and set again goes to the end of the dict
+        self.update_lock.acquire(True)
+        try:
+            moved = [(k, self.data.pop(k)) for k in keys]
+            self.data.update(moved)
+        finally:
+            self.update_lock.release()
+
+        # Mark buffers as dirty
+        self._dirty = True
+        return True
 
     def update_visibility(self, state: bool, indexes=None) -> None:
         # Lock sub-visuals updates

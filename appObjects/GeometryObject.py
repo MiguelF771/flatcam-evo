@@ -1501,6 +1501,8 @@ class GeometryObject(FlatCAMObj, Geometry):
                 self.add_shapes_batch(batch, visible=visible)
 
             self.shapes.redraw()
+            if plot_tool is None:
+                self.mark_full_plot()
 
         except (ObjectDeleted, AttributeError):
             self.shapes.clear(update=True)
@@ -1510,7 +1512,9 @@ class GeometryObject(FlatCAMObj, Geometry):
             return
 
         self.read_form_item('plot')
-        self.plot()
+        # a toggle only changes the visibility; a new plot of a big object blocks the UI
+        if not self.show_plotted_shapes(self.obj_options['plot']):
+            self.plot()
 
         self.ui_disconnect()
         cb_flag = self.ui.plot_cb.isChecked()

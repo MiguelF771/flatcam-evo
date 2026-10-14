@@ -24,6 +24,9 @@ Other:
 - new feature: Altium .pcbdoc import in File -> Import -> Altium PCB directly to Gerbers and Excellons
 - tests: pytest options (for example -q or -x) do not stop the tests that import appMain any more (new tests/conftest.py)
 - fixed a crash when the Space key toggles the plot of the selected objects: the default Properties tab deleted the UI of an object; now the UI is kept, and if a UI is deleted it is rebuilt
+- the plot toggle (Plot checkbox, Space key, Enable/Disable plots) does not plot the object again if its shapes are still on the canvas; it only shows or hides them. The UI does not block any more on big objects (50000 shapes: 0.5 s instead of a full tessellation)
+- fixed: the show/hide of a shape group did not always update the canvas (the shape collection was not marked dirty); the per-tool show/hide of Excellon was slow on big objects
+- the selection of a Gerber object puts it over the other objects without a new plot: only the draw order of the shapes on the canvas changes (52000 shapes: 0.5 s instead of a full tessellation of the selected object). If the object has no valid full plot, it is plotted again as before
 
 13.10.2026
 

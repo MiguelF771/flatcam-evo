@@ -152,9 +152,12 @@ class AppPlotManager(QtCore.QObject):
             with self.proc_container.new(_("Enabling plots ...")):
                 for plot_obj in objs:
                     # obj.obj_options['plot'] = True
+                    # only change the visibility if the shapes of the last full plot are still on the canvas
                     if isinstance(plot_obj, CNCJobObject):
-                        plot_obj.plot(visible=True, kind=self.options.get("cncjob_plot_kind", self.defaults.get("cncjob_plot_kind")))
-                    else:
+                        kind = self.options.get("cncjob_plot_kind", self.defaults.get("cncjob_plot_kind"))
+                        if not plot_obj.show_plotted_shapes(True, kind=kind):
+                            plot_obj.plot(visible=True, kind=kind)
+                    elif not plot_obj.show_plotted_shapes(True):
                         plot_obj.plot(visible=True)
 
         self.worker_task.emit({'fcn': worker_task, 'params': [objects]})
@@ -207,9 +210,12 @@ class AppPlotManager(QtCore.QObject):
             with self.proc_container.new(_("Disabling plots ...")):
                 for plot_obj in objs:
                     # obj.obj_options['plot'] = True
+                    # only change the visibility if the shapes of the last full plot are still on the canvas
                     if isinstance(plot_obj, CNCJobObject):
-                        plot_obj.plot(visible=False, kind=self.options.get("cncjob_plot_kind", self.defaults.get("cncjob_plot_kind")))
-                    else:
+                        kind = self.options.get("cncjob_plot_kind", self.defaults.get("cncjob_plot_kind"))
+                        if not plot_obj.show_plotted_shapes(False, kind=kind):
+                            plot_obj.plot(visible=False, kind=kind)
+                    elif not plot_obj.show_plotted_shapes(False):
                         plot_obj.plot(visible=False)
 
         self.worker_task.emit({'fcn': worker_task, 'params': [objects]})
@@ -266,7 +272,9 @@ class AppPlotManager(QtCore.QObject):
             return
 
         def worker_task(plot_obj):
-            plot_obj.plot(visible=True)
+            # change only the draw order; a new plot of a big object takes a long time
+            if not plot_obj.bring_to_top():
+                plot_obj.plot(visible=True)
 
         self.worker_task.emit({'fcn': worker_task, 'params': [obj]})
 
