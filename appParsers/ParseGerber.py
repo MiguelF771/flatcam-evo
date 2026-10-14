@@ -335,8 +335,8 @@ class Gerber(Geometry):
         region records under the region 'aperture' 0, ready for ``GerberObject.export_gerber``.
 
         Method: ``feature_access.normalize_polygonal`` (flatten the geometry, repair every part with
-        ``make_valid``, keep the polygonal parts, union them), so the result is a valid set of disjoint polygons with their holes. The polygons are
-        sorted by the area of their exterior, largest first. The writer draws each polygon as a dark region
+        ``make_valid``, keep the polygonal parts, union them), so the result is a valid set of disjoint polygons
+        with their holes. The polygons are sorted by the area of their exterior, largest first. The writer draws each polygon as a dark region
         for the exterior, followed by clear regions for its interior rings, then switches back to dark.
         A polygon that lies inside the hole of another one has a smaller exterior, so it is drawn after
         the clear ring and is not erased by it. That keeps holes and nested islands.
