@@ -22,6 +22,7 @@ from appObjects.DocumentObject import DocumentObject
 from appObjects.ExcellonObject import ExcellonObject
 from appObjects.GeometryObject import GeometryObject
 from appObjects.GerberObject import GerberObject
+from appObjects.ObjectDispatch import dispatch_attr
 from appObjects.ScriptObject import ScriptObject
 
 import inspect  # TODO: Remove
@@ -1014,39 +1015,10 @@ class ObjectCollection(QtCore.QAbstractItemModel):
             obj = indexes[0].internalPointer().obj
             self.item_selected.emit(obj.obj_options['name'])
 
-            if obj.kind == 'gerber':
+            status_color = dispatch_attr(obj, 'status_color')
+            if status_color is not None:
                 self.app.inform.emit('[selected]<span style="color:{color};">{name}</span> {tx}'.format(
-                    color='green',
-                    name=str(obj.obj_options['name']),
-                    tx=_("selected"))
-                )
-            elif obj.kind == 'excellon':
-                self.app.inform.emit('[selected]<span style="color:{color};">{name}</span> {tx}'.format(
-                    color='brown',
-                    name=str(obj.obj_options['name']),
-                    tx=_("selected"))
-                )
-            elif obj.kind == 'cncjob':
-                self.app.inform.emit('[selected]<span style="color:{color};">{name}</span> {tx}'.format(
-                    color='blue',
-                    name=str(obj.obj_options['name']),
-                    tx=_("selected"))
-                )
-            elif obj.kind == 'geometry':
-                self.app.inform.emit('[selected]<span style="color:{color};">{name}</span> {tx}'.format(
-                    color='red',
-                    name=str(obj.obj_options['name']),
-                    tx=_("selected"))
-                )
-            elif obj.kind == 'script':
-                self.app.inform.emit('[selected]<span style="color:{color};">{name}</span> {tx}'.format(
-                    color='orange',
-                    name=str(obj.obj_options['name']),
-                    tx=_("selected"))
-                )
-            elif obj.kind == 'document':
-                self.app.inform.emit('[selected]<span style="color:{color};">{name}</span> {tx}'.format(
-                    color='darkCyan',
+                    color=status_color,
                     name=str(obj.obj_options['name']),
                     tx=_("selected"))
                 )

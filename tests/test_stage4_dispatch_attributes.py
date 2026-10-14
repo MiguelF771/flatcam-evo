@@ -191,3 +191,43 @@ class TestAppObjectOnObjectCreated:
             assert obj.outline_color == app.options[kind + '_plot_line']
         else:
             assert getattr(obj, 'fill_color', None) == before
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# ObjectCollection.on_list_selection_change (status message)
+# ---------------------------------------------------------------------------------------------------------------
+
+from appObjects.ObjectCollection import ObjectCollection  # noqa: E402
+
+
+def selection_change(obj):
+    """Run the slot unbound: it only touches self.app and self.item_selected."""
+    holder = SimpleNamespace(app=Mock(), item_selected=Mock(), get_selected=lambda: [])
+    node = SimpleNamespace(obj=obj)
+    current = SimpleNamespace(indexes=lambda: [SimpleNamespace(internalPointer=lambda: node)])
+    ObjectCollection.on_list_selection_change(holder, current, None)
+    return holder
+
+
+class TestObjectCollectionSelectionMessage:
+    @pytest.mark.parametrize('kind', KINDS)
+    def test_real_objects(self, kind, _headless_qt):
+        app, _ = make_app_object()
+        obj = build_obj(kind, app)
+        obj.obj_options['name'] = 'nm'
+        holder = selection_change(obj)
+        holder.item_selected.emit.assert_called_once_with('nm')
+        holder.app.inform.emit.assert_called_once_with(
+            '[selected]<span style="color:%s;">nm</span> selected' % EXPECTED[kind]['status_color'])
+
+    @pytest.mark.parametrize('kind', KINDS)
+    def test_stand_in_objects_keep_the_message(self, kind):
+        obj = SimpleNamespace(kind=kind, obj_options={'name': 'nm'})
+        holder = selection_change(obj)
+        holder.app.inform.emit.assert_called_once_with(
+            '[selected]<span style="color:%s;">nm</span> selected' % EXPECTED[kind]['status_color'])
+
+    def test_unknown_kind_emits_no_message(self):
+        holder = selection_change(SimpleNamespace(kind='other', obj_options={'name': 'nm'}))
+        holder.item_selected.emit.assert_called_once_with('nm')
+        holder.app.inform.emit.assert_not_called()
