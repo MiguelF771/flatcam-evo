@@ -1,8 +1,12 @@
 """Bug fixes of the Panelize plugin (Stage 5), headless (driver: test_panelize_plugin.run_plugin)."""
 
 import pytest
+from shapely.geometry import LineString, box
 
-from test_unify_characterization import _headless_qt, app, make_excellon, make_gerber, polygon_union  # noqa: F401
+from appHandlers.appEdit import appEditor
+from appObjects.GeometryObject import GeometryObject
+from test_unify_characterization import (  # noqa: F401
+    _headless_qt, app, make_excellon, make_gerber, polygon_union, reparse_gerber)
 from test_panelize_plugin import run_plugin
 
 
@@ -77,13 +81,101 @@ def test_constrain_warning_comes_from_the_job_with_the_final_grid(app):
 # ---------------------------------------------------------------------------------------------------------------
 
 def test_gerber_to_geometry_panel_result_is_the_translated_copper_only(app):
-    # The removed block built a tool table on new_obj.tools and deleted the attribute again at once, so the only
-    # lasting effects were multigeo = True and the missing 'tools' attribute. Those are kept; this is not a fix of
-    # that quirk.
+    # The panel gets the tool table of the Geometry (like convert_any2geo); every tool holds the translated copper.
     src = make_gerber(app, name='g')
     created, _ = run_plugin(app, src, panel_type='geometry', rows=2, cols=2)
     pan = created['g_panelized']
+    src_area = polygon_union(src.solid_geometry).area
     assert pan.multigeo is True
-    assert not hasattr(pan, 'tools')
-    assert polygon_union(pan.solid_geometry).area == pytest.approx(4 * polygon_union(src.solid_geometry).area)
+    assert pan.tools
+    for tool in pan.tools.values():
+        assert polygon_union(tool['solid_geometry']).area == pytest.approx(4 * src_area)
+    assert polygon_union(pan.solid_geometry).area == pytest.approx(4 * src_area)
     assert all(not isinstance(g, (list, tuple)) for g in pan.solid_geometry)
+    assert all(not isinstance(g, (list, tuple)) for tool in pan.tools.values() for g in tool['solid_geometry'])
+
+
+def test_gerber_to_geometry_panel_has_tools_options_and_source(app):
+    src = make_gerber(app, name='g')
+    created, _ = run_plugin(app, src, panel_type='geometry', rows=1, cols=2)
+    pan = created['g_panelized']
+    assert pan.tools
+    for tool in pan.tools.values():
+        assert 'tooldia' in tool and isinstance(tool['data'], dict) and tool['data']
+    first = pan.tools[min(pan.tools)]['tooldia']
+    assert pan.obj_options['tools_mill_tooldia'] == first
+    # a Geometry keeps its source as a DXF document
+    assert pan.source_file and len(pan.source_file.modelspace()) > 0
+
+
+def test_build_geometry_tool_table_matches_the_convert_any2geo_rules(app):
+    editor = appEditor(app)
+    app.options['tools_mill_tooldia'] = '0.5, 0.2'
+    app.options['geometry_cutz'] = -1.25
+    default_data, tools, dias = editor.build_geometry_tool_table()
+    assert dias == [0.5, 0.2] and list(tools) == [1, 2]
+    assert default_data['cutz'] == -1.25 and 'geometry_cutz' not in default_data
+    for tid, dia in zip(tools, dias):
+        tool = tools[tid]
+        assert tool['tooldia'] == dia and tool['solid_geometry'] == []
+        assert (tool['offset'], tool['offset_value'], tool['type'], tool['tool_type']) == ('Path', 0.0, 'Rough', 'C1')
+        assert tool['data'] == default_data and tool['data'] is not default_data
+    app.options['tools_mill_tooldia'] = 0.8
+    assert editor.build_geometry_tool_table()[2] == [0.8]
+    app.options['tools_mill_tooldia'] = 'not a number'
+    assert editor.build_geometry_tool_table() is None
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Geometry -> Gerber panel keeps its tools and a source file
+# ---------------------------------------------------------------------------------------------------------------
+
+def make_poly_geometry(app, multigeo):
+    """A Geometry made of polygons only: 3 elements."""
+    src = GeometryObject('src', app)
+    src.multigeo = multigeo
+    src.units = 'MM'
+    polys = [box(0, 0, 4, 4), box(6, 0, 8, 2), box(10, 0, 12, 2)]
+    src.solid_geometry = list(polys)
+    if multigeo:
+        src.tools = {1: {'tooldia': 1.0, 'data': {}, 'solid_geometry': polys[:2]},
+                     2: {'tooldia': 2.0, 'data': {}, 'solid_geometry': polys[2:]}}
+    else:
+        src.tools = {1: {'tooldia': 1.0, 'data': {}, 'solid_geometry': []}}
+    return src
+
+
+@pytest.mark.parametrize('multigeo', [False, True], ids=['single-geo', 'multigeo'])
+def test_geometry_to_gerber_panel_keeps_the_records_and_has_a_source(app, multigeo):
+    src = make_poly_geometry(app, multigeo)
+    created, _ = run_plugin(app, src, panel_type='gerber', rows=2, cols=2)
+    pan = created['src_panelized']
+    assert pan.tools[0]['type'] == 'REG'
+    records = pan.tools[0]['geometry']
+    assert len(records) == 4 * 3
+    assert polygon_union([r['solid'] for r in records]).symmetric_difference(
+        polygon_union(pan.solid_geometry)).area < 1e-6
+    assert pan.multigeo is True and pan.multitool is False and pan.follow is False
+    assert pan.export_as_regions is False
+    assert isinstance(pan.source_file, str) and pan.source_file.strip()
+
+
+@pytest.mark.parametrize('multigeo', [False, True], ids=['single-geo', 'multigeo'])
+def test_geometry_to_gerber_panel_source_round_trips(app, tmp_path, multigeo):
+    src = make_poly_geometry(app, multigeo)
+    created, _ = run_plugin(app, src, panel_type='gerber', rows=2, cols=2)
+    pan = created['src_panelized']
+    again = reparse_gerber(app, pan.source_file, tmp_path)
+    assert polygon_union(again.solid_geometry).symmetric_difference(polygon_union(pan.solid_geometry)).area < 1e-3
+    assert polygon_union(pan.solid_geometry).area == pytest.approx(4 * (16 + 4 + 4))
+
+
+def test_geometry_to_gerber_panel_with_a_line_exports_as_regions(app, tmp_path):
+    src = make_poly_geometry(app, False)
+    src.solid_geometry = [box(0, 0, 4, 4), LineString([(6, 0), (9, 3)])]
+    created, _ = run_plugin(app, src, panel_type='gerber', rows=1, cols=2)
+    pan = created['src_panelized']
+    assert pan.export_as_regions is True
+    assert isinstance(pan.source_file, str) and pan.source_file.strip()
+    again = reparse_gerber(app, pan.source_file, tmp_path)
+    assert polygon_union(again.solid_geometry).area == pytest.approx(2 * 16)

@@ -9,6 +9,7 @@ import pytest
 from PyQt6 import QtCore
 from shapely.geometry import LineString, box
 
+from appHandlers.appEdit import appEditor
 from appHandlers.appIO import appIO
 from appObjects.ExcellonObject import ExcellonObject
 from appObjects.GeometryObject import GeometryObject
@@ -44,6 +45,7 @@ def run_plugin(app, src, box_obj=None, rows=2, cols=3, spacing=5.0, panel_type='
     """Returns (created, informs). constrain = (max_x, max_y) switches the constrain option on. before: a list that
     receives the messages shown before the worker task runs (the GUI-thread part)."""
     app.f_handlers = appIO(app)
+    app.edit_class = appEditor(app)
     created = {}
     informs = []
 
@@ -203,7 +205,7 @@ def test_geometry_source_to_gerber_panel_solid(app, multigeo):
     src = make_geometry(app, multigeo)
     created, _ = run_plugin(app, src, panel_type='gerber', rows=1, cols=2, spacing=0.0)
     pan = created['src_panelized']
-    assert pan.multigeo is True and pan.source_file == ''
+    assert pan.multigeo is True and pan.source_file.startswith('G04*')
     if multigeo:
         # rebuilt from the tool lines: the 2 outlines fused into 1 polygon
         assert polygon_union(pan.solid_geometry).area == pytest.approx(200.0)

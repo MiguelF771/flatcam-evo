@@ -16,7 +16,6 @@ import logging
 from copy import deepcopy
 
 from shapely import Polygon
-from shapely.ops import unary_union, linemerge
 
 import gettext
 import appTranslation as fcTranslate
@@ -426,13 +425,21 @@ class Panelize(AppTool):
                             panel_source_obj.tools, panel_source_obj.solid_geometry, panel_source_obj.multigeo,
                             offsets, abort=abort, progress=progress)
                     elif panel_source_obj.kind == 'gerber':
-                        # only the composed copper of the Gerber is used: no apertures to copy
-                        new_obj.solid_geometry = panelize_core.panelize_gerber(
-                            {}, panel_source_obj.solid_geometry, offsets, abort=abort, progress=progress)[1]
+                        # The Geometry tool table is made before panelizing, like convert_any2geo does: every tool
+                        # holds the composed copper of the Gerber.
+                        built = self.app.edit_class.build_geometry_tool_table()
+                        if built is None:
+                            raise ValueError("The tool diameters of the Geometry could not be read.")
+                        default_data, built_tools, tools_diameters = built
+                        for tid in built_tools:
+                            built_tools[tid]['solid_geometry'] = deepcopy(panel_source_obj.solid_geometry)
+
+                        new_obj.tools, new_obj.solid_geometry = panelize_core.panelize_geometry(
+                            built_tools, panel_source_obj.solid_geometry, True, offsets, abort=abort,
+                            progress=progress)
                         new_obj.multigeo = True
-                        # Existing behavior, kept: this panel ends without a 'tools' attribute. (The former code
-                        # built a tool table here and deleted it again at once.)
-                        del new_obj.tools
+                        new_obj.obj_options.update(deepcopy(default_data))
+                        new_obj.obj_options["tools_mill_tooldia"] = tools_diameters[0] if tools_diameters else 0.0
 
                     # #################################################################################################
                     # ###########################   Path Optimization   ###############################################
@@ -464,62 +471,21 @@ class Panelize(AppTool):
                             progress=progress)
                         panelize_core.copy_gerber_attributes(new_obj, panel_source_obj)
                     else:
-                        new_obj.multigeo = panel_source_obj.multigeo
-                        new_obj.tools, new_obj.solid_geometry = panelize_core.panelize_geometry(
-                            panel_source_obj.tools, panel_source_obj.solid_geometry, panel_source_obj.multigeo,
-                            offsets, abort=abort, progress=progress)
-
-                    if panel_source_obj.kind == 'geometry':
+                        # The Gerber apertures are made from the Geometry before panelizing.
+                        src_tools, src_solid = panelize_core.gerber_tools_from_geometry(
+                            panel_source_obj.tools, panel_source_obj.solid_geometry, panel_source_obj.multigeo)
+                        new_obj.tools, new_obj.solid_geometry = panelize_core.panelize_gerber(
+                            src_tools, src_solid, offsets, abort=abort, progress=progress)
                         new_obj.multitool = False
                         new_obj.multigeo = True
-                        new_obj.source_file = ''
                         new_obj.follow = False
                         new_obj.follow_geometry = []
-
-                        if panel_source_obj.multigeo is True:
-                            new_solid_list = []
-                            for tool in new_obj.tools:
-                                if 'solid_geometry' in new_obj.tools[tool]:
-                                    for geo in new_obj.tools[tool]['solid_geometry']:
-                                        try:
-                                            geo = linemerge(geo)
-                                        except Exception:
-                                            pass
-
-                                        try:
-                                            geo = Polygon(geo)
-                                            new_el = {
-                                                'solid': geo,
-                                                'follow': geo.exterior
-                                            }
-                                        except Exception:
-                                            new_el = {
-                                                'solid': geo,
-                                                'follow': geo
-                                            }
-                                        new_solid_list.append(deepcopy(new_el))
-
-                            new_obj.tools = {
-                                0: {
-                                    'type': 'REG',
-                                    'size': 0.0,
-                                    'geometry': deepcopy(new_solid_list)
-                                }
-                            }
-                            all_geo = [g['solid'] for g in new_solid_list if 'solid' in g]
-                            all_geo = unary_union(all_geo)
-                            new_obj.solid_geometry = deepcopy(all_geo)
-                            del new_obj.tools
-                        else:
-                            new_obj.tools = {
-                                0: {
-                                    'type': 'REG',
-                                    'size': 0.0,
-                                    'geometry': deepcopy(new_obj.solid_geometry)
-                                }
-                            }
-                            new_obj.solid_geometry = deepcopy(new_obj.solid_geometry)
-                            del new_obj.tools
+                        # The native writer draws a region record only if its 'solid' is a polygon: a line or a
+                        # point is written as a stroke or a flash with no aperture, which parses back as nothing.
+                        # Such a panel is exported as regions of its composed solid_geometry instead.
+                        new_obj.export_as_regions = any(
+                            not isinstance(rec.get('solid'), Polygon)
+                            for rec in new_obj.tools[0]['geometry'])
 
                     app_obj.inform.emit('%s' % _("Generating panel ... Adding the source code."))
 
