@@ -53,7 +53,7 @@ if '_' not in builtins.__dict__:
 log = logging.getLogger('base')
 
 
-class ToolPaint(Gerber, AppTool):
+class ToolPaint(Geometry, AppTool):
 
     def __init__(self, app):
         self.app = app

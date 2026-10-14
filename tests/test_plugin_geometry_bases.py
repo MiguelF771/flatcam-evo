@@ -24,6 +24,7 @@ PLUGINS = [
     ("appPlugins.ToolFollow", "ToolFollow"),
     ("appPlugins.ToolIsolation", "ToolIsolation"),
     ("appPlugins.ToolNCC.Ncc", "ToolNcc"),
+    ("appPlugins.ToolPaint.Paint", "ToolPaint"),
 ]
 
 
