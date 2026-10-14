@@ -1743,6 +1743,11 @@ class GerberObject(FlatCAMObj, Gerber):
                         for k, v in grb.tools[ap].items():
                             grb_final.tools[max_ap][k] = deepcopy(v)
 
+        # once the aperture metadata of a source can't describe its geometry, it can't describe the merge either
+        grb_final.export_as_regions = bool(getattr(grb_final, 'export_as_regions', False) or
+                                           any(getattr(grb, 'export_as_regions', False)
+                                               for grb in grb_list if not isinstance(grb, list)))
+
         grb_final.solid_geometry = unary_union(flatten_shapely_geometry(grb_final.solid_geometry))
         grb_final.follow_geometry = unary_union(flatten_shapely_geometry(grb_final.follow_geometry))
 

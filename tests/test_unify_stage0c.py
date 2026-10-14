@@ -195,3 +195,175 @@ class TestExportRouting:
         grb = make_gerber(app)
         again = reparse_gerber(app, export_gerber_text(app, grb), tmp_path)
         assert_poly_equiv(again.solid_geometry, grb.solid_geometry, rel=1e-6, abs_tol=1e-4, msg='sequence')
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# lifecycle of export_as_regions: copy, merge, project save/load, editor save
+# ---------------------------------------------------------------------------------------------------------------
+
+import json  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+from unittest.mock import MagicMock  # noqa: E402
+
+from appEditors.appGerberEditor import AppGerberEditor  # noqa: E402
+from appHandlers.appIO import appIO  # noqa: E402
+from appHandlers.appObjectOps import AppObjectOps  # noqa: E402
+from camlib import dict2obj  # noqa: E402
+from test_unify_characterization import run_copy, save_and_load  # noqa: E402
+
+
+def flagged_native(app, name='flagged'):
+    """A native Gerber whose flag is set by hand: no transform sets it yet."""
+    grb = make_gerber(app, NATIVE_GBR, name=name)
+    grb.export_as_regions = True
+    return grb
+
+
+def assert_exports_composed_geometry(app, obj, expected, tmp_path, msg):
+    """The exported file, parsed back by the real parser, equals the expected composed geometry."""
+    text = export_gerber_text(app, obj)
+    assert '%ADD' not in text and 'G36*' in text, msg   # it went through the region export
+    again = reparse_gerber(app, text, tmp_path, name='again_' + msg.replace(' ', '_'))
+    assert_poly_equiv(again.solid_geometry, expected, rel=1e-6, abs_tol=1e-4, msg=msg)
+
+
+class TestLifecycleCopy:
+    def test_on_copy_command_keeps_the_flag(self, app, tmp_path):
+        source = flagged_native(app)
+        clone = run_copy(app, source, 'gerber')
+        assert clone.export_as_regions is True
+        assert_exports_composed_geometry(app, clone, source.solid_geometry, tmp_path, 'copy command')
+        assert source.export_as_regions is True
+
+    def test_on_copy_command_keeps_false(self, app):
+        assert run_copy(app, make_gerber(app, NATIVE_GBR), 'gerber').export_as_regions is False
+
+    def test_on_copy_object2_keeps_the_flag(self, app, tmp_path):
+        source = flagged_native(app)
+        created = {}
+
+        def new_object(kind, name, initialize, *args, **kwargs):
+            new_obj = GerberObject(name, app)
+            assert initialize(new_obj, app) != 'fail'
+            created[name] = new_obj
+
+        app.app_obj.new_object.side_effect = new_object
+        app.collection.get_selected.return_value = [source]
+        AppObjectOps(app).on_copy_object2('_as')
+        clone = created['flagged_as']
+        assert clone.export_as_regions is True
+        assert_exports_composed_geometry(app, clone, source.solid_geometry, tmp_path, 'copy object2')
+
+
+class TestLifecycleMerge:
+    def merged(self, app, flags):
+        first = make_gerber(app, NATIVE_GBR, name='first')
+        second = make_gerber(app, NATIVE_GBR, name='second')
+        second.offset((50.0, 0.0))
+        first.export_as_regions, second.export_as_regions = flags
+        final = GerberObject('final', app)
+        GerberObject.merge([first, second], final, log=app.log)
+        return first, second, final
+
+    def test_flag_of_any_source_wins(self, app, tmp_path):
+        for flags in ((True, False), (False, True), (True, True)):
+            first, second, final = self.merged(app, flags)
+            assert final.export_as_regions is True, flags
+            expected = polygon_union([first.solid_geometry, second.solid_geometry])
+            assert_exports_composed_geometry(app, final, expected, tmp_path, 'merge %s%s' % flags)
+
+    def test_no_flag_stays_false(self, app):
+        assert self.merged(app, (False, False))[2].export_as_regions is False
+
+    def test_flag_of_the_destination_is_kept(self, app):
+        first = make_gerber(app, NATIVE_GBR, name='first')
+        final = GerberObject('final', app)
+        final.export_as_regions = True
+        GerberObject.merge([first], final, log=app.log)
+        assert final.export_as_regions is True
+
+    def test_nested_list_is_taken_into_account(self, app):
+        first = make_gerber(app, NATIVE_GBR, name='first')
+        second = make_gerber(app, NATIVE_GBR, name='second')
+        second.export_as_regions = True
+        final = GerberObject('final', app)
+        GerberObject.merge([first, [second]], final, log=app.log)
+        assert final.export_as_regions is True
+
+
+class TestLifecycleProject:
+    def test_flag_survives_save_and_load_and_exports(self, app, tmp_path):
+        source = flagged_native(app)
+        _, restored = save_and_load(app, [source], tmp_path)
+        assert restored[0].export_as_regions is True
+        assert_exports_composed_geometry(app, restored[0], source.solid_geometry, tmp_path, 'project')
+
+    def test_false_survives_save_and_load(self, app, tmp_path):
+        _, restored = save_and_load(app, [make_gerber(app, NATIVE_GBR)], tmp_path)
+        assert restored[0].export_as_regions is False
+
+    def test_project_without_the_field_loads_as_false(self, app, tmp_path):
+        source = make_gerber(app, NATIVE_GBR)
+        app.collection.get_list.return_value = [source]
+        app.collection.get_active.return_value = None
+        path = str(tmp_path / 'old.FlatPrj')
+        io = appIO(app)
+        io.save_project(path, silent=True)
+        with open(path, 'r') as f:
+            proj = json.load(f, object_hook=dict2obj)
+        assert 'export_as_regions' in proj['objs'][0]
+        del proj['objs'][0]['export_as_regions']
+
+        restored = []
+
+        def new_object(kind, name, initialize, *args, **kwargs):
+            new_obj = GerberObject(name, app)
+            assert initialize(new_obj, app) != 'fail'
+            restored.append(new_obj)
+
+        app.app_obj.new_object.side_effect = new_object
+        app.worker_task.emit.side_effect = lambda task: task['fcn'](*task['params'])
+        io.restore_project_objects(proj, path, True, False)
+        assert restored[0].export_as_regions is False
+        assert_poly_equiv(restored[0].solid_geometry, source.solid_geometry, rel=1e-6, abs_tol=1e-4, msg='old')
+
+
+class TestLifecycleEditor:
+    """The editor object cannot be built headless (it needs the whole GUI), so new_edited_gerber() runs on
+    a stand-in ``self``: the real function, with the app object factory replaced by one that calls
+    ``initialize``."""
+
+    def run_editor_save(self, app, source):
+        storage = {}
+        for ap, tool in source.tools.items():
+            storage[ap] = {k: v for k, v in tool.items() if k != 'geometry'}
+            storage[ap]['geometry'] = [SimpleNamespace(geo=dict(rec)) for rec in tool['geometry']]
+        created = {}
+
+        def new_object(kind, name, initialize, *args, **kwargs):
+            new_obj = GerberObject(name, app)
+            initialize(new_obj, app)
+            created[name] = new_obj
+
+        app.app_obj.new_object.side_effect = new_object
+        app.app_units = 'MM'
+        app.f_handlers = appIO(app)
+        app.custom_signal = MagicMock()
+        stand_in = SimpleNamespace(
+            app=app, gerber_obj=source, gerber_obj_options=source.obj_options, results=[1])
+        AppGerberEditor.new_edited_gerber(stand_in, 'edited', storage)
+        return created['edited']
+
+    def test_editor_save_keeps_the_flag_and_exports_the_result(self, app, tmp_path):
+        source = flagged_native(app)
+        edited = self.run_editor_save(app, source)
+        assert edited.export_as_regions is True
+        assert_exports_composed_geometry(app, edited, edited.solid_geometry, tmp_path, 'editor')
+        # the source_file made by the editor went through the region export too
+        assert '%ADD' not in edited.source_file and 'G36*' in edited.source_file
+        assert_poly_equiv(edited.solid_geometry, source.solid_geometry, rel=1e-4, abs_tol=1e-3, msg='editor')
+
+    def test_editor_save_keeps_false(self, app):
+        edited = self.run_editor_save(app, make_gerber(app, NATIVE_GBR))
+        assert edited.export_as_regions is False
+        assert '%ADD10C,' in edited.source_file

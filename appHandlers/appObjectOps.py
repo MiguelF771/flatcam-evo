@@ -795,6 +795,8 @@ class AppObjectOps(QtCore.QObject):
                     obj_init.source_file = deepcopy(obj.source_file)
                 except (AttributeError, TypeError):
                     pass
+                if obj.kind == 'gerber':
+                    obj_init.export_as_regions = getattr(obj, 'export_as_regions', False)
 
             def initialize_excellon(obj_init, app_obj):
                 obj_init.source_file = deepcopy(obj.source_file)
@@ -854,6 +856,7 @@ class AppObjectOps(QtCore.QObject):
                 obj_init.solid_geometry = deepcopy(obj.solid_geometry)
                 obj_init.tools = deepcopy(obj.tools)
                 obj_init.aperture_macros = deepcopy(obj.aperture_macros)
+                obj_init.export_as_regions = getattr(obj, 'export_as_regions', False)
                 if not obj_init.tools:
                     app_obj.log.debug("on_copy_object2() --> no gerber apertures")
                     return 'fail'

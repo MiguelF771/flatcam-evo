@@ -5700,6 +5700,8 @@ class AppGerberEditor(QtCore.QObject):
                         grb_obj.tools[storage_apcode][k] = val
 
             grb_obj.aperture_macros = deepcopy(self.gerber_obj.aperture_macros)
+            # the rebuilt records don't prove that they represent the edited result: keep the flag
+            grb_obj.export_as_regions = getattr(self.gerber_obj, 'export_as_regions', False)
 
             follow_buffer = flatten_shapely_geometry(follow_buffer)
 
