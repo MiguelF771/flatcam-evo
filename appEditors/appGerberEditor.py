@@ -5442,92 +5442,21 @@ class AppGerberEditor(QtCore.QObject):
             @staticmethod
             def worker_job(app_obj):
                 with app_obj.app.proc_container.new('%s ...' % _("Loading")):
-                    # ###############################################################
-                    # APPLY CLEAR_GEOMETRY on the SOLID_GEOMETRY
-                    # ###############################################################
-
-                    # list of clear geos that are to be applied to the entire file
-                    global_clear_geo = []
-
-                    # create one big geometry made out of all 'negative' (clear) polygons
-                    for aper_id in app_obj.gerber_obj.tools:
-                        # first check if we have any clear_geometry (LPC) and if yes added it to the global_clear_geo
-                        if 'geometry' in app_obj.gerber_obj.tools[aper_id]:
-                            for elem in app_obj.gerber_obj.tools[aper_id]['geometry']:
-                                if 'clear' in elem:
-                                    global_clear_geo.append(elem['clear'])
-                    app_obj.app.log.warning("Found %d clear polygons." % len(global_clear_geo))
-
-                    if global_clear_geo:
-                        global_clear_geo = unary_union(global_clear_geo)
-                        if isinstance(global_clear_geo, Polygon):
-                            global_clear_geo = [global_clear_geo]
-
-                    # we subtract the big "negative" (clear) geometry from each solid polygon but only the part of
-                    # clear geometry that fits inside the solid. otherwise we may lose the solid
-                    for ap_code in app_obj.gerber_obj.tools:
-                        temp_solid_geometry = []
-                        if 'geometry' in app_obj.gerber_obj.tools[ap_code]:
-                            # for elem in self.gerber_obj.tools[apcode]['geometry']:
-                            #     if 'solid' in elem:
-                            #         solid_geo = elem['solid']
-                            #         for clear_geo in global_clear_geo:
-                            #             # Make sure that the clear_geo is within the solid_geo otherwise we loose
-                            #             # the solid_geometry. We want for clear_geometry just to cut
-                            #             # into solid_geometry not to delete it
-                            #             if clear_geo.within(solid_geo):
-                            #                 solid_geo = solid_geo.difference(clear_geo)
-                            #         try:
-                            #             for poly in solid_geo:
-                            #                 new_elem = {}
-                            #
-                            #                 new_elem['solid'] = poly
-                            #                 if 'clear' in elem:
-                            #                     new_elem['clear'] = poly
-                            #                 if 'follow' in elem:
-                            #                     new_elem['follow'] = poly
-                            #                 temp_elem.append(deepcopy(new_elem))
-                            #         except TypeError:
-                            #             new_elem = {}
-                            #             new_elem['solid'] = solid_geo
-                            #             if 'clear' in elem:
-                            #                 new_elem['clear'] = solid_geo
-                            #             if 'follow' in elem:
-                            #                 new_elem['follow'] = solid_geo
-                            #             temp_elem.append(deepcopy(new_elem))
-                            for elem in app_obj.gerber_obj.tools[ap_code]['geometry']:
-                                new_elem = {}
-                                if 'solid' in elem:
-                                    solid_geo = elem['solid']
-                                    if not global_clear_geo:
-                                        if isinstance(global_clear_geo, Polygon) and global_clear_geo.is_empty:
-                                            pass
-                                        else:
-                                            for clear_geo in global_clear_geo:
-                                                # Make sure that the clear_geo is within the solid_geo otherwise
-                                                # we loose the solid_geometry. We want for clear_geometry just to
-                                                # cut into solid_geometry not to delete it
-                                                if clear_geo.within(solid_geo):
-                                                    solid_geo = solid_geo.difference(clear_geo)
-
-                                    new_elem['solid'] = solid_geo
-                                if 'clear' in elem:
-                                    new_elem['clear'] = elem['clear']
-                                if 'follow' in elem:
-                                    new_elem['follow'] = elem['follow']
-                                temp_solid_geometry.append(new_elem)
-
-                            app_obj.gerber_obj.tools[ap_code]['geometry'] = temp_solid_geometry
-
-                    app_obj.app.log.warning(
-                        "Polygon difference done for %d apertures." % len(app_obj.gerber_obj.tools))
-
+                    # a file with clear (LPC) features is loaded as its composed geometry (regions). The source
+                    # object is not changed, the user may cancel the edit.
+                    edit_tools = AppGerberEditor.build_edit_tools(
+                        app_obj.gerber_obj.tools, app_obj.gerber_obj.solid_geometry)
+                    app_obj.loaded_as_regions = edit_tools is not app_obj.gerber_obj.tools
+                    if app_obj.loaded_as_regions:
+                        app_obj.app.inform.emit('[WARNING_NOTCL] %s' % _(
+                            "The object has clear (negative polarity) features. "
+                            "The editor loads the composed geometry as regions."))
                     # #################################################################################################
                     # Multi-Processing
                     # #################################################################################################
                     try:
                         # Loading the Geometry into Editor Storage
-                        for ap_code, ap_dict in app_obj.gerber_obj.tools.items():
+                        for ap_code, ap_dict in edit_tools.items():
                             app_obj.results.append(
                                 app_obj.pool.apply_async(app_obj.add_apertures, args=(ap_code, ap_dict))
                             )
@@ -5560,6 +5489,39 @@ class AppGerberEditor(QtCore.QObject):
         # executable_edit.start.emit("Started")
 
         self.app.worker_task.emit({'fcn': executable_edit.run, 'params': []})
+
+    @staticmethod
+    def build_edit_tools(tools, solid_geometry):
+        """
+        Build the apertures dictionary that the editor loads.
+
+        The editor draws and saves only the 'solid' of the records, so the 'clear' (LPC) features of a record would
+        be lost. An object that holds such features is loaded as its composed geometry (the polarity is already
+        applied there): one region 'aperture' 0 with 1 record per polygon, the largest exterior first. An object
+        without clear features is loaded as it is.
+
+        :param tools:           the apertures dictionary of the source Gerber object; it is not changed
+        :param solid_geometry:  the composed solid_geometry of the source Gerber object
+        :return:                ``tools`` itself (no clear feature), or a new dictionary with the region aperture 0
+        """
+        for tool in tools.values():
+            for record in tool.get('geometry', ()):
+                # same test as Gerber.needs_region_export(); None, or [] of older code, is no clear geometry
+                if not getattr(record.get('clear'), 'is_empty', True):
+                    break
+            else:
+                continue
+            break
+        else:
+            return tools
+
+        from appParsers.feature_access import normalize_polygonal
+        solid = normalize_polygonal(solid_geometry if solid_geometry is not None else [])
+        polygons = [solid] if isinstance(solid, Polygon) else list(solid.geoms)
+        polygons = [poly for poly in polygons if not poly.is_empty]
+        polygons.sort(key=lambda poly: Polygon(poly.exterior).area, reverse=True)
+        return {0: {'type': 'REG', 'size': 0.0,
+                    'geometry': [{'solid': poly, 'follow': poly.exterior} for poly in polygons]}}
 
     @staticmethod
     def add_apertures(aperture_id, aperture_dict):
@@ -5704,7 +5666,10 @@ class AppGerberEditor(QtCore.QObject):
 
             grb_obj.aperture_macros = deepcopy(self.gerber_obj.aperture_macros)
             # the rebuilt records don't prove that they represent the edited result: keep the flag
-            grb_obj.export_as_regions = getattr(self.gerber_obj, 'export_as_regions', False)
+            # an object loaded as regions (it had clear features) is saved through the region export too: it keeps
+            # the holes and the islands of the regions in any order
+            grb_obj.export_as_regions = bool(getattr(self.gerber_obj, 'export_as_regions', False) or
+                                             getattr(self, 'loaded_as_regions', False))
 
             follow_buffer = flatten_shapely_geometry(follow_buffer)
 
