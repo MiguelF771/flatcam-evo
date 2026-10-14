@@ -27,6 +27,7 @@ import appTranslation as fcTranslate
 import builtins
 
 from camlib import grace, flatten_shapely_geometry
+from appParsers.feature_access import fused_solid
 
 fcTranslate.apply_language('strings')
 if '_' not in builtins.__dict__:
@@ -38,6 +39,20 @@ if TYPE_CHECKING:
     from appMain import App
 
 log = logging.getLogger('base')
+
+
+def ncc_gerber_copper(obj, repair_buffer=None):
+    """
+    The copper of a Gerber object as one valid Polygon / MultiPolygon (``fused_solid``): the composed geometry with
+    the polarity applied, repaired and fused. Nothing is changed on the object.
+
+    :param repair_buffer:   if not None, a small tolerance buffer applied after the fuse (the NCC clip geometry keeps
+                            the 1e-9 one it always had when the Gerber was loaded without buffering)
+    """
+    geo = fused_solid(obj)
+    if repair_buffer is not None:
+        geo = geo.buffer(repair_buffer)
+    return geo
 
 
 @dataclass
@@ -474,17 +489,14 @@ class NccGen:
         if cleared_object.kind == 'gerber' and not iso_tooldia:
             # unfortunately for this function to work time efficient,
             # if the Gerber was loaded without buffering then it require the buffering now.
-            fused_solid_geometry = unary_union(cleared_object.solid_geometry)
-            if self.app.options.get(
+            buffering_off = self.app.options.get(
+                "gerber_buffering",
+                self.app.defaults.get(
                     "gerber_buffering",
-                    self.app.defaults.get(
-                        "gerber_buffering",
-                        self.app.defaults.factory_defaults.get("gerber_buffering")
-                    )
-            ) == 'no':
-                clip_geo = fused_solid_geometry.buffer(0.000000001)
-            else:
-                clip_geo = fused_solid_geometry
+                    self.app.defaults.factory_defaults.get("gerber_buffering")
+                )
+            ) == 'no'
+            clip_geo = ncc_gerber_copper(cleared_object, 0.000000001 if buffering_off else None)
 
             if has_offset is True:
                 self.app.inform.emit(
@@ -509,20 +521,8 @@ class NccGen:
         elif cleared_object.kind == 'gerber' and iso_tooldia:
             isolated_geo = []
 
-            # unfortunately for this function to work time efficient,
-            # if the Gerber was loaded without buffering then it require the buffering now.
-            fused_solid_geometry = unary_union(cleared_object.solid_geometry)
-            # TODO 'buffering status' should be a property of the object not the project property
-            if self.app.options.get(
-                    "gerber_buffering",
-                    self.app.defaults.get(
-                        "gerber_buffering",
-                        self.app.defaults.factory_defaults.get("gerber_buffering")
-                    )
-            ) == 'no':
-                self.solid_geometry = fused_solid_geometry.buffer(0)
-            else:
-                self.solid_geometry = fused_solid_geometry
+            # the copper is fused and repaired whether or not the Gerber was loaded with buffering
+            self.solid_geometry = ncc_gerber_copper(cleared_object)
 
             # if milling type is climb then the move is counter-clockwise around features
             milling_type = self.ui.milling_type_radio.get_value()
@@ -1715,20 +1715,8 @@ class NccGen:
             self.app.inform.emit(_("NCC Tool. Calculate 'empty' area."))
 
             if ncc_obj.kind == 'gerber' and not iso_tooldia:
-                # unfortunately for this function to work time efficient,
-                # if the Gerber was loaded without buffering then it require the buffering now.
-                if app_obj.options.get(
-                        "gerber_buffering",
-                        app_obj.defaults.get(
-                            "gerber_buffering",
-                            app_obj.defaults.factory_defaults.get("gerber_buffering")
-                        )
-                ) == 'no':
-                    sol_geo = ncc_obj.solid_geometry.buffer(0)
-                else:
-                    sol_geo = ncc_obj.solid_geometry
-                    if isinstance(sol_geo, list):
-                        sol_geo = unary_union(sol_geo)
+                # the copper is fused and repaired whether or not the Gerber was loaded with buffering
+                sol_geo = ncc_gerber_copper(ncc_obj)
 
                 if has_offset is True:
                     app_obj.inform.emit('[WARNING_NOTCL] %s ...' % _("Buffering"))
@@ -1746,18 +1734,8 @@ class NccGen:
             elif ncc_obj.kind == 'gerber' and iso_tooldia:
                 isolated_geo = []
 
-                # unfortunately for this function to work time efficient,
-                # if the Gerber was loaded without buffering then it require the buffering now.
-                if app_obj.options.get(
-                        "gerber_buffering",
-                        app_obj.defaults.get(
-                            "gerber_buffering",
-                            app_obj.defaults.factory_defaults.get("gerber_buffering")
-                        )
-                ) == 'no':
-                    self.solid_geometry = ncc_obj.solid_geometry.buffer(0)
-                else:
-                    self.solid_geometry = ncc_obj.solid_geometry
+                # the copper is fused and repaired whether or not the Gerber was loaded with buffering
+                self.solid_geometry = ncc_gerber_copper(ncc_obj)
 
                 # if milling type is climb then the move is counter-clockwise around features
                 milling_type = app_obj.options.get(
