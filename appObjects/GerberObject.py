@@ -1751,29 +1751,33 @@ class GerberObject(FlatCAMObj, Gerber):
         grb_final.solid_geometry = unary_union(flatten_shapely_geometry(grb_final.solid_geometry))
         grb_final.follow_geometry = unary_union(flatten_shapely_geometry(grb_final.follow_geometry))
 
+    def _after_transform(self):
+        """Hook of every geometry transform below: the aperture table has to be redrawn."""
+        self.replotApertures.emit()
+
     def mirror(self, axis, point):
         Gerber.mirror(self, axis=axis, point=point)
-        self.replotApertures.emit()
+        self._after_transform()
 
     def offset(self, vect):
         Gerber.offset(self, vect=vect)
-        self.replotApertures.emit()
+        self._after_transform()
 
     def rotate(self, angle, point):
         Gerber.rotate(self, angle=angle, point=point)
-        self.replotApertures.emit()
+        self._after_transform()
 
     def scale(self, xfactor, yfactor=None, point=None):
         Gerber.scale(self, xfactor=xfactor, yfactor=yfactor, point=point)
-        self.replotApertures.emit()
+        self._after_transform()
 
     def skew(self, angle_x, angle_y, point):
         Gerber.skew(self, angle_x=angle_x, angle_y=angle_y, point=point)
-        self.replotApertures.emit()
+        self._after_transform()
 
     def buffer(self, distance, join="mitre", factor=None, only_exterior=False, muted=False):
         Gerber.buffer(self, distance=distance, join=join, factor=factor, only_exterior=only_exterior)
-        self.replotApertures.emit()
+        self._after_transform()
 
     def serialize(self):
         return {
