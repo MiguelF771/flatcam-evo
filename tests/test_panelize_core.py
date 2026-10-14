@@ -385,11 +385,26 @@ def test_gerber_tools_from_geometry_single_geo():
     tools, solid = pc.gerber_tools_from_geometry(src_tools, src, False)
     assert list(tools) == [0] and tools[0]['type'] == 'REG' and tools[0]['size'] == 0.0
     records = tools[0]['geometry']
-    # the MultiPolygon is split; the closed line becomes a polygon, like the pad
+    # the MultiPolygon is split; the closed line stays a line, as in the returned solid
     assert len(records) == 4 and len(solid) == 4
-    assert all(isinstance(r['solid'], Polygon) for r in records)
-    assert all(r['follow'].equals(r['solid'].exterior) for r in records)
+    assert [type(r['solid']) for r in records] == [Polygon, Polygon, Polygon, LineString]
+    assert all(r['follow'].equals(r['solid'].exterior) for r in records[:3])
+    assert records[3]['solid'].equals(ring) and records[3]['follow'].equals(ring)
+    # every record has the same geometry as its solid entry: the export and the plot show the same copper
+    assert all(r['solid'].equals(s) for r, s in zip(records, solid))
     assert freeze(src) == freeze(before)
+
+
+def test_gerber_tools_from_geometry_multigeo_fills_lines_like_the_former_panel_code():
+    open_line = LineString([(0, 0), (4, 0), (4, 4)])
+    two_points = LineString([(10, 0), (12, 0)])
+    src_tools = {1: {'tooldia': 1.0, 'data': {}, 'solid_geometry': [open_line, two_points]}}
+    tools, solid = pc.gerber_tools_from_geometry(src_tools, [], True)
+    records = tools[0]['geometry']
+    assert [type(r['solid']) for r in records] == [Polygon, LineString]
+    assert records[0]['solid'].area == pytest.approx(8.0)
+    assert records[0]['follow'].equals(records[0]['solid'].exterior)
+    assert solid.symmetric_difference(shapely.unary_union([r['solid'] for r in records])).area < 1e-9
 
 
 def test_gerber_tools_from_geometry_open_line_and_point_keep_their_shape():

@@ -304,15 +304,17 @@ def gerber_tools_from_geometry(src_tools: Dict[Any, dict], src_solid, multigeo: 
 
     Everything goes to the region 'aperture' 0 (type 'REG', size 0.0). Each element becomes 1 record:
 
-    * a polygon (or a closed line, which is turned into one): ``{'solid': polygon, 'follow': polygon.exterior}``;
-    * anything else (open line, point, ...): ``{'solid': geo, 'follow': geo}``.
+    * a polygon: ``{'solid': polygon, 'follow': polygon.exterior}``;
+    * anything else (line, point, ...): ``{'solid': geo, 'follow': geo}``.
 
     The elements are:
 
     * ``multigeo``: the parts of the 'solid_geometry' of every tool in ``src_tools`` (Multi* split, empty ones
-      dropped); a line is merged with ``linemerge`` first, if that works. The returned solid is the union of the
-      record solids.
-    * not ``multigeo``: the parts of ``src_solid`` (Multi* split). The returned solid is that flat list.
+      dropped). A line is merged with ``linemerge`` first, if that works, then turned into a filled polygon if
+      ``Polygon(line)`` accepts it (an open line of 3 or more points too: the former panel code did this). The
+      returned solid is the union of the record solids, so it shows the same copper as the records.
+    * not ``multigeo``: the parts of ``src_solid`` (Multi* split). A line stays a line: the returned solid is that
+      flat list, and a filled record would hold copper that the solid does not have.
 
     The inputs are not changed; the records hold copies.
 
@@ -335,10 +337,13 @@ def gerber_tools_from_geometry(src_tools: Dict[Any, dict], src_solid, multigeo: 
                 geo = linemerge(geo)
             except Exception:
                 pass
-        try:
-            poly = Polygon(geo)
-            record = {'solid': poly, 'follow': poly.exterior}
-        except Exception:
+            try:
+                geo = Polygon(geo)
+            except Exception:
+                pass
+        if isinstance(geo, Polygon):
+            record = {'solid': geo, 'follow': geo.exterior}
+        else:
             record = {'solid': geo, 'follow': geo}
         records.append(deepcopy(record))
 

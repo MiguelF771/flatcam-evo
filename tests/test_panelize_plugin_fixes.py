@@ -179,3 +179,15 @@ def test_geometry_to_gerber_panel_with_a_line_exports_as_regions(app, tmp_path):
     assert isinstance(pan.source_file, str) and pan.source_file.strip()
     again = reparse_gerber(app, pan.source_file, tmp_path)
     assert polygon_union(again.solid_geometry).area == pytest.approx(2 * 16)
+
+
+def test_geometry_to_gerber_panel_does_not_fill_an_open_line_of_a_single_geo_source(app, tmp_path):
+    # Polygon() accepts an open line of 3 points; the record must still hold the line that the solid holds
+    src = make_poly_geometry(app, False)
+    src.solid_geometry = [box(0, 0, 4, 4), LineString([(6, 0), (9, 0), (9, 3)])]
+    created, _ = run_plugin(app, src, panel_type='gerber', rows=1, cols=2)
+    pan = created['src_panelized']
+    assert sum(isinstance(r['solid'], LineString) for r in pan.tools[0]['geometry']) == 2
+    assert pan.export_as_regions is True
+    again = reparse_gerber(app, pan.source_file, tmp_path)
+    assert polygon_union(again.solid_geometry).area == pytest.approx(2 * 16)
