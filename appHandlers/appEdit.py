@@ -104,7 +104,7 @@ class appEditor(QtCore.QObject):
                     solid_geo.append(geo)
             new_obj.solid_geometry = deepcopy(solid_geo)
             if not new_obj.solid_geometry:
-                app_obj.log("convert_any2geo() failed")
+                app_obj.log.warning("convert_any2geo() failed")
                 return 'fail'
 
             new_obj.obj_options.update(deepcopy(default_data))
@@ -158,7 +158,7 @@ class appEditor(QtCore.QObject):
             obj_init.tools = deepcopy(apertures)
 
             if not obj_init.tools:
-                app_obj.log("convert_any2gerber() failed")
+                app_obj.log.warning("convert_any2gerber() failed")
                 return 'fail'
 
         def initialize_from_excellon(obj_init, app_obj):
@@ -194,7 +194,7 @@ class appEditor(QtCore.QObject):
             obj_init.tools = deepcopy(apertures)
 
             if not obj_init.tools:
-                app_obj.log("convert_any2gerber() failed")
+                app_obj.log.warning("convert_any2gerber() failed")
                 return 'fail'
 
         if not self.collection.get_selected():

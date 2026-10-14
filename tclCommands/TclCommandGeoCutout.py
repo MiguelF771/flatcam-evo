@@ -267,7 +267,7 @@ class TclCommandGeoCutout(TclCommandSignaled):
             geo_obj.obj_options['ymax'] = cutout_obj.obj_options['ymax']
 
             if not geo_obj.solid_geometry:
-                app_obj.log("TclCommandGeoCutout.execute(). No geometry after geo-cutout.")
+                app_obj.log.warning("TclCommandGeoCutout.execute(). No geometry after geo-cutout.")
                 return "fail"
 
             default_tool_data = self.app.options.copy()

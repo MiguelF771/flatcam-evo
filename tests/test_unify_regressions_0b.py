@@ -397,14 +397,15 @@ def _plot_ready_excellon_object():
     return obj
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="fixed in Stage 0B.6")
 class TestSmallBugs_0B6:
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason="fixed in Stage 0B.6")
     def test_excellon_plot_respects_explicit_visible_false(self, no_shape_collection):
         obj = _plot_ready_excellon_object()
         obj.plot(visible=False)
         assert obj.add_shapes_batch.called
         assert obj.add_shapes_batch.call_args.kwargs['visible'] is False
 
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason="fixed in Stage 0B.6")
     def test_excellon_plot_clears_stale_shape_indexes(self, no_shape_collection):
         obj = _plot_ready_excellon_object()
         obj.shape_indexes_dict = {99: [1, 2, 3]}
@@ -412,6 +413,7 @@ class TestSmallBugs_0B6:
         assert obj.add_shapes_batch.called
         assert obj.shape_indexes_dict == {1: [11]}
 
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason="fixed in Stage 0B.6")
     def test_restore_project_objects_sets_change_callback(self):
         app = MagicMock()  # appIO.__init__ reads many app attributes
         app.options = {}

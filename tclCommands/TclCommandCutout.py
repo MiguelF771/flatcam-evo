@@ -162,7 +162,7 @@ class TclCommandCutout(TclCommand):
             geo_obj.solid_geometry = solid_geo
 
             if not geo_obj.solid_geometry:
-                app_obj.log("TclCommandCutout.execute(). No geometry after cutout.")
+                app_obj.log.warning("TclCommandCutout.execute(). No geometry after cutout.")
                 return "fail"
 
             default_tool_data = self.app.options.copy()
