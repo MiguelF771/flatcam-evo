@@ -1759,7 +1759,9 @@ class Gerber(Geometry):
                 points.append((x, y))
             ply = Polygon(points)
             if 'rotation' in aperture:
-                ply = affinity.rotate(ply, aperture['rotation'])
+                # rotate about the aperture center (the flash point), not the bounds center: for an odd number of
+                # vertices the 2 points are different
+                ply = affinity.rotate(ply, aperture['rotation'], origin=loc)
             return ply
 
         if aperture['type'] == 'AM':  # Aperture Macro
