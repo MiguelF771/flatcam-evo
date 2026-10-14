@@ -8010,6 +8010,38 @@ class CNCjob(Geometry):
                 self.old_disp_number = disp_number
 
 
+def map_geometry(obj, fn, on_leaf=None, any_iterable=False):
+    """
+    Shared coordinate walker of the Gerber / Excellon transforms. Applies ``fn`` to every leaf of ``obj`` and keeps the
+    container shape: a list stays a list (nested lists are walked recursively), a single geometry (including Multi*
+    and GeometryCollection) is a leaf and goes to ``fn`` whole, None is passed to ``fn`` like any leaf.
+
+    An AttributeError raised for a leaf (None, or an object without geometry methods) returns that leaf unchanged,
+    any other exception propagates. ``on_leaf`` (progress display) runs inside the same guard, before ``fn``.
+
+    :param obj:          Geometry, list of geometries or nested lists
+    :param fn:           callable(leaf) -> new leaf (one shapely.affinity call)
+    :param on_leaf:      optional callable(leaf), called once per leaf before ``fn``
+    :param any_iterable: True: any iterable (tuple, ...) is walked and returned as a list, not only a list
+    :return:             the transformed object, same container shape
+    """
+    if type(obj) is list:
+        return [map_geometry(g, fn, on_leaf, any_iterable) for g in obj]
+    if any_iterable:
+        try:
+            items = iter(obj)
+        except TypeError:
+            pass
+        else:
+            return [map_geometry(g, fn, on_leaf, any_iterable) for g in items]
+    try:
+        if on_leaf is not None:
+            on_leaf(obj)
+        return fn(obj)
+    except AttributeError:
+        return obj
+
+
 def translate_geometry(obj, dx, dy):
     """
     Fast geometry translation using Shapely 2.0+ vectorized coordinate ops.
