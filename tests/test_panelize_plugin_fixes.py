@@ -1,6 +1,8 @@
 """Bug fixes of the Panelize plugin (Stage 5), headless (driver: test_panelize_plugin.run_plugin)."""
 
-from test_unify_characterization import _headless_qt, app, make_excellon, make_gerber  # noqa: F401
+import pytest
+
+from test_unify_characterization import _headless_qt, app, make_excellon, make_gerber, polygon_union  # noqa: F401
 from test_panelize_plugin import run_plugin
 
 
@@ -69,3 +71,19 @@ def test_constrain_warning_comes_from_the_job_with_the_final_grid(app):
     created, informs = run_plugin(app, src, rows=3, cols=4, constrain=(2 * w + 5.5, h + 1.0), before=before)
     assert not any('constrain' in m for m in before)
     assert informs[-1].startswith('[WARNING]') and '2 columns and 1 rows' in informs[-1]
+
+# ---------------------------------------------------------------------------------------------------------------
+# the dead tool-table block of the Gerber -> Geometry panel
+# ---------------------------------------------------------------------------------------------------------------
+
+def test_gerber_to_geometry_panel_result_is_the_translated_copper_only(app):
+    # The removed block built a tool table on new_obj.tools and deleted the attribute again at once, so the only
+    # lasting effects were multigeo = True and the missing 'tools' attribute. Those are kept; this is not a fix of
+    # that quirk.
+    src = make_gerber(app, name='g')
+    created, _ = run_plugin(app, src, panel_type='geometry', rows=2, cols=2)
+    pan = created['g_panelized']
+    assert pan.multigeo is True
+    assert not hasattr(pan, 'tools')
+    assert polygon_union(pan.solid_geometry).area == pytest.approx(4 * polygon_union(src.solid_geometry).area)
+    assert all(not isinstance(g, (list, tuple)) for g in pan.solid_geometry)

@@ -426,9 +426,13 @@ class Panelize(AppTool):
                             panel_source_obj.tools, panel_source_obj.solid_geometry, panel_source_obj.multigeo,
                             offsets, abort=abort, progress=progress)
                     elif panel_source_obj.kind == 'gerber':
-                        new_obj.tools, new_obj.solid_geometry = panelize_core.panelize_gerber(
-                            panel_source_obj.tools, panel_source_obj.solid_geometry, offsets, abort=abort,
-                            progress=progress)
+                        # only the composed copper of the Gerber is used: no apertures to copy
+                        new_obj.solid_geometry = panelize_core.panelize_gerber(
+                            {}, panel_source_obj.solid_geometry, offsets, abort=abort, progress=progress)[1]
+                        new_obj.multigeo = True
+                        # Existing behavior, kept: this panel ends without a 'tools' attribute. (The former code
+                        # built a tool table here and deleted it again at once.)
+                        del new_obj.tools
 
                     # #################################################################################################
                     # ###########################   Path Optimization   ###############################################
@@ -445,50 +449,6 @@ class Panelize(AppTool):
                         if to_optimize is True:
                             app_obj.inform.emit('%s' % _("Optimization complete."))
 
-                    if panel_source_obj.kind == 'gerber':
-                        new_obj.multigeo = True
-
-                        app_defaults = getattr(app_obj, "defaults", None) or AppDefaults.factory_defaults
-                        default_data = {}
-                        for opt_key, opt_val in self.app.options.items():
-                            if opt_key.find('geometry' + "_") == 0:
-                                oname = opt_key[len('geometry') + 1:]
-                                default_data[oname] = self.app.options.get(
-                                    opt_key, app_defaults.get(opt_key, AppDefaults.factory_defaults.get(opt_key)))
-                            elif opt_key.find('tools_') == 0:
-                                default_data[opt_key] = self.app.options.get(
-                                    opt_key, app_defaults.get(opt_key, AppDefaults.factory_defaults.get(opt_key)))
-
-                        new_obj.tools = {}
-                        new_tid = 10
-                        for apid in new_obj.tools:
-                            new_tid += 1
-                            new_sgeo = [g['solid'] for g in new_obj.tools[apid]['geometry'] if 'solid' in g]
-                            new_sgeo = unary_union(new_sgeo)
-                            new_obj.tools[new_tid] = {
-                                'tooldia': self.app.options.get(
-                                    "tools_mill_tooldia",
-                                    app_defaults.get("tools_mill_tooldia", AppDefaults.factory_defaults.get("tools_mill_tooldia"))),
-                                'offset': 'Path',
-                                'offset_value': 0.0,
-                                'type': 'Rough',
-                                'tool_type': 'C1',
-                                'data': deepcopy(default_data),
-                                'solid_geometry': deepcopy(new_sgeo)
-                            }
-                        new_tid += 1
-                        new_obj.tools[new_tid] = {
-                            'tooldia': self.app.options.get(
-                                "tools_mill_tooldia",
-                                app_defaults.get("tools_mill_tooldia", AppDefaults.factory_defaults.get("tools_mill_tooldia"))),
-                            'offset': 'Path',
-                            'offset_value': 0.0,
-                            'type': 'Rough',
-                            'tool_type': 'C1',
-                            'data': deepcopy(default_data),
-                            'solid_geometry': deepcopy(new_obj.solid_geometry)
-                        }
-                        del new_obj.tools   # TODO what the hack is this? First we create and then immediately delete?
 
                     app_obj.inform.emit('%s' % _("Generating panel ... Adding the source code."))
                     new_obj.regenerate_source(name=self.outname)
