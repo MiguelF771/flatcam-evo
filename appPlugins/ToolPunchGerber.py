@@ -22,7 +22,6 @@ import gettext
 import appTranslation as fcTranslate
 import builtins
 
-from appParsers.ParseGerber import Gerber
 from camlib import Geometry
 from defaults import AppDefaults
 
@@ -33,7 +32,7 @@ if '_' not in builtins.__dict__:
 log = logging.getLogger('base')
 
 
-class ToolPunchGerber(Gerber, AppTool):
+class ToolPunchGerber(Geometry, AppTool):
 
     def __init__(self, app):
         AppTool.__init__(self, app)

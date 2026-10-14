@@ -1,3 +1,4 @@
+tests/plugins/test_geometry_base_plugins.py::test_plugin_bases_and_construction[appPlugins.ToolPunchGerber-ToolPunchGerber]
 tests/test_clearing_paths.py::TestCircleQuadSegs::test_circle_quad_segs
 tests/test_clearing_paths.py::TestFillWithLinesLastLine::test_fill_with_lines_keeps_the_last_line
 tests/test_clearing_paths.py::TestNarrowChannel::test_lines
