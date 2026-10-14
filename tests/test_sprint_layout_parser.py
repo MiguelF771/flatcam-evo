@@ -180,6 +180,8 @@ class TestSprintLayoutErrors(unittest.TestCase):
     def test_mutated_files_never_leak_internal_errors(self):
         # Random byte changes must end in a parse or a SprintLayoutParseError. The parser wraps any other
         # exception as 'Cannot read Sprint Layout file: ...', so that prefix means an unguarded code path.
+        # A RuntimeWarning (e.g. a numpy 'divide by zero' from a degenerate shape) is an error here, so the
+        # parser wraps it and it counts as a leak too.
         rng = random.Random(1)
         pad = pad_at(10.0, 10.0)
         smd_square = obj(8, pts=[(fu(3), fy(5, BOARD_MM)), (fu(5), fy(5, BOARD_MM)),
@@ -196,7 +198,7 @@ class TestSprintLayoutErrors(unittest.TestCase):
                                   w=fu(BOARD_MM), h=fu(BOARD_MM))])
         leaked = []
         with warnings.catch_warnings():
-            warnings.simplefilter('ignore', RuntimeWarning)
+            warnings.simplefilter('error', RuntimeWarning)
             for _ in range(300):
                 blob = bytearray(data)
                 for _ in range(rng.choice((1, 3, 5))):
