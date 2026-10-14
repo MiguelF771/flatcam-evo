@@ -113,8 +113,7 @@ class TclCommandAlignDrillGrid(TclCommandSignaled):
             init_obj.add_tool(tooldia, drills=drills, tool_id='1')
             init_obj.create_geometry()
 
-            init_obj.source_file = app_obj.f_handlers.export_excellon(obj_name=outname, local_use=init_obj,
-                                                                      filename=None, use_thread=False)
+            init_obj.regenerate_source(name=outname)
 
         # Create the new object
         self.app.app_obj.new_object("excellon", outname, aligndrillgrid_init_me, plot=False)

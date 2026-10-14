@@ -4556,10 +4556,7 @@ class AppExcEditor(QtCore.QObject):
 
             try:
                 edited_obj = self.app.app_obj.new_object("excellon", outname, obj_init)
-                edited_obj.source_file = self.app.f_handlers.export_excellon(obj_name=edited_obj.obj_options['name'],
-                                                                             local_use=edited_obj,
-                                                                             filename=None,
-                                                                             use_thread=False)
+                edited_obj.regenerate_source()
             except Exception as e:
                 self.app.custom_signal.emit(None) # calls deactivate_signal_handler() on UI Thread
 

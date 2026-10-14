@@ -290,8 +290,7 @@ class TclCommandPanelize(TclCommand):
                     obj_fin.zeros = obj.zeros
                     obj_fin.units = obj.units
                     app_obj.inform.emit('%s' % _("Generating panel ... Adding the source code."))
-                    obj_fin.source_file = app_obj.f_handlers.export_excellon(obj_name=outname, filename=None,
-                                                                             local_use=obj_fin, use_thread=False)
+                    obj_fin.regenerate_source(name=outname)
 
                 def job_init_geometry(obj_fin, app_obj):
                     currentx = 0.0
@@ -351,8 +350,7 @@ class TclCommandPanelize(TclCommand):
 
                             currentx += lenghtx
                         currenty += lenghty
-                    obj_fin.source_file = app_obj.f_handlers.export_dxf(obj_name=outname, filename=None,
-                                                                        local_use=obj_fin, use_thread=False)
+                    obj_fin.regenerate_source(name=outname)
 
                 def job_init_gerber(obj_fin, app_obj):
                     currentx = 0.0
@@ -412,8 +410,7 @@ class TclCommandPanelize(TclCommand):
                             currentx += lenghtx
                         currenty += lenghty
 
-                    obj_fin.source_file = app_obj.f_handlers.export_gerber(obj_name=outname, filename=None,
-                                                                           local_use=obj_fin, use_thread=False)
+                    obj_fin.regenerate_source(name=outname)
 
                 if obj.kind == 'excellon':
                     self.app.app_obj.new_object("excellon", outname, job_init_excellon, plot=False, autoselected=True)

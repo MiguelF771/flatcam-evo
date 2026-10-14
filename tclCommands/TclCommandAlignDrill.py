@@ -185,8 +185,7 @@ class TclCommandAlignDrill(TclCommandSignaled):
                 }
             }
 
-            init_obj.source_file = app_obj.f_handlers.export_excellon(obj_name=outname, local_use=init_obj,
-                                                                      filename=None, use_thread=False)
+            init_obj.regenerate_source(name=outname)
 
         # Box
         if 'box' in args:

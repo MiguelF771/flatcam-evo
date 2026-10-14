@@ -265,7 +265,8 @@ class TestTclSites:
             obj = Excellon(app)
             obj.units = 'MM'
             obj.obj_options = {'name': name}
-            app.f_handlers = Mock()
+            # the camlib Excellon is not an object: the method that rewrites its source text is a stand-in
+            obj.regenerate_source = Mock()
             init(obj, app)
             created.append(obj)
 
