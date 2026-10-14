@@ -531,7 +531,7 @@ class Distance(AppTool):
             if clicked_geo:
                 # search for 'pad within pad' or 'drill within drill' situation and choose the closest geo center
                 tree = STRtree(clicked_geo)
-                closest_pt = tree.nearest(current_pt)
+                closest_pt = clicked_geo[int(tree.nearest(current_pt))]  # nearest() returns an index (shapely 2)
                 assert isinstance(closest_pt, Point)
                 # snap to the closest geometry in the clicked_geo list
                 pos = (closest_pt.x, closest_pt.y)
