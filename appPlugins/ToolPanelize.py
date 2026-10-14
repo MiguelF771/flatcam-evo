@@ -331,7 +331,7 @@ class Panelize(AppTool):
 
         if panel_source_obj is None:
             self.app.inform.emit('[ERROR_NOTCL] %s: %s' %
-                                 (_("Object not found"), panel_source_obj))
+                                 (_("Object not found"), name))
             return
 
         boxname = self.ui.box_combo.currentText()
@@ -344,7 +344,7 @@ class Panelize(AppTool):
             return
 
         if box_obj is None:
-            self.app.inform.emit('[WARNING_NOTCL] %s: %s' % (_("No object Box. Using instead"), panel_source_obj))
+            self.app.inform.emit('[WARNING_NOTCL] %s: %s' % (_("No object Box. Using instead"), name))
             self.ui.reference_radio.set_value('bbox')
 
         if self.ui.reference_radio.get_value() == 'bbox':

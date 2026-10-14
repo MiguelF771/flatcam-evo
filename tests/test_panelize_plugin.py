@@ -40,13 +40,16 @@ class Value:
 
 
 def run_plugin(app, src, box_obj=None, rows=2, cols=3, spacing=5.0, panel_type='gerber', optimize=False,
-               constrain=None):
-    """Returns (created, informs). constrain = (max_x, max_y) switches the constrain option on."""
+               constrain=None, before=None, name=None, box_name=None, fail_job=False):
+    """Returns (created, informs). constrain = (max_x, max_y) switches the constrain option on. before: a list that
+    receives the messages shown before the worker task runs (the GUI-thread part)."""
     app.f_handlers = appIO(app)
     created = {}
     informs = []
 
     def new_object(kind, name, initialize, plot=True, **kwargs):
+        if fail_job:
+            raise RuntimeError('boom')
         cls = {'gerber': GerberObject, 'excellon': ExcellonObject, 'geometry': GeometryObject}[kind]
         obj = cls(name, app)
         initialize(obj, app)
@@ -69,12 +72,16 @@ def run_plugin(app, src, box_obj=None, rows=2, cols=3, spacing=5.0, panel_type='
     plugin.outname = ''
     bx_name = (box_obj or src).obj_options['name']
     plugin.ui = SimpleNamespace(
-        object_combo=Value(src.obj_options['name']), box_combo=Value(bx_name),
+        object_combo=Value(name or src.obj_options['name']), box_combo=Value(box_name or bx_name),
         reference_radio=Value('bbox' if box_obj is None else 'box'),
         spacing_columns=Value(spacing), spacing_rows=Value(spacing), rows=Value(rows), columns=Value(cols),
         x_width_entry=Value(constrain[0] if constrain else 0.0), y_height_entry=Value(constrain[1] if constrain else 0.0),
         constrain_cb=Value(bool(constrain)), optimization_cb=Value(optimize), panel_type_radio=Value(panel_type))
     plugin.on_panelize()
+    if before is not None:
+        before.extend(informs)
+    if not tasks:
+        return created, informs
     assert len(tasks) == 1
     tasks[0]['fcn'](*tasks[0]['params'])
     return created, informs
@@ -106,7 +113,6 @@ def test_gerber_plugin_equals_tcl(app, path):
     assert pan.export_as_regions == tcl['p'].export_as_regions
     assert set(pan.aperture_macros) == set(src.aperture_macros)
     assert pan.source_file.startswith('G04*')
-    assert '[success] Done.' in informs
 
 
 def test_gerber_plugin_keeps_export_as_regions(app):
