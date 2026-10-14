@@ -27,6 +27,7 @@ class NativeGerberObject(GerberObject):
         self.solid_geometry = []
         self.follow_geometry = []
         self.source_file = ''
+        self.export_as_regions = False
 
 
 class NativeExcellonObject(ExcellonObject):

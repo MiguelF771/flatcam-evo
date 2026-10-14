@@ -292,9 +292,49 @@ class Gerber(Geometry):
         # Attributes to be included in serialization
         # Always append to it because it carries contents
         # from Geometry.
-        self.ser_attrs += ['tools', 'int_digits', 'frac_digits', 'aperture_macros', 'solid_geometry', 'source_file']
+        # True when the native aperture metadata can no longer be trusted to describe the composed geometry.
+        # The export then writes the composed solid_geometry as regions. A project without it loads as False.
+        self.export_as_regions: bool = False
+
+        self.ser_attrs += ['tools', 'int_digits', 'frac_digits', 'aperture_macros', 'solid_geometry', 'source_file',
+                           'export_as_regions']
 
         self._Gerber_inited = True
+
+    # Aperture types the native Gerber writer can declare (appIO.export_gerber).
+    NATIVE_WRITER_APERTURE_TYPES = ('C', 'R', 'O')
+
+    def needs_region_export(self) -> bool:
+        """
+        Decide if the Gerber export must write the composed solid_geometry as regions instead of
+        the native aperture records. The result is True when any of these holds:
+
+        * ``export_as_regions`` is set (the aperture metadata no longer matches the geometry);
+        * an aperture is of a type the writer cannot declare (anything but C, R, O; the region
+          'aperture' 0 of type 'REG' is written natively, so it does not count);
+        * a record holds a non-empty 'clear' geometry. Records have no global order, so the native
+          writer, which groups them per aperture, cannot keep a dark -> clear -> dark sequence;
+        * the object comes from a PCB document import (``obj_options['pcbdoc_import']``).
+
+        The method only reads the object.
+
+        :return: True if the region export must be used
+        """
+        if getattr(self, 'export_as_regions', False):
+            return True
+        obj_options = getattr(self, 'obj_options', None) or {}
+        if obj_options.get('pcbdoc_import', False):
+            return True
+        for apid, tool in (getattr(self, 'tools', None) or {}).items():
+            if apid == 0 and tool.get('type') == 'REG':
+                pass
+            elif tool.get('type') not in Gerber.NATIVE_WRITER_APERTURE_TYPES:
+                return True
+            for record in tool.get('geometry', ()):
+                clear = record.get('clear')
+                if clear is not None and not clear.is_empty:
+                    return True
+        return False
 
     def region_export_tools(self) -> dict:
         """

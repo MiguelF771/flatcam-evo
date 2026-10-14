@@ -852,7 +852,6 @@ class TestRegressionGerberFileRoundTripFixedInStage0C:
     """Regression tests: they specify the corrected behavior and fail today (strict xfail).
     The owning stage (0C) removes the marker."""
 
-    @pytest.mark.xfail(strict=True, reason="fixed in Stage 0C")
     def test_dark_clear_dark_sequence_survives_the_gerber_export(self, app, tmp_path):
         grb = make_gerber(app, MIXED_GBR)
         again = reparse_gerber(app, export_gerber_text(app, grb), tmp_path)

@@ -9,6 +9,7 @@ from appEditors.appGerberEditor import AppGerberEditor
 from appGUI.GUIElements import FCFileSaveDialog, FCMessageBox, add_case_variants
 from camlib import to_dict, dict2obj, ET, ParseError
 from appParsers.ParseHPGL2 import HPGL2
+from appParsers.ParseGerber import Gerber
 
 from appObjects.ObjectCollection import GerberObject, ExcellonObject, GeometryObject, ScriptObject, CNCJobObject
 
@@ -2049,6 +2050,11 @@ class appIO(QtCore.QObject):
         else:
             factor = 25.4 if g_units == 'MM' else 1
 
+        # P and AM apertures, dark/clear sequences, transformed metadata and PCB-document imports can't be
+        # written natively: the composed geometry is exported as regions
+        # (called through the class: it only reads attributes, so stand-in objects work too)
+        use_regions = Gerber.needs_region_export(obj)
+
         def make_gerber():
             try:
                 time_str = "{:%A, %d %B %Y at %H:%M}".format(datetime.now())
@@ -2062,7 +2068,8 @@ class appIO(QtCore.QObject):
                 header += '%%FS%sAX%s%sY%s%s*%%\n' % (g_zeros, g_whole, g_fract, g_whole, g_fract)
                 header += "%MO{units}*%\n".format(units=g_units)
 
-                for apid in obj.tools:
+                # the region export writes the composed geometry only, so it declares no aperture
+                for apid in ({} if use_regions else obj.tools):
                     if obj.tools[apid]['type'] == 'C':
                         header += "%ADD{apid}{type},{size}*%\n".format(
                             apid=str(apid),
@@ -2103,9 +2110,9 @@ class appIO(QtCore.QObject):
 
                 tools = obj.tools
                 try:
-                    if obj.obj_options.get('pcbdoc_import', False):
+                    if use_regions:
                         # Union overlaps so region holes don't clear other solids. Draw islands last.
-                        obj.tools = obj.region_export_tools()
+                        obj.tools = Gerber.region_export_tools(obj)
                         gerber_code = obj.export_gerber(g_whole, g_fract, g_zeros='L', factor=factor)
                         if g_zeros == 'T':
                             # Pad the magnitude, not the sign, for valid negative region coordinates.
