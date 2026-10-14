@@ -10,6 +10,7 @@ from appTool import AppTool
 from appGUI.GUIElements import VerticalScrollArea, FCLabel, FCButton, FCFrame, GLay, FCEntry, FCCheckBox
 from appGUI.VisPyVisuals import ShapeCollection
 from camlib import AppRTreeStorage
+from appParsers.feature_access import iter_features
 from appEditors.appGeoEditor import DrawToolShape
 from defaults import AppDefaults
 
@@ -514,19 +515,17 @@ class Distance(AppTool):
 
             clicked_geo = []
             for obj in snapable_obj_list:
-                if obj.kind == 'gerber':
-                    for t in obj.tools:
-                        if obj.tools[t]['geometry']:
-                            for geo_dict in obj.tools[t]['geometry']:
-                                if isinstance(geo_dict['follow'], Point):
-                                    if current_pt.within(geo_dict['solid']):
-                                        clicked_geo.append(geo_dict['follow'])
-                elif obj.kind == 'excellon':
-                    for t in obj.tools:
-                        if obj.tools[t]['solid_geometry']:
-                            for drill_geo in obj.tools[t]['solid_geometry']:
-                                if current_pt.within(drill_geo):
-                                    clicked_geo.append(drill_geo.centroid)
+                for feature in iter_features(obj):
+                    # a clear (LPC) feature is not a pad
+                    if feature.polarity != 'dark' or not current_pt.within(feature.solid):
+                        continue
+                    if obj.kind == 'gerber':
+                        # the center of a pad is the flash point; tracks and regions do not snap
+                        if feature.kind == 'flash':
+                            clicked_geo.append(feature.follow)
+                    else:
+                        # the center of a drill or of a slot is the centroid of its solid
+                        clicked_geo.append(feature.solid.centroid)
 
             if clicked_geo:
                 # search for 'pad within pad' or 'drill within drill' situation and choose the closest geo center
