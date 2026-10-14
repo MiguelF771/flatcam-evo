@@ -1,0 +1,30 @@
+\t (00:00:02) allegro 17.2 S025 Windows SPB 64-bit Edition
+\t (00:00:02)     Journal start - Tue Feb 03 15:06:27 2026
+\t (00:00:02)         Host=DESKTOP-HAPUJP1 User=nanan Pid=27212 CPUs=20
+\t (00:00:02) CmdLine= D:\TCAd\tools\bin\allegro.exe
+\t (00:00:02) 
+   (00:00:02) Loading axlcore.cxt 
+\t (00:00:02) Opening existing design...
+\d (00:00:04) Design opened: D:/PCAD/proiectCAD.brd
+\i (00:00:04) trapsize 33616
+\i (00:00:04) trapsize 34383
+\i (00:00:05) trapsize 34383
+\i (00:00:05) trapsize 31622
+\i (00:00:05) trapsize 277775
+\i (00:00:05) etchedit 
+\i (00:00:07) open 
+\i (00:00:10) fillin "proiectCAD.brd"
+\t (00:00:10) Opening existing design...
+\i (00:00:10) trapsize 31622
+\d (00:00:10) Design opened: D:/PCAD/proiectCAD.brd
+\i (00:00:10) etchedit 
+\i (00:00:13) artwork 
+\w (00:00:14) Generating metric artwork from an english database may cause slight coordinate roundoff error in output file.
+\i (00:00:15) fillin confirm
+\i (00:00:16) setwindow form.film_control
+\i (00:00:16) FORM film_control film_control  
+\i (00:00:20) FORM film_control cancel  
+\i (00:00:20) setwindow pcb
+\i (00:00:20) etchedit 
+\i (00:00:21) exit 
+\t (00:00:22)     Journal end - Tue Feb 03 15:06:47 2026

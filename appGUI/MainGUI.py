@@ -302,6 +302,10 @@ class MainGUI(QtWidgets.QMainWindow):
             QtGui.QIcon(self.app.resource_location + '/import.png'),
             '%s...' % _('Eagle Board (.brd)'), self)
         self.menufileimport.addAction(self.menufileimporteagle)
+        self.menufileimportallegro = QtGui.QAction(
+            QtGui.QIcon(self.app.resource_location + '/import.png'),
+            '%s...' % _('OrCAD/Allegro Board (.brd)'), self)
+        self.menufileimport.addAction(self.menufileimportallegro)
         self.menufileimport.addSeparator()
 
         # Export ...

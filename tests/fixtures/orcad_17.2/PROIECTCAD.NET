@@ -1,0 +1,68 @@
+Wire List
+
+                                              Revised: Tuesday, February 03, 2026
+C:\USERS\COSMI\ONEDRIVE\DESKTOP\NEW FOLDER (3)Revision: 
+
+
+
+
+
+
+<<< Component List >>>
+3.7V                          B1        JUMPER2
+22uF                          C1        CAP196
+10uF                          C2        CAP196
+LED                           D1        CAP196
+LED                           D2        CAP196
+LED                           D3        CAP196
+LED                           D4        CAP196
+2N3904                        Q1        TO92
+2N3906                        Q2        TO92
+56K                           R1        RES400
+15                            R2        RES400
+ON-OFF                        S1        JUMPER2
+
+<<< Wire List >>>
+
+  NODE  REFERENCE    PIN #   PIN NAME           PIN TYPE       PART VALUE
+
+[00001] GND
+        B1              2       2               Power          3.7V
+        D1              2       CATHODE         Passive        LED
+        C2              2       2               Passive        10uF
+        D3              2       CATHODE         Passive        LED
+        Q1              3       E               Passive        2N3904
+        D2              2       CATHODE         Passive        LED
+        D4              2       CATHODE         Passive        LED
+
+[00002] N02440
+        Q2              3       E               Passive        2N3906
+        R1              1       1               Passive        56K
+        S1              1       out             Passive        ON-OFF
+        C2              1       1               Passive        10uF
+
+[00003] N02498
+        Q2              1       B               Passive        2N3906
+        Q1              2       C               Passive        2N3904
+
+[00004] N02506
+        Q2              2       C               Passive        2N3906
+        R2              1       1               Passive        15
+        C1              1       1               Passive        22uF
+
+[00005] N02510
+        R1              2       2               Passive        56K
+        Q1              1       B               Passive        2N3904
+        C1              2       2               Passive        22uF
+
+[00006] N02588
+        B1              1       1               Power          3.7V
+        S1              2       in              Passive        ON-OFF
+
+[00007] N02640
+        D1              1       ANODE           Passive        LED
+        D3              1       ANODE           Passive        LED
+        R2              2       2               Passive        15
+        D2              1       ANODE           Passive        LED
+        D4              1       ANODE           Passive        LED
+

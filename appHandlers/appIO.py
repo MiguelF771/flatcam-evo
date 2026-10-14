@@ -101,6 +101,9 @@ class appIO(QtCore.QObject):
         'eagle_brd': {
             'ext': '.brd', 'filter': 'Eagle Board (*.brd)',
             'log': 'Eagle Board', 'name_first': False},
+        'allegro_brd': {
+            'ext': '.brd', 'filter': 'OrCAD / Allegro Board (*.brd)',
+            'log': 'Allegro Board', 'name_first': False},
     }
 
     @staticmethod
@@ -112,19 +115,37 @@ class appIO(QtCore.QObject):
             return _('Import Sprint Layout')
         if kind == 'eagle_brd':
             return _('Import Eagle Board')
+        if kind == 'allegro_brd':
+            return _('Import OrCAD/Allegro Board')
         return _('Import Altium PCB')
 
     @staticmethod
     def _pcb_source_kind(filename):
         """
         Which native PCB format a file imported through the PcbDoc pipeline is: a key of PCB_FORMATS.
-        Anything that is not KiCad, Sprint Layout or Eagle is Altium.
+        Anything that is not KiCad, Sprint Layout, Eagle or Allegro is Altium. Eagle and Allegro boards both use
+        the .brd extension, so the content decides: an Eagle board is XML, an Allegro board starts with a binary
+        magic number. A file that cannot be read stays an Eagle board.
         """
         name = str(filename).lower()
         for kind, pcb_format in appIO.PCB_FORMATS.items():
             if name.endswith(pcb_format['ext']):
+                if kind in ('eagle_brd', 'allegro_brd'):
+                    return appIO._brd_source_kind(filename)
                 return kind
         return 'pcbdoc'
+
+    @staticmethod
+    def _brd_source_kind(filename):
+        try:
+            with open(str(filename), 'rb') as handle:
+                head = handle.read(64)
+        except (OSError, ValueError):
+            return 'eagle_brd'
+        stripped = head.lstrip(b'\xef\xbb\xbf \t\r\n')
+        if stripped and not stripped.startswith(b'<'):
+            return 'allegro_brd'
+        return 'eagle_brd'
 
     def _import_pcb_file(self, kind, name, parse_fcn):
         if name is None:
@@ -146,6 +167,9 @@ class appIO(QtCore.QObject):
 
     def on_file_import_eagle_brd(self, name=None):
         self._import_pcb_file('eagle_brd', name, self.parse_eagle_brd)
+
+    def on_file_import_allegro_brd(self, name=None):
+        self._import_pcb_file('allegro_brd', name, self.parse_allegro_brd)
 
     def _parse_pcb_file(self, kind, filename, make_parser):
         if self.app.abort_flag:
@@ -182,6 +206,12 @@ class appIO(QtCore.QObject):
             from appParsers.ParseEagleBrd import EagleBrdParser
             return EagleBrdParser(app=self.app)
         return self._parse_pcb_file('eagle_brd', filename, make_parser)
+
+    def parse_allegro_brd(self, filename):
+        def make_parser():
+            from appParsers.ParseAllegroBrd import AllegroBrdParser
+            return AllegroBrdParser(app=self.app)
+        return self._parse_pcb_file('allegro_brd', filename, make_parser)
 
     @QtCore.pyqtSlot(str, object)
     def on_pcbdoc_parsed(self, filename, parsed):

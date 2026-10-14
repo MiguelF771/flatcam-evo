@@ -1,0 +1,125 @@
+\t (00:00:02) allegro 17.2 S025 Windows SPB 64-bit Edition
+\t (00:00:02)     Journal start - Tue Feb 03 15:07:26 2026
+\t (00:00:02)         Host=DESKTOP-HAPUJP1 User=nanan Pid=24316 CPUs=20
+\t (00:00:02) CmdLine= D:\TCAd\tools\bin\allegro.exe
+\t (00:00:02) 
+   (00:00:02) Loading axlcore.cxt 
+\t (00:00:02) Opening existing design...
+\d (00:00:04) Design opened: D:/PCAD/proiectCAD.brd
+\i (00:00:04) trapsize 33616
+\i (00:00:04) trapsize 34383
+\i (00:00:04) trapsize 34383
+\i (00:00:04) trapsize 31622
+\i (00:00:05) trapsize 312291
+\i (00:00:05) etchedit 
+\i (00:00:13) artwork 
+\w (00:00:13) Generating metric artwork from an english database may cause slight coordinate roundoff error in output file.
+\i (00:00:15) fillin confirm
+\i (00:00:16) setwindow form.film_control
+\i (00:00:16) FORM film_control film_control  
+\i (00:00:19) FORM film_control filmtree 'MULTISEL YES' Copper_Bottom 
+\i (00:00:19) FORM film_control filmtree  Copper_Bottom 
+\i (00:00:20) FORM film_control filmtree 'MULTISEL YES' Copper_TOP 
+\i (00:00:20) FORM film_control filmtree  Copper_TOP 
+\i (00:00:22) FORM film_control filmtree 'MULTISEL NO' Copper_Bottom 
+\i (00:00:22) FORM film_control filmtree  Copper_Bottom 
+\i (00:00:22) FORM film_control filmtree 'MULTISEL YES' Copper_Bottom 
+\i (00:00:26) FORM film_control filmtree 'MULTISEL YES' SolderMask_TOP 
+\i (00:00:26) FORM film_control filmtree  SolderMask_TOP 
+\i (00:00:26) FORM film_control filmtree 'MULTISEL YES' SolderMask_Bottom 
+\i (00:00:26) FORM film_control filmtree  SolderMask_Bottom 
+\i (00:00:27) FORM film_control filmtree 'MULTISEL YES' SilkScreen_TOP 
+\i (00:00:27) FORM film_control filmtree  SilkScreen_TOP 
+\i (00:00:28) FORM film_control filmtree 'MULTISEL YES' SilkScreen_Bottom 
+\i (00:00:28) FORM film_control filmtree  SilkScreen_Bottom 
+\i (00:00:36) FORM film_control filmtree  SolderMask_TOP 
+\i (00:00:36) FORM film_control filmtree  SolderMask_Bottom 
+\i (00:00:37) FORM film_control filmtree  SilkScreen_TOP 
+\i (00:00:38) FORM film_control filmtree  SilkScreen_Bottom 
+\i (00:00:39) FORM film_control filmtree  Copper_TOP 
+\i (00:00:39) FORM film_control filmtree  Copper_Bottom 
+\i (00:00:40) FORM film_control filmtree  Copper_TOP 
+\i (00:00:41) FORM film_control filmtree  SilkScreen_Bottom 
+\i (00:00:41) FORM film_control filmtree  Copper_TOP 
+\i (00:00:46) FORM film_control x_offset 0.000 
+\i (00:00:46) FORM film_control filmtree  Copper_Bottom 
+\i (00:00:46) FORM film_control filmtree  Copper_TOP 
+\i (00:00:47) FORM film_control filmtree  SilkScreen_Bottom 
+\i (00:00:47) FORM film_control filmtree  SilkScreen_TOP 
+\i (00:00:48) FORM film_control filmtree  SolderMask_Bottom 
+\i (00:00:48) FORM film_control filmtree  SolderMask_TOP 
+\i (00:00:51) FORM film_control create  
+\i (00:00:57) fillin yes 
+\t (00:00:57) Checking db records
+\t (00:00:57)     checking for orphans...
+\t (00:00:57)     Checked 100 percent
+\t (00:00:57) Done dbdoctor.
+\t (00:00:57) Starting Create artwork films...
+\w (00:00:58) WARNING(SPMHGE-269): artwork had warnings, use Viewlog to review the log file.
+\w (00:00:59) Artwork generated with warnings.
+\i (00:01:27) setwindow pcb
+\i (00:01:27) setwindow text
+\i (00:01:27) close
+\i (00:01:30) setwindow form.film_control
+\i (00:01:30) FORM film_control ok  
+\i (00:01:30) setwindow pcb
+\i (00:01:30) etchedit 
+\i (00:02:05) artwork 
+\w (00:02:05) Generating metric artwork from an english database may cause slight coordinate roundoff error in output file.
+\i (00:02:07) fillin confirm
+\i (00:02:07) setwindow form.film_control
+\i (00:02:07) FORM film_control film_control  
+\i (00:04:02) FORM film_control filmtree  TOP 
+\i (00:04:04) FORM film_control filmtree popup 'Add Manual' TOP 
+\i (00:04:33) fillin "Assembly_Drawing_TOP"
+\i (00:05:27) setwindow form.scl_browser
+\i (00:05:27) FORM scl_browser treelist  'ANTI ETCH' 
+\i (00:05:35) FORM scl_browser treelist  'BOARD GEOMETRY' 
+\i (00:06:05) FORM scl_browser treelist  'DRAWING FORMAT' 
+\i (00:06:18) FORM scl_browser treelist  'BOARD GEOMETRY' 
+\i (00:06:20) FORM scl_browser treelist 'MULTISEL YES' DESIGN_OUTLINE 'BOARD GEOMETRY' 
+\i (00:06:20) FORM scl_browser treelist  DESIGN_OUTLINE 'BOARD GEOMETRY' 
+\i (00:06:29) FORM scl_browser treelist 'MULTISEL YES' OUTLINE 'BOARD GEOMETRY' 
+\i (00:06:29) FORM scl_browser treelist  OUTLINE 'BOARD GEOMETRY' 
+\i (00:06:30) FORM scl_browser treelist  'BOARD GEOMETRY' 
+\i (00:06:36) FORM scl_browser treelist  'PACKAGE GEOMETRY' 
+\i (00:06:38) FORM scl_browser treelist 'MULTISEL YES' ASSEMBLY_TOP 'PACKAGE GEOMETRY' 
+\i (00:06:38) FORM scl_browser treelist  ASSEMBLY_TOP 'PACKAGE GEOMETRY' 
+\i (00:06:43) FORM scl_browser treelist  'PACKAGE GEOMETRY' 
+\i (00:06:46) FORM scl_browser treelist  'REF DES' 
+\i (00:06:51) FORM scl_browser treelist 'MULTISEL YES' ASSEMBLY_TOP 'REF DES' 
+\i (00:06:51) FORM scl_browser treelist  ASSEMBLY_TOP 'REF DES' 
+\i (00:06:53) FORM scl_browser done  
+   (00:06:53) WARNING(SPMHA2-118): 'DESIGN_OUTLINE' and 'CUTOUT' are the preferred subclasses for defining an outline. Use these subclasses instead of the 'OUTLINE' subclass. [help]
+\i (00:06:56) fillin confirm
+\i (00:07:06) setwindow form.film_control
+\i (00:07:06) FORM film_control undefined_line_width 0.100 
+\i (00:07:08) FORM film_control filmtree 'MULTISEL YES' Assembly_Drawing_TOP 
+\i (00:07:08) FORM film_control filmtree  Assembly_Drawing_TOP 
+\i (00:07:15) FORM film_control filmtree 'MULTISEL NO' Assembly_Drawing_TOP 
+\i (00:07:18) FORM film_control filmtree 'MULTISEL YES' Assembly_Drawing_TOP 
+\i (00:07:24) FORM film_control create  
+\i (00:07:25) fillin yes 
+\t (00:07:25) Checking db records
+\t (00:07:25)     checking for orphans...
+\t (00:07:25)     Checked 100 percent
+\t (00:07:25) Done dbdoctor.
+\t (00:07:25) Starting Create artwork films...
+\w (00:07:25) WARNING(SPMHGE-269): artwork had warnings, use Viewlog to review the log file.
+\w (00:07:26) Artwork generated with warnings.
+\i (00:07:45) setwindow pcb
+\i (00:07:45) setwindow text
+\i (00:07:45) close
+\i (00:08:14) setwindow form.film_control
+\i (00:08:14) FORM film_control filmtree 'MULTISEL NO' Assembly_Drawing_TOP 
+\i (00:08:21) FORM film_control ok  
+\i (00:08:22) setwindow pcb
+\i (00:08:22) etchedit 
+\i (00:08:22) pick grid -1973.883 439.161
+\t (00:08:22) last pick:  -1975.000 450.000
+\i (00:08:24) save 
+\i (00:08:25) fillin yes 
+   (00:08:25) Loading signal.cxt 
+\i (00:08:25) etchedit 
+\i (00:08:27) exit 
+\t (00:08:27)     Journal end - Tue Feb 03 15:15:51 2026

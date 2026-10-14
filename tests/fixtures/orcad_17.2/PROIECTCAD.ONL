@@ -1,0 +1,320 @@
+(PCB PROIECTCAD
+ (description
+  (timeStamp "2026 02 03 10 34 59")
+  (program "CAPTURE.EXE" (Version "17.2-2016 - D"))
+  (source "Original data from OrCAD/CAPTURE schematic")
+  (title "")
+  (date "Tuesday, February 03, 2026")
+  (document "C:\\USERS\\COSMI\\ONEDRIVE\\DESKTOP\\NEW FOLDER (3)\\PROIECTCAD.DSN")
+  (revision "")
+  (organization "")
+  (address1 "")
+  (address2 "")
+  (address3 "")
+  (address4 "")
+  (partvaluecombine "{Value}")
+  (pcbfootprintcombine "{PCB Footprint}"))
+ (structure )
+ (placement
+  (component LED
+   (place D1
+    (property 
+     (timestamp 00000A7C)
+     ("Source Package" LED)
+     (Value LED)
+     ("PCB Footprint" CAP196)))
+   (place D2
+    (property 
+     (timestamp 00000A8C)
+     ("Source Package" LED)
+     (Value LED)
+     ("PCB Footprint" CAP196)))
+   (place D3
+    (property 
+     (timestamp 00000A9C)
+     ("Source Package" LED)
+     (Value LED)
+     ("PCB Footprint" CAP196)))
+   (place D4
+    (property 
+     (timestamp 00000AAC)
+     ("Source Package" LED)
+     (Value LED)
+     ("PCB Footprint" CAP196))))
+  (component R
+   (place R1
+    (property 
+     (timestamp 000009BA)
+     ("Source Package" R)
+     (Value 56K)
+     ("PCB Footprint" RES400)))
+   (place R2
+    (property 
+     (timestamp 00000A30)
+     ("Source Package" R)
+     (Value 15)
+     ("PCB Footprint" RES400))))
+  (component "NPN BCE"
+   (place Q1
+    (property 
+     (timestamp 00000A0C)
+     ("Source Package" "NPN BCE")
+     (Value 2N3904)
+     ("PCB Footprint" TO92)
+     (PspiceTemplate "Q^@REFDES %C %B %E"))))
+  (component "PNP BCE"
+   (place Q2
+    (property 
+     (timestamp 000009AA)
+     ("Source Package" "PNP BCE")
+     (Value 2N3906)
+     ("PCB Footprint" TO92))))
+  (component Switch
+   (place S1
+    (property 
+     (timestamp 000009DC)
+     ("Source Package" Switch)
+     (Value "ON-OFF")
+     ("PCB Footprint" JUMPER2))))
+  (component Battery
+   (place B1
+    (property 
+     (timestamp 00000A5C)
+     ("Source Package" Battery)
+     (Value 3.7V)
+     ("PCB Footprint" JUMPER2))))
+  (component "CAP POL"
+   (place C1
+    (property 
+     (timestamp 00000A40)
+     ("Source Package" "CAP POL")
+     (Value 22uF)
+     ("PCB Footprint" CAP196)))
+   (place C2
+    (property 
+     (timestamp 000009FA)
+     ("Source Package" "CAP POL")
+     (Value 10uF)
+     ("PCB Footprint" CAP196)))))
+ (library
+  (image Battery
+   (property 
+    (sourcelib C:\\USERS\\COSMI\\ONEDRIVE\\DESKTOP\\LIBRARIE_PCADE.OLB))
+   (pin 999 1
+    (property 
+     (pinname 1)
+     (pintype 7)
+     (Name 1)
+     (Number 1)
+     ("Swap Id" "-1")
+     (Type Power)
+     ("Net Name" N02588)
+     (Order 0)
+     ("Is No Connect" False)))
+   (pin 999 2
+    (property 
+     (pinname 2)
+     (pintype 7)
+     (Name 2)
+     (Number 2)
+     ("Swap Id" "-1")
+     (Type Power)
+     ("Net Name" GND)
+     (Order 1)
+     ("Is No Connect" False))))
+  (image R
+   (property 
+    (sourcelib C:\\CADENCE\\SPB_17.2\\TOOLS\\CAPTURE\\LIBRARY\\DISCRETE.OLB))
+   (pin 999 1
+    (property 
+     (pinname 1)
+     (pintype 4)
+     (Name 1)
+     (Number 1)
+     ("Swap Id" "-1")
+     (Type Passive)
+     ("Net Name" N02440)
+     (Order 0)
+     ("Is No Connect" False)))
+   (pin 999 2
+    (property 
+     (pinname 2)
+     (pintype 4)
+     (Name 2)
+     (Number 2)
+     ("Swap Id" "-1")
+     (Type Passive)
+     ("Net Name" N02510)
+     (Order 1)
+     ("Is No Connect" False))))
+  (image "CAP POL"
+   (property 
+    (sourcelib C:\\CADENCE\\SPB_17.2\\TOOLS\\CAPTURE\\LIBRARY\\DISCRETE.OLB))
+   (pin 999 1
+    (property 
+     (pinname 1)
+     (pintype 4)
+     (Name 1)
+     (Number 1)
+     ("Swap Id" "-1")
+     (Type Passive)
+     ("Net Name" N02506)
+     (Order 0)
+     ("Is No Connect" False)))
+   (pin 999 2
+    (property 
+     (pinname 2)
+     (pintype 4)
+     (Name 2)
+     (Number 2)
+     ("Swap Id" "-1")
+     (Type Passive)
+     ("Net Name" N02510)
+     (Order 1)
+     ("Is No Connect" False))))
+  (image Switch
+   (property 
+    (sourcelib C:\\USERS\\COSMI\\ONEDRIVE\\DESKTOP\\LIBRARIE_PCADE.OLB))
+   (pin 999 1
+    (property 
+     (pinname out)
+     (pintype 4)
+     (Name out)
+     (Number 1)
+     ("Swap Id" "-1")
+     (Type Passive)
+     ("Net Name" N02440)
+     (Order 0)
+     ("Is No Connect" False)))
+   (pin 999 2
+    (property 
+     (pinname in)
+     (pintype 4)
+     (Name in)
+     (Number 2)
+     ("Swap Id" "-1")
+     (Type Passive)
+     ("Net Name" N02588)
+     (Order 1)
+     ("Is No Connect" False))))
+  (image LED
+   (property 
+    (sourcelib C:\\CADENCE\\SPB_17.2\\TOOLS\\CAPTURE\\LIBRARY\\DISCRETE.OLB))
+   (pin 999 1
+    (property 
+     (pinname ANODE)
+     (pintype 4)
+     (Name ANODE)
+     (Number 1)
+     ("Swap Id" "-1")
+     (Type Passive)
+     ("Net Name" N02640)
+     (Order 0)
+     ("Is No Connect" False)))
+   (pin 999 2
+    (property 
+     (pinname CATHODE)
+     (pintype 4)
+     (Name CATHODE)
+     (Number 2)
+     ("Swap Id" "-1")
+     (Type Passive)
+     ("Net Name" GND)
+     (Order 1)
+     ("Is No Connect" False))))
+  (image "NPN BCE"
+   (property 
+    (sourcelib C:\\CADENCE\\SPB_17.2\\TOOLS\\CAPTURE\\LIBRARY\\TRANSISTOR.OLB)
+    (PspiceTemplate "Q^@REFDES %C %B %E"))
+   (pin 999 1
+    (property 
+     (pinname B)
+     (pintype 4)
+     (Name B)
+     (Number 1)
+     ("Swap Id" "-1")
+     (Type Passive)
+     ("Net Name" N02510)
+     (Order 0)
+     ("Is No Connect" False)))
+   (pin 999 2
+    (property 
+     (pinname C)
+     (pintype 4)
+     (Name C)
+     (Number 2)
+     ("Swap Id" "-1")
+     (Type Passive)
+     ("Net Name" N02498)
+     (Order 1)
+     ("Is No Connect" False)))
+   (pin 999 3
+    (property 
+     (pinname E)
+     (pintype 4)
+     (Name E)
+     (Number 3)
+     ("Swap Id" "-1")
+     (Type Passive)
+     ("Net Name" GND)
+     (Order 2)
+     ("Is No Connect" False))))
+  (image "PNP BCE"
+   (property 
+    (sourcelib C:\\CADENCE\\SPB_17.2\\TOOLS\\CAPTURE\\LIBRARY\\TRANSISTOR.OLB))
+   (pin 999 1
+    (property 
+     (pinname B)
+     (pintype 4)
+     (Name B)
+     (Number 1)
+     ("Swap Id" "-1")
+     (Type Passive)
+     ("Net Name" N02498)
+     (Order 0)
+     ("Is No Connect" False)))
+   (pin 999 3
+    (property 
+     (pinname E)
+     (pintype 4)
+     (Name E)
+     (Number 3)
+     ("Swap Id" "-1")
+     (Type Passive)
+     ("Net Name" N02440)
+     (Order 1)
+     ("Is No Connect" False)))
+   (pin 999 2
+    (property 
+     (pinname C)
+     (pintype 4)
+     (Name C)
+     (Number 2)
+     ("Swap Id" "-1")
+     (Type Passive)
+     ("Net Name" N02506)
+     (Order 2)
+     ("Is No Connect" False)))))
+ (network
+  (net GND
+   (pins
+     B1-2 D1-2 C2-2 D3-2 Q1-3 D2-2 D4-2))
+  (net N02440
+   (pins
+     Q2-3 R1-1 S1-1 C2-1))
+  (net N02498
+   (pins
+     Q2-1 Q1-2))
+  (net N02506
+   (pins
+     Q2-2 R2-1 C1-1))
+  (net N02510
+   (pins
+     R1-2 Q1-1 C1-2))
+  (net N02588
+   (pins
+     B1-1 S1-2))
+  (net N02640
+   (pins
+     D1-1 D3-1 R2-2 D2-1 D4-1)))
+)

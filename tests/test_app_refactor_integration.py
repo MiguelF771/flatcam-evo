@@ -181,6 +181,7 @@ ACTION_NAMES = """
     menufilenewscript menufileopenscript menufileopenscriptexample menufilerunscript
     menufileimportsvg menufileimportsvg_as_gerber menufileimportdxf menufileimportdxf_as_gerber
     menufileimportpcbdoc menufileimportkicad menufileimportsprint menufileimporteagle
+    menufileimportallegro
     menufileimport_hpgl2_as_geo menufileexportsvg menufileexportpng menufileexportexcellon
     menufileexportgerber menufileexportdxf menufile_print menufilesaveproject menufilesaveprojectas
     menufilesavedefaults menufileexportpref menufileimportpref menufile_exit

@@ -1,0 +1,78 @@
+(---------------------------------------------------------------------)
+(                                                                     )
+(    ARTWORK LOG                                                      )
+(                                                                     )
+(    Drawing          : proiectCAD.brd                                )
+(    Software Version : 17.2S025                                      )
+(    Date/Time        : Tue Feb 03 15:14:49 2026                      )
+(                                                                     )
+(---------------------------------------------------------------------)
+
+
+ ---- Photoplot outline rectangle not found; using drawing extents.
+
+
+
+Results from parameter file ...
+    DEVICE-TYPE           GERBER_RS274X
+    OUTPUT-UNITS          MM
+    FILM-SIZE             24000 16000
+    FORMAT                3.3
+    ABORT-ON-ERROR        NO
+    SCALE                 1
+    SUPPRESS-LEAD-ZEROES  YES
+    SUPPRESS-TRAIL-ZEROES NO
+    SUPPRESS-EQUAL        YES
+    UNDEF-APT-CONT        NO
+
+ WARNING: Generating metric output data from an english database
+ may cause slight roundoff error of coordinates in output file.
+
+
+
+
+================================================================
+     PROCESSING FILM < Assembly_Drawing_TOP >
+     TO FILE < D:/PCAD/Assembly_Drawing_TOP.art > ...
+================================================================
+
+  FILM PARAMETERS :
+  ---------------------------------------------------------
+  Undefined line width                0.100
+  Mirror code                         NONE
+  Rotate angle                        NONE
+  Offset x:                           0.000
+  Offset y:                           0.000
+  Plot negative                       NO
+  Suppress unconnected internal pads  NO
+  Draw holes only                     NO
+
+    WARNING: text composed 0 width line found at (450.000 875.000)
+           ... using undefined line width of 0.100
+
+    WARNING: 0 width line found at (600.000 850.000)
+           ... using undefined line width of 0.100
+
+    WARNING: Multiple 0 width lines; all will be treated the same as the first.
+           ... using undefined line width of 0.100
+
+    WARNING: text having Multiple 0 width lines; all will be treated the same as the first.
+           ... using undefined line width of 0.100
+
+
+
+  APERTURES USED:
+  ---------------------------------------------------------
+  TYPE       SIZE/NAME                   ROT   MIRROR MODE 
+  ---------------------------------------------------------
+  CIRCLE     0.00254                                  DARK 
+  CIRCLE     0.20320                                  DARK 
+
+     Assembly_Drawing_TOP created with warnings
+
+
+------------------------------------------------------
+ SUMMARY:
+        Assembly_Drawing_TOP created with warnings
+
+ ARTWORK had warnings

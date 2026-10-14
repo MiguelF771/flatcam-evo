@@ -1,0 +1,23 @@
+  Revised: Tuesday, February 03, 2026
+          Revision: 
+
+
+
+
+
+
+
+Bill Of Materials       February 3,2026      12:35:30	Page1
+
+Item	Quantity	Reference	Part
+______________________________________________
+
+1	1	B1	3.7V
+2	1	C1	22uF
+3	1	C2	10uF
+4	4	D1,D2,D3,D4	LED
+5	1	Q1	2N3904
+6	1	Q2	2N3906
+7	1	R1	56K
+8	1	R2	15
+9	1	S1	ON-OFF

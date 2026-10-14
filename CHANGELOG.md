@@ -34,6 +34,9 @@ Other:
 - new feature: KiCad .kicad_pcb import in File -> Import -> KiCad PCB directly to Gerbers and Excellons
 - new feature: Sprint Layout 6 .lay6 import in File -> Import -> Sprint Layout directly to Gerbers and Excellons
 - new feature: Eagle .brd import in File -> Import -> Eagle Board directly to Gerbers and Excellons
+- new feature: OrCAD/Allegro .brd import in File -> Import -> OrCAD/Allegro Board directly to Gerbers and Excellons
+- OrCAD/Allegro import: boards saved by Allegro 17.2 and 24.1 are checked against Gerbers made by Allegro; 17.4 to 19.0 boards are read with a warning and only if the strict checks pass; 16.x boards are refused (save them again in 17.2 or newer)
+- OrCAD/Allegro import: Eagle and Allegro boards both use .brd; the content of the file selects the format (an Eagle board is XML)
 - tests: pytest options (for example -q or -x) do not stop the tests that import appMain any more (new tests/conftest.py)
 - fixed a crash when the Space key toggles the plot of the selected objects: the default Properties tab deleted the UI of an object; now the UI is kept, and if a UI is deleted it is rebuilt
 - the plot toggle (Plot checkbox, Space key, Enable/Disable plots) does not plot the object again if its shapes are still on the canvas; it only shows or hides them. The UI does not block any more on big objects (50000 shapes: 0.5 s instead of a full tessellation)
