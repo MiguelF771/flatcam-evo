@@ -524,8 +524,13 @@ class TestObjectBehavior(AppCharacterizationTest):
             offset=Mock(),
             bounds=Mock(return_value=(1, 2, 3, 4)),
             set_offset_values=Mock(),
-            source_file=None
+            source_file=None,
+            app=app,
+            source_exporter='export_gerber'
         )
+        # the stand-in carries the real method of the objects
+        from appObjects.AppObjectTemplate import FlatCAMObj
+        obj.regenerate_source = MethodType(FlatCAMObj.regenerate_source, obj)
         app.collection = SimpleNamespace(get_list=Mock(return_value=[obj]))
         app.app_obj = SimpleNamespace(object_changed=RecordingSignal())
 

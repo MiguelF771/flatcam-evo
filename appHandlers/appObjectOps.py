@@ -351,19 +351,7 @@ class AppObjectOps(QtCore.QObject):
 
                 # update the source_file container with the new offset code
                 for obj in obj_list:
-                    out_name = obj.obj_options["name"]
-
-                    if obj.kind == 'gerber':
-                        obj.source_file = app_obj.f_handlers.export_gerber(
-                            obj_name=out_name, filename=None, local_use=obj, use_thread=False)
-
-                    elif obj.kind == 'excellon':
-                        obj.source_file = app_obj.f_handlers.export_excellon(
-                            obj_name=out_name, filename=None, local_use=obj, use_thread=False)
-
-                    elif obj.kind == 'geometry':
-                        obj.source_file = app_obj.f_handlers.export_dxf(
-                            obj_name=out_name, filename=None, local_use=obj, use_thread=False)
+                    obj.regenerate_source()
 
                 if noplot_sig is False:
                     app_obj.replot_signal.emit([])
@@ -461,19 +449,7 @@ class AppObjectOps(QtCore.QObject):
                 self.app.plotcanvas.fit_view()
 
                 for obj in obj_list:
-                    out_name = obj.obj_options["name"]
-
-                    if obj.kind == 'gerber':
-                        obj.source_file = self.app.f_handlers.export_gerber(
-                            obj_name=out_name, filename=None, local_use=obj, use_thread=False)
-
-                    elif obj.kind == 'excellon':
-                        obj.source_file = self.app.f_handlers.export_excellon(
-                            obj_name=out_name, filename=None, local_use=obj, use_thread=False)
-
-                    elif obj.kind == 'geometry':
-                        obj.source_file = self.app.f_handlers.export_dxf(
-                            obj_name=out_name, filename=None, local_use=obj, use_thread=False)
+                    obj.regenerate_source()
 
                 self.inform.emit('[success] %s...' % _('Origin set'))
 
@@ -836,8 +812,7 @@ class AppObjectOps(QtCore.QObject):
                 if not new_obj.tools:
                     app_obj.log.debug("on_copy_object2() --> no excellon tools")
                     return 'fail'
-                new_obj.source_file = app_obj.f_handlers.export_excellon(
-                    obj_name=outname, local_use=new_obj, filename=None, use_thread=False)
+                new_obj.regenerate_source(name=outname)
 
             try:
                 from appObjects.ObjectCollection import ExcellonObject, GerberObject, GeometryObject
