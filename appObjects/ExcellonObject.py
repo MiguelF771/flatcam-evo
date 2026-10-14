@@ -504,10 +504,8 @@ class ExcellonObject(FlatCAMObj, Excellon):
             self.ui.slot_tooldia_entry.setDisabled(False)
             self.ui.generate_milling_slots_button.setDisabled(False)
 
-        # update the milling section
+        # update the milling section; it ends with ui_connect()
         self.on_row_selection_change()
-
-        self.ui_connect()
 
     def clear_contex_menu(self):
         self.ui.tools_table.removeContextMenu()

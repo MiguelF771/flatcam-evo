@@ -555,3 +555,33 @@ class TestGuardsAlreadyPassing_0B:
         app = make_app(geometry_circle_steps=21)
         obj = GeometryObject('geo', app)
         assert obj.geo_steps_per_circle == 21
+
+
+class TestExcellonRowSelectionReconnect_0B6:
+    """build_ui ends with on_row_selection_change(); every path of it must end with exactly one ui_connect(),
+    so build_ui does not need (and must not make) a second ui_connect() that would double-connect the signals."""
+
+    @staticmethod
+    def _run(selected_rows):
+        calls = []
+        me = MagicMock()
+        me.ui_disconnect.side_effect = lambda: calls.append('disconnect')
+        me.ui_connect.side_effect = lambda: calls.append('connect')
+        me.tools = {}
+        idxs = [Mock(**{'row.return_value': r}) for r in selected_rows]
+        me.ui.tools_table.selectionModel.return_value.selectedIndexes.return_value = idxs
+        me.ui.tools_table.item.return_value.text.return_value = '1.0'
+        me.app.dec_format.side_effect = lambda v, d: v
+        ExcellonObject.on_row_selection_change(me)
+        return calls
+
+    def test_empty_selection_ends_connected_once(self):
+        assert self._run([]) == ['disconnect', 'connect']
+
+    def test_selection_ends_connected_once(self):
+        assert self._run([0, 1]) == ['disconnect', 'connect']
+
+    def test_build_ui_does_not_connect_a_second_time(self):
+        src = inspect.getsource(ExcellonObject.build_ui)
+        tail = src.rsplit('self.on_row_selection_change()', 1)[1]
+        assert 'ui_connect' not in tail
