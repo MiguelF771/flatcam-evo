@@ -1964,9 +1964,7 @@ class appIO(QtCore.QObject):
                 header += '%\n'
                 footer = 'M30\n'
 
-                exported_excellon = header
-                exported_excellon += excellon_code
-                exported_excellon += footer
+                exported_excellon = ''.join([header, excellon_code, footer])
 
                 if local_use is None:
                     try:
@@ -2127,9 +2125,7 @@ class appIO(QtCore.QObject):
                 if obj.obj_options.get('pcbdoc_import', False) and (not gerber_code or gerber_code == 'fail'):
                     return 'fail'
 
-                exported_gerber = header
-                exported_gerber += gerber_code
-                exported_gerber += footer
+                exported_gerber = ''.join([header, gerber_code, footer])
 
                 if local_use is None:
                     try:

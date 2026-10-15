@@ -774,7 +774,7 @@ class ExcellonObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Excellon):
         :rtype:             tuple
         """
 
-        excellon_code = ''
+        excellon_parts = []
 
         def ndec_format(value):
             """
@@ -811,32 +811,32 @@ class ExcellonObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Excellon):
         # drills processing
         if has_drills:
             for tool in self.tools:
-                excellon_code += 'T0%s\n' % str(tool) if int(tool) < 10 else 'T%s\n' % str(tool)
+                excellon_parts.append('T0%s\n' % str(tool) if int(tool) < 10 else 'T%s\n' % str(tool))
 
                 for drill in self.tools[tool]['drills']:
                     if form == 'dec':
                         try:
                             drill_x = drill.x * factor
                             drill_y = drill.y * factor
-                            excellon_code += "X{:.{dec}f}Y{:.{dec}f}\n".format(drill_x, drill_y, dec=fract)
+                            excellon_parts.append("X{:.{dec}f}Y{:.{dec}f}\n".format(drill_x, drill_y, dec=fract))
                         except Exception as e:
                             self.app.log.error('ExcellonObject.export_excellon() drills "dec" -> %s' % str(e))
                     else:
                         try:
-                            excellon_code += "X{xform}Y{yform}\n".format(xform=ndec_format(drill.x * factor),
-                                                                          yform=ndec_format(drill.y * factor))
+                            excellon_parts.append("X{xform}Y{yform}\n".format(xform=ndec_format(drill.x * factor),
+                                                                          yform=ndec_format(drill.y * factor)))
                         except Exception as e:
                             self.app.log.error('ExcellonObject.export_excellon() drills "%s" -> %s' % (e_zeros, str(e)))
 
         # slots processing
         if has_slots:
             for tool in self.tools:
-                excellon_code += 'G05\n'
+                excellon_parts.append('G05\n')
 
                 if int(tool) < 10:
-                    excellon_code += 'T0' + str(tool) + '\n'
+                    excellon_parts.append('T0' + str(tool) + '\n')
                 else:
-                    excellon_code += 'T' + str(tool) + '\n'
+                    excellon_parts.append('T' + str(tool) + '\n')
 
                 for slot in self.tools[tool]['slots']:
                     if form == 'dec':
@@ -846,16 +846,16 @@ class ExcellonObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Excellon):
                             stop_slot_x = slot[1].x * factor
                             stop_slot_y = slot[1].y * factor
                             if slot_type == 'routing':
-                                excellon_code += "G00X{:.{dec}f}Y{:.{dec}f}\nM15\n".format(start_slot_x,
+                                excellon_parts.append("G00X{:.{dec}f}Y{:.{dec}f}\nM15\n".format(start_slot_x,
                                                                                            start_slot_y,
-                                                                                           dec=fract)
-                                excellon_code += "G01X{:.{dec}f}Y{:.{dec}f}\nM16\n".format(stop_slot_x,
+                                                                                           dec=fract))
+                                excellon_parts.append("G01X{:.{dec}f}Y{:.{dec}f}\nM16\n".format(stop_slot_x,
                                                                                            stop_slot_y,
-                                                                                           dec=fract)
+                                                                                           dec=fract))
                             elif slot_type == 'drilling':
-                                excellon_code += "X{:.{dec}f}Y{:.{dec}f}G85X{:.{dec}f}Y{:.{dec}f}\nG05\n".format(
+                                excellon_parts.append("X{:.{dec}f}Y{:.{dec}f}G85X{:.{dec}f}Y{:.{dec}f}\nG05\n".format(
                                     start_slot_x, start_slot_y, stop_slot_x, stop_slot_y, dec=fract
-                                )
+                                ))
                         except Exception as err:
                             self.app.log.error('ExcellonObject.export_excellon() slots "dec" -> %s' % str(err))
                     else:
@@ -866,12 +866,12 @@ class ExcellonObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Excellon):
                             stop_y = ndec_format(slot[1].y * factor)
 
                             if slot_type == 'routing':
-                                excellon_code += "G00X{xstart}Y{ystart}\nM15\n".format(xstart=start_x, ystart=start_y)
-                                excellon_code += "G01X{xstop}Y{ystop}\nM16\n".format(xstop=stop_x, ystop=stop_y)
+                                excellon_parts.append("G00X{xstart}Y{ystart}\nM15\n".format(xstart=start_x, ystart=start_y))
+                                excellon_parts.append("G01X{xstop}Y{ystop}\nM16\n".format(xstop=stop_x, ystop=stop_y))
                             elif slot_type == 'drilling':
-                                excellon_code += "X{xstart}Y{ystart}G85X{xstop}Y{ystop}\nG05\n".format(
+                                excellon_parts.append("X{xstart}Y{ystart}G85X{xstop}Y{ystop}\nG05\n".format(
                                     xstart=start_x, ystart=start_y, xstop=stop_x, ystop=stop_y
-                                )
+                                ))
                         except Exception as err:
                             self.app.log.error('ExcellonObject.export_excellon() slots "%s" -> %s' % (e_zeros, str(err)))
 
@@ -879,7 +879,7 @@ class ExcellonObject(OffsetUiMixin, PropertiesPanelMixin, FlatCAMObj, Excellon):
             self.app.log.debug("ExcellonObject.export_excellon() --> Excellon Object is empty: no drills, no slots.")
             return 'fail'
 
-        return slots_in_file, excellon_code
+        return slots_in_file, ''.join(excellon_parts)
 
     def generate_milling_drills(self, tools=None, outname=None, tooldia=None, plot=False, use_thread=False):
         """
