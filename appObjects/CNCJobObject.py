@@ -1212,15 +1212,12 @@ class CNCJobObject(PropertiesPanelMixin, FlatCAMObj, CNCjob):
 
         self.ui_disconnect()
         # cb_flag = self.ui.plot_cb.isChecked()
-        cb_flag = self.obj_options['plot']
+        cb_flag = bool(self.obj_options['plot'])
 
         try:
-            for row in range(self.ui.cnc_tools_table.rowCount()):
-                table_cb = self.ui.cnc_tools_table.cellWidget(row, 6)
-                if cb_flag:
-                    table_cb.setChecked(True)
-                else:
-                    table_cb.setChecked(False)
+            # the plot checkbox of every tool follows the object plot checkbox
+            for table_cb in self._tool_plot_checkboxes():
+                table_cb.setChecked(cb_flag)
         except AttributeError:
             # TODO from Tcl commands - should fix it sometime
             pass
@@ -1271,14 +1268,20 @@ class CNCJobObject(PropertiesPanelMixin, FlatCAMObj, CNCjob):
         kind = self.ui.cncplot_method_combo.get_value()
 
         self.shapes.clear(update=True)
+        # the shapes are now a part of the object only: the object plot checkbox must plot again, not show them
+        self._full_plot_sig = None
         if self.obj_options['type'].lower() == "excellon":
             for r in range(self.ui.exc_cnc_tools_table.rowCount()):
+                row_cb = self.ui.exc_cnc_tools_table.cellWidget(r, 6)
+                if row_cb is None:
+                    # a tool without G-code has no plot checkbox
+                    continue
                 row_dia = float('%.*f' % (self.decimals, float(self.ui.exc_cnc_tools_table.item(r, 1).text())))
                 for tooluid_key in self.tools:
                     tooldia = float('%.*f' % (self.decimals, float(self.tools[tooluid_key]['tooldia'])))
                     if row_dia == tooldia:
                         gcode_parsed = self.tools[tooluid_key]['gcode_parsed']
-                        if self.ui.exc_cnc_tools_table.cellWidget(r, 6).isChecked():
+                        if row_cb.isChecked():
                             self.plot2(tooldia=tooldia, obj=self, visible=True, gcode_parsed=gcode_parsed, kind=kind)
         else:
             for tooluid_key in self.tools:
@@ -1295,18 +1298,28 @@ class CNCJobObject(PropertiesPanelMixin, FlatCAMObj, CNCjob):
 
         # make sure that the general plot is disabled if one of the row plot's are disabled and
         # if all the row plot's are enabled also enable the general plot checkbox
-        cb_cnt = 0
-        total_row = self.ui.cnc_tools_table.rowCount()
-        for row in range(total_row):
-            if self.ui.cnc_tools_table.cellWidget(row, 6).isChecked():
-                cb_cnt += 1
-            else:
-                cb_cnt -= 1
-        if cb_cnt < total_row:
-            self.ui.plot_cb.setChecked(False)
-        else:
-            self.ui.plot_cb.setChecked(True)
+        row_cbs = self._tool_plot_checkboxes()
+        if row_cbs:
+            self.ui.plot_cb.setChecked(all(cb.isChecked() for cb in row_cbs))
         self.ui_connect()
+
+    def _tool_plot_checkboxes(self):
+        """
+        The plot checkboxes of the tool table rows. A CNCJob made from an Excellon shows its tools in
+        exc_cnc_tools_table, the other CNCJobs in cnc_tools_table. A row of a tool without G-code has no checkbox.
+
+        :return: list of the checkbox widgets
+        """
+        if self.obj_options['type'].lower() == "excellon":
+            table = self.ui.exc_cnc_tools_table
+        else:
+            table = self.ui.cnc_tools_table
+        checkboxes = []
+        for row in range(table.rowCount()):
+            row_cb = table.cellWidget(row, 6)
+            if row_cb is not None:
+                checkboxes.append(row_cb)
+        return checkboxes
 
     def plot(self, visible=None, kind='all', dia=None):
         """
