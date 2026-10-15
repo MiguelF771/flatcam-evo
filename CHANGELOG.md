@@ -8,6 +8,54 @@ CHANGELOG for FlatCAM Evo beta
 
 =================================================
 
+15.10.2026
+
+Gerber / Excellon objects (the 2 object kinds now share their transforms, copy, merge, export and plot code):
+
+- the Gerber export writes the composed geometry as regions when the native writer cannot represent the object: aperture macros (AM), polygon (P) apertures, clear (LPC) features, tracks drawn with a rectangle aperture, a transform that the apertures cannot follow (for example a skew or a rotation that is not a quarter turn), and the PCB board imports. Holes and islands in holes are kept. The object keeps this state through copy, join, editor save and project save/load
+- after scale, rotate, mirror and buffer the aperture sizes of a Gerber follow the geometry where the aperture type can show the result
+- the multiplicative buffer works for every aperture type; an object with clear features or tracks of a non-circular aperture is refused with a message and is not changed
+- fixed: the Gerber export wrote negative coordinates with the sign after the zero padding (T zeros); the Excellon export wrote wrong LZ/TZ coordinates and slots ('drilling' slot type)
+- fixed: a polygon (P) aperture was rotated about the wrong point
+- fixed: the Gerber editor lost every clear (LPC) feature on save; an object with clear features now loads in the editor as its composed geometry, with a message
+- fixed: the Excellon rotate without a point turns about the center of the object; the buffer modes are correct; the tool parameters are kept when the geometry is rebuilt
+- fixed: every object ran the init of its geometry class 2 times: the Excellon circle steps preference was ignored and the CNCJob state was reset
+- Excellon scale moves the holes and keeps the tool diameters: a drill is a physical tool (use it to correct a file read with a wrong number format; Eagle writes inch files as 2:5)
+- Excellon join fuses 2 tools with the same diameter only if their tool parameters are the same
+- copy keeps the aperture macros, the follow geometry and the source of the object; join (merge) of Gerbers deep-copies the apertures
+- fixed: the slots of an Excellon come back from a project as lists; they are tuples again
+- fixed: marking an aperture that was added after the object was built raised an error
+- fixed: the plot checkbox of an Excellon tool row could read the checkbox of another row
+- fixed: Script and Document objects could not be created
+- fixed: the Distance tool did not snap to pad and drill centers (Shapely 2)
+- fixed: Solder Paste and Isolation failed on clear flashes; Film failed on punch holes
+- the export text of Gerber and Excellon is built in 1 step: the Gerber export of a large panel is about 3 times faster, the output is the same
+
+Panelize:
+
+- the Panelize plugin and the Tcl panelize command use 1 shared core: both make the same panel
+- a Gerber panel made from a Geometry, and a Geometry panel made from a Gerber, keep their tools and get a source file (before, the export of such a panel failed)
+- fixed: an endless loop for a single-geometry source
+- fixed: Tcl panelize no longer runs eval() on the -use_thread value, reports a missing -box object, and uses 1 for a missing -rows or -columns
+- the messages show the object name, and 'done' is shown after the panel exists
+
+CNCJob / Drilling:
+
+- the OR-Tools 'Basic' path optimization has a time limit: the 'Duration' preference (Excellon and Geometry) is now used by 'MetaHeuristic' and 'Basic' and is enabled for both; 0 means 3 seconds. A panel of 1152 holes took 134 s, now about 3 s
+- the OR-Tools distances are given as a matrix and with a resolution of 1/1000 unit: holes less than 1 mm apart were in a random order
+- fixed: in a CNCJob made from an Excellon, the 'Plot' checkbox did not check or uncheck the plot checkboxes of the tools, and a click on a tool checkbox did not update the 'Plot' checkbox
+
+Tcl:
+
+- fixed: scale with only -x or -y, mirror and skew of more than 1 object, mirror without -box or -origin (now about the center), buffer -join 2 (square)
+- new command: join_gerber
+- a buffer that the object refuses is reported as a failure
+
+Other:
+
+- fixed: the restored objects of a project did not react to option changes
+- the plugins Isolation, NCC, Paint, Follow, Punch Gerber, Drilling and Milling no longer inherit the Gerber or Excellon class
+
 14.10.2026
 
 Gerber parser:
