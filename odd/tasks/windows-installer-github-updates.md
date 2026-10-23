@@ -13,7 +13,7 @@ Ship the fork (github.com/MiguelF771/flatcam-evo) as a per-user Windows installe
 User request: an installable build that receives updates from their own public repository.
 
 ## Scope / authorized
-- Version `1.0.0`, `beta=False` (user decision 2026-10-23).
+- Development branches keep `version = "Unstable"`, `beta = True` (commit c25b83c0). The release is cut from branch `release/1.0.0` with `version = "1.0.0"`, `beta = False`, tagged `v1.0.0`; that tag is what gets published as the GitHub Release (user decision 2026-10-23).
 - Own data folder `%APPDATA%\FlatCAM-Evo` (user decision 2026-10-23).
 - GitHub Releases transport for the updater, selected from `global_update_url`; default to this repo.
 - Windows-only release preparation (no linux channel required).
@@ -35,11 +35,11 @@ User request: an installable build that receives updates from their own public r
 
 ## Tasks
 - [x] T1 - Version 1.0.0, beta=False, data folder FlatCAM-Evo (appMain.py). Route: inline (1 file, mechanical). Commit ed8e0b32. Checks: pytest tests/updater tests/test_make_freeze.py tests/test_app_refactor_characterization.py -> 143 passed; launch -> `.appdata/FlatCAM-Evo` created, log "Checking for updates in background (this is version 1.0.0)". RDD: assessed high (process_boundary in appMain.py), review declined by user for this candidate.
-- [ ] T2 - GitHubReleasesTransport + transport selection in checker + default URL; tests. Route: delegated writer (2+ non-trivial files).
-- [ ] T3 - Windows-only `prepare_releases` and asset naming that matches the GitHub transport; tests. Route: delegated writer (can be merged with T2).
+- [ ] T2 - GitHubReleasesTransport + transport selection in checker + default URL; tests. Route: delegated writer (2+ non-trivial files). Design: same interface as DigiPublicShareTransport; reads `api.github.com/repos/<owner>/<repo>/releases/latest`; asset name = `manifest-<channel>.json` for `manifest.json`, otherwise the filename unchanged; selected when `global_update_url` host is github.com; default `https://github.com/MiguelF771/flatcam-evo`. Prep commit b4b61535 (transport base class).
+- [ ] T3 - Windows-only `prepare_releases` and asset naming that matches the GitHub transport; tests. Route: same delegated writer as T2.
 - [ ] T4 - Working cx_Freeze build: install cx_Freeze, run `make_freeze.py`, fix missing includes/data/icon until the frozen exe starts. Route: delegated (iterative build work).
 - [ ] T5 - Inno Setup script (per-user) and installer build; verify install, launch, uninstall. Route: delegated writer.
-- [ ] T6 - Release flow doc + first release v1.0.0 on GitHub (after user confirmation); verify the installed app reports "up to date". Route: inline.
+- [ ] T6 - Release flow doc; branch `release/1.0.0` (version 1.0.0, beta False), tag `v1.0.0`, build installer from it, publish GitHub Release v1.0.0 (confirm with user right before push/publish); verify the installed app reports "up to date". Route: inline.
 
 ## Acceptance criteria
 - Installed app starts from the Start menu without Python installed, title shows 1.0.0, settings in `%APPDATA%\FlatCAM-Evo`.
@@ -50,6 +50,8 @@ User request: an installable build that receives updates from their own public r
 - 2026-10-23: feature doc created; branch created from Beta_1.0 (e653b92f).
 - 2026-10-23: T1 done. Interim note: until T2 lands, the startup check still queries the upstream DIGI share.
 - Review boundary: ed8e0b32 (T1 declined by user; next assessment uses it as base).
+
+- 2026-10-23: c25b83c0 restored `Unstable`/beta on the dev branch; release versioning moved to `release/1.0.0` + tag `v1.0.0` (user decision).
 
 ## Next step
 T2 + T3 (one delegated writer).
