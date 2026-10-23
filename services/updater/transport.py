@@ -47,7 +47,98 @@ class RemoteFile:
     sha256: str | None = None
 
 
-class DigiPublicShareTransport:
+class _HttpTransportBase:
+    """Shared response, streaming and verification helpers for release transports."""
+
+    label = "Digi"
+    chunk_size = 1024 * 1024
+
+    @staticmethod
+    def _close(response) -> None:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+
+    @staticmethod
+    def _status(response) -> int:
+        return int(getattr(response, "status", getattr(response, "code", 200)) or 200)
+
+    @staticmethod
+    def _response_total(response, expected_size=None) -> int | None:
+        total = expected_size
+        if total is None:
+            header = response.headers.get("Content-Length") if hasattr(response, "headers") else None
+            if header is None:
+                getheader = getattr(response, "getheader", None)
+                if callable(getheader):
+                    header = getheader("Content-Length")
+            try:
+                total = int(header) if header is not None else None
+            except (TypeError, ValueError):
+                total = None
+        return total
+
+    def _read_response(self, response, expected_size=None, progress_cb=None, cancel_cb=None) -> bytes:
+        total = self._response_total(response, expected_size)
+        output = io.BytesIO()
+        written = 0
+        while True:
+            if cancel_cb is not None and cancel_cb():
+                raise DownloadCancelled(f"{self.label} download cancelled.")
+            chunk = response.read(self.chunk_size)
+            if not chunk:
+                break
+            output.write(chunk)
+            written += len(chunk)
+            if progress_cb is not None:
+                progress_cb(written, total)
+        if cancel_cb is not None and cancel_cb():
+            raise DownloadCancelled(f"{self.label} download cancelled.")
+        return output.getvalue()
+
+    def _stream_response(
+        self,
+        response,
+        destination: Path,
+        expected_size=None,
+        expected_sha256=None,
+        progress_cb=None,
+        cancel_cb=None,
+    ) -> None:
+        total = self._response_total(response, expected_size)
+        digest = hashlib.sha256()
+        written = 0
+        with Path(destination).open("wb") as output:
+            while True:
+                if cancel_cb is not None and cancel_cb():
+                    raise DownloadCancelled(f"{self.label} download cancelled.")
+                chunk = response.read(self.chunk_size)
+                if not chunk:
+                    break
+                output.write(chunk)
+                digest.update(chunk)
+                written += len(chunk)
+                if progress_cb is not None:
+                    progress_cb(written, total)
+            output.flush()
+            os.fsync(output.fileno())
+        if cancel_cb is not None and cancel_cb():
+            raise DownloadCancelled(f"{self.label} download cancelled.")
+        if expected_size is not None and written != expected_size:
+            raise TransportError(f"{self.label} download size did not match the expected size.")
+        if expected_sha256 is not None and digest.hexdigest() != expected_sha256.lower():
+            raise TransportError(f"{self.label} download SHA-256 did not match the expected digest.")
+
+    def _verify(self, data: bytes, expected_size=None, expected_sha256=None) -> None:
+        if expected_size is not None and len(data) != expected_size:
+            raise TransportError(f"{self.label} download size did not match the expected size.")
+        if expected_sha256 is not None:
+            actual = hashlib.sha256(data).hexdigest()
+            if actual.lower() != expected_sha256.lower():
+                raise TransportError(f"{self.label} download SHA-256 did not match the expected digest.")
+
+
+class DigiPublicShareTransport(_HttpTransportBase):
     """Resolve and access the configured Digi public share without credentials."""
 
     def __init__(
@@ -67,16 +158,6 @@ class DigiPublicShareTransport:
         self.chunk_size = chunk_size
         self.canonical_host = canonical_host.lower()
         self._metadata: ShareMetadata | None = None
-
-    @staticmethod
-    def _close(response) -> None:
-        close = getattr(response, "close", None)
-        if callable(close):
-            close()
-
-    @staticmethod
-    def _status(response) -> int:
-        return int(getattr(response, "status", getattr(response, "code", 200)) or 200)
 
     def _open(self, url: str, referer: str | None = None):
         parsed = urllib.parse.urlsplit(url)
@@ -224,81 +305,6 @@ class DigiPublicShareTransport:
             if remote.name == filename:
                 return remote
         return None
-
-    @staticmethod
-    def _response_total(response, expected_size=None) -> int | None:
-        total = expected_size
-        if total is None:
-            header = response.headers.get("Content-Length") if hasattr(response, "headers") else None
-            if header is None:
-                getheader = getattr(response, "getheader", None)
-                if callable(getheader):
-                    header = getheader("Content-Length")
-            try:
-                total = int(header) if header is not None else None
-            except (TypeError, ValueError):
-                total = None
-        return total
-
-    def _read_response(self, response, expected_size=None, progress_cb=None, cancel_cb=None) -> bytes:
-        total = self._response_total(response, expected_size)
-        output = io.BytesIO()
-        written = 0
-        while True:
-            if cancel_cb is not None and cancel_cb():
-                raise DownloadCancelled("Digi download cancelled.")
-            chunk = response.read(self.chunk_size)
-            if not chunk:
-                break
-            output.write(chunk)
-            written += len(chunk)
-            if progress_cb is not None:
-                progress_cb(written, total)
-        if cancel_cb is not None and cancel_cb():
-            raise DownloadCancelled("Digi download cancelled.")
-        return output.getvalue()
-
-    def _stream_response(
-        self,
-        response,
-        destination: Path,
-        expected_size=None,
-        expected_sha256=None,
-        progress_cb=None,
-        cancel_cb=None,
-    ) -> None:
-        total = self._response_total(response, expected_size)
-        digest = hashlib.sha256()
-        written = 0
-        with Path(destination).open("wb") as output:
-            while True:
-                if cancel_cb is not None and cancel_cb():
-                    raise DownloadCancelled("Digi download cancelled.")
-                chunk = response.read(self.chunk_size)
-                if not chunk:
-                    break
-                output.write(chunk)
-                digest.update(chunk)
-                written += len(chunk)
-                if progress_cb is not None:
-                    progress_cb(written, total)
-            output.flush()
-            os.fsync(output.fileno())
-        if cancel_cb is not None and cancel_cb():
-            raise DownloadCancelled("Digi download cancelled.")
-        if expected_size is not None and written != expected_size:
-            raise TransportError("Digi download size did not match the expected size.")
-        if expected_sha256 is not None and digest.hexdigest() != expected_sha256.lower():
-            raise TransportError("Digi download SHA-256 did not match the expected digest.")
-
-    @staticmethod
-    def _verify(data: bytes, expected_size=None, expected_sha256=None) -> None:
-        if expected_size is not None and len(data) != expected_size:
-            raise TransportError("Digi download size did not match the expected size.")
-        if expected_sha256 is not None:
-            actual = hashlib.sha256(data).hexdigest()
-            if actual.lower() != expected_sha256.lower():
-                raise TransportError("Digi download SHA-256 did not match the expected digest.")
 
     def download_bytes(
         self,
