@@ -41,6 +41,7 @@ DisableProgramGroupPage=yes
 ; Always install into the dedicated folder above: the install and uninstall
 ; cleanup below assumes {app} holds nothing but this app.
 DisableDirPage=yes
+UsePreviousAppDir=no
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile=..\assets\resources\flatcam_icon256.ico
