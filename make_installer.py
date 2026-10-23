@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import os
 import re
 import shutil
@@ -18,17 +19,22 @@ DEFAULT_OUTPUT_DIR = ROOT / "build" / "installer"
 ISCC_NAME = "ISCC.exe"
 FALLBACK_NUMERIC_VERSION = "0.0.0"
 
-_VERSION_RE = re.compile(r"^\s*version\s*=\s*([\"'])(?P<version>[^\"']+)\1", re.MULTILINE)
 _NUMERIC_VERSION_RE = re.compile(r"^\d+(\.\d+){0,3}$")
 
 
 def read_app_version(app_main: Path = APP_MAIN) -> str:
     """Return ``App.version`` from appMain.py without importing the application."""
-    text = Path(app_main).read_text(encoding="utf-8")
-    match = _VERSION_RE.search(text)
-    if not match:
-        raise RuntimeError(f"Could not find a string 'version' assignment in {app_main}")
-    return match.group("version").strip()
+    tree = ast.parse(Path(app_main).read_text(encoding="utf-8"), filename=str(app_main))
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "App":
+            for stmt in node.body:
+                if (isinstance(stmt, ast.Assign)
+                        and any(isinstance(t, ast.Name) and t.id == "version" for t in stmt.targets)
+                        and isinstance(stmt.value, ast.Constant)
+                        and isinstance(stmt.value.value, str)
+                        and stmt.value.value.strip()):
+                    return stmt.value.value.strip()
+    raise RuntimeError(f"Could not find a string 'version' assignment in class App of {app_main}")
 
 
 def numeric_version(version: str) -> str:
@@ -55,8 +61,13 @@ def find_iscc(env: dict | None = None, which=shutil.which) -> Path | None:
     return None
 
 
+def installer_basename(version: str) -> str:
+    """Installer file name without extension; passed to the .iss as a define."""
+    return f"FlatCAM-Evo-Setup-{version}"
+
+
 def installer_path(version: str, output_dir: Path = DEFAULT_OUTPUT_DIR) -> Path:
-    return Path(output_dir) / f"FlatCAM-Evo-Setup-{version}.exe"
+    return Path(output_dir) / f"{installer_basename(version)}.exe"
 
 
 def build_command(iscc: Path, version: str, source_dir: Path, output_dir: Path,
@@ -68,6 +79,7 @@ def build_command(iscc: Path, version: str, source_dir: Path, output_dir: Path,
         f"/DNumericVersion={numeric_version(version)}",
         f"/DSourceDir={Path(source_dir)}",
         f"/DOutputDir={Path(output_dir)}",
+        f"/DOutputBaseFilename={installer_basename(version)}",
         str(script),
     ]
 
@@ -87,19 +99,25 @@ def main(argv: list[str] | None = None) -> int:
               "or add ISCC to PATH.", file=sys.stderr)
         return 1
 
+    try:
+        version = args.version or read_app_version()
+    except (RuntimeError, OSError, SyntaxError) as exc:
+        print(f"error: cannot determine the app version: {exc}", file=sys.stderr)
+        return 1
+
     import make_freeze
 
-    build_dir = Path(args.build_dir) if args.build_dir else make_freeze.default_build_dir()
+    # Inno resolves relative paths against the .iss directory, so pass absolute ones.
+    build_dir = (Path(args.build_dir) if args.build_dir else make_freeze.default_build_dir()).resolve()
     if not args.skip_freeze:
-        build_dir = make_freeze.build(build_dir)
+        build_dir = Path(make_freeze.build(build_dir)).resolve()
     try:
         make_freeze.validate_main_stage(build_dir)
     except RuntimeError as exc:
         print(f"error: {exc} (in {build_dir}); run without --skip-freeze", file=sys.stderr)
         return 1
 
-    version = args.version or read_app_version()
-    output_dir = Path(args.output_dir) if args.output_dir else DEFAULT_OUTPUT_DIR
+    output_dir = (Path(args.output_dir) if args.output_dir else DEFAULT_OUTPUT_DIR).resolve()
     result = subprocess.run(build_command(iscc, version, build_dir, output_dir), check=False)
     if result.returncode != 0:
         print(f"error: ISCC failed with exit code {result.returncode}", file=sys.stderr)
