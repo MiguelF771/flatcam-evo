@@ -226,10 +226,10 @@ class App(QtCore.QObject):
                 pass
 
     # ################################### Version and VERSION DATE ##################################################
-    # The updater only accepts dotted integer versions (services/updater/manifest.py parse_version)
-    version = "1.0.0"
-    version_date = "2026/10/23"
-    beta = False
+    version = "Unstable"
+    # version = 1.0
+    version_date = "2026/5/01"
+    beta = True
 
     # current date now
     date = str(dt.today()).rpartition('.')[0]
