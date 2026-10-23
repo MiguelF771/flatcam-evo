@@ -35,8 +35,11 @@ User request: an installable build that receives updates from their own public r
 
 ## Tasks
 - [x] T1 - Version 1.0.0, beta=False, data folder FlatCAM-Evo (appMain.py). Route: inline (1 file, mechanical). Commit ed8e0b32. Checks: pytest tests/updater tests/test_make_freeze.py tests/test_app_refactor_characterization.py -> 143 passed; launch -> `.appdata/FlatCAM-Evo` created, log "Checking for updates in background (this is version 1.0.0)". RDD: assessed high (process_boundary in appMain.py), review declined by user for this candidate.
-- [ ] T2 - GitHubReleasesTransport + transport selection in checker + default URL; tests. Route: delegated writer (2+ non-trivial files). Design: same interface as DigiPublicShareTransport; reads `api.github.com/repos/<owner>/<repo>/releases/latest`; asset name = `manifest-<channel>.json` for `manifest.json`, otherwise the filename unchanged; selected when `global_update_url` host is github.com; default `https://github.com/MiguelF771/flatcam-evo`. Prep commit b4b61535 (transport base class).
-- [ ] T3 - Windows-only `prepare_releases` and asset naming that matches the GitHub transport; tests. Route: same delegated writer as T2.
+- [x] T2 - GitHubReleasesTransport + transport selection in checker + default URL; tests. Route: delegated writer (2+ non-trivial files). Design: same interface as DigiPublicShareTransport; reads `api.github.com/repos/<owner>/<repo>/releases/latest`; asset name = `manifest-<channel>.json` for `manifest.json`, otherwise the filename unchanged; selected when `global_update_url` host is github.com; default `https://github.com/MiguelF771/flatcam-evo`. Prep commit b4b61535 (transport base class).
+- [x] T3 - Windows-only `prepare_releases` and asset naming that matches the GitHub transport; tests. Route: same delegated writer as T2.
+  - Commits 4767de0e (transport + selection + default URL), 0073eb63 (`prepare_releases` any subset of channels, `asset_layout="github"` -> flat `<out>/github/` with `flatcam-windows.zip` + `manifest-windows.json`). appMain `_prepare_releases_worker` still uses the digi layout; T4/T6 must call it with `asset_layout="github"` and a windows-only root.
+  - Checks: pytest tests/updater tests/test_make_freeze.py -> 138 passed (parent spot check reproduced); full suite -> 2995 passed, 6 skipped.
+  - RDD: assessed high (process_boundary appMain.py), granted by user, 4-lens review approved and acknowledged (lineage review-c6aa303e2cf8dffe). Advisory follow-ups (non-blocking): `list_files` docstring / cross-channel manifest filtering, unvalidated asset `digest` format, base-class label still says Digi, default URL returns 404 until the first release exists, dev `Unstable` version cannot be compared by the updater (expected: only release builds update).
 - [ ] T4 - Working cx_Freeze build: install cx_Freeze, run `make_freeze.py`, fix missing includes/data/icon until the frozen exe starts. Route: delegated (iterative build work).
 - [ ] T5 - Inno Setup script (per-user) and installer build; verify install, launch, uninstall. Route: delegated writer.
 - [ ] T6 - Release flow doc; branch `release/1.0.0` (version 1.0.0, beta False), tag `v1.0.0`, build installer from it, publish GitHub Release v1.0.0 (confirm with user right before push/publish); verify the installed app reports "up to date". Route: inline.
@@ -49,9 +52,9 @@ User request: an installable build that receives updates from their own public r
 ## Progress
 - 2026-10-23: feature doc created; branch created from Beta_1.0 (e653b92f).
 - 2026-10-23: T1 done. Interim note: until T2 lands, the startup check still queries the upstream DIGI share.
-- Review boundary: ed8e0b32 (T1 declined by user; next assessment uses it as base).
+- Review boundary: 0073eb63 (T2+T3 approved).
 
 - 2026-10-23: c25b83c0 restored `Unstable`/beta on the dev branch; release versioning moved to `release/1.0.0` + tag `v1.0.0` (user decision).
 
 ## Next step
-T2 + T3 (one delegated writer).
+T4 (delegated: cx_Freeze build until the frozen exe starts).
