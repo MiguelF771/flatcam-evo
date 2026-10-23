@@ -50,7 +50,13 @@ User request: an installable build that receives updates from their own public r
   - Build: `.venv/Scripts/python make_installer.py [--skip-freeze]` -> `build/installer/FlatCAM-Evo-Setup-<version>.exe` (~147 MB). lzma2/max compile is slow (2.5-30 min).
   - Checks: tests/test_make_installer.py + test_make_freeze.py -> 25 passed; silent per-user install (HKCU uninstall key, Start menu shortcut), installed app alive with title after 30 s, silent uninstall removes app, shortcut, key; foreign file in install dir survives; stale lib/share files removed on upgrade; %APPDATA%\FlatCAM-Evo kept. Git Bash gotcha: run Setup with `MSYS_NO_PATHCONV=1` or `/VERYSILENT` gets path-mangled.
   - RDD: 89d1a73c high, granted, approved + acknowledged (lineage review-ef004e84ca7b9d74); its whole-{app} uninstall finding fixed in bc0ef109 (review granted, running).
-- [ ] T6 - Release flow doc; branch `release/1.0.0` (version 1.0.0, beta False), tag `v1.0.0`, build installer from it, publish GitHub Release v1.0.0 (confirm with user right before push/publish); verify the installed app reports "up to date". Route: inline.
+- [x] T6 - Release flow doc; branch `release/1.0.0` (version 1.0.0, beta False), tag `v1.0.0`, build installer from it, publish GitHub Release v1.0.0 (confirm with user right before push/publish); verify the installed app reports "up to date". Route: inline.
+
+  - Release: branch `release/1.0.0` commit a3ae0993 (version 1.0.0, version_date 2026/10/23, beta False), annotated tag `v1.0.0`, GitHub Release https://github.com/MiguelF771/flatcam-evo/releases/tag/v1.0.0 (latest) with FlatCAM-Evo-Setup-1.0.0.exe, flatcam-windows.zip, manifest-windows.json. Feature branch pushed too. Publish confirmed by the user.
+  - Checks: installer 1.0.0 silent install -> app title "FlatCAM Evo 1.0.0", silent uninstall clean; UpdateChecker against the live release -> 1.0.0 up_to_date, 0.9.0 update_available.
+  - RDD: a3ae0993 high; user asked for a self-review instead (native review declined for this candidate); self-review: version parses, local build matches manifest build.
+  - Follow-ups on the feature branch: ba7bf2f8 (dedicated folder, named files; review approved + acknowledged, lineage review-fac33fd014359db0... and a later one), 10f0f627 (`UsePreviousAppDir=no`), docs/RELEASING.md (release flow).
+  - Note: bc0ef109's description above was superseded by ba7bf2f8 (DisableDirPage=yes, explicit FlatCAM.exe / python3*.dll) and 10f0f627.
 
 ## Acceptance criteria
 - Installed app starts from the Start menu without Python installed, title shows 1.0.0, settings in `%APPDATA%\FlatCAM-Evo`.
@@ -60,9 +66,9 @@ User request: an installable build that receives updates from their own public r
 ## Progress
 - 2026-10-23: feature doc created; branch created from Beta_1.0 (e653b92f).
 - 2026-10-23: T1 done. Interim note: until T2 lands, the startup check still queries the upstream DIGI share.
-- Review boundary: 0f0a846d (T4 approved).
+- Review boundary: ba7bf2f8 (approved); release commit a3ae0993 self-reviewed at user request.
 
 - 2026-10-23: c25b83c0 restored `Unstable`/beta on the dev branch; release versioning moved to `release/1.0.0` + tag `v1.0.0` (user decision).
 
 ## Next step
-T6: release/1.0.0 from this feature branch (user decision 2026-10-23), version 1.0.0/beta False, build installer + github assets, tag v1.0.0, confirm before push/publish.
+Feature complete. Open: merge feat/windows-installer-github-updates into main (user decision); deeper smoke test of the frozen app (plugins, file opens, G-code); advisory review follow-ups listed under T2/T4.
