@@ -34,7 +34,7 @@ User request: an installable build that receives updates from their own public r
 - Forecast: ~500-700 authored changed lines in total. Strategy: ask-on-risk (default). Push and PR stay the user's decision.
 
 ## Tasks
-- [ ] T1 - Version 1.0.0, beta=False, data folder FlatCAM-Evo (appMain.py). Route: inline (1 file, mechanical).
+- [x] T1 - Version 1.0.0, beta=False, data folder FlatCAM-Evo (appMain.py). Route: inline (1 file, mechanical). Commit ed8e0b32. Checks: pytest tests/updater tests/test_make_freeze.py tests/test_app_refactor_characterization.py -> 143 passed; launch -> `.appdata/FlatCAM-Evo` created, log "Checking for updates in background (this is version 1.0.0)". RDD: assessed high (process_boundary in appMain.py), review declined by user for this candidate.
 - [ ] T2 - GitHubReleasesTransport + transport selection in checker + default URL; tests. Route: delegated writer (2+ non-trivial files).
 - [ ] T3 - Windows-only `prepare_releases` and asset naming that matches the GitHub transport; tests. Route: delegated writer (can be merged with T2).
 - [ ] T4 - Working cx_Freeze build: install cx_Freeze, run `make_freeze.py`, fix missing includes/data/icon until the frozen exe starts. Route: delegated (iterative build work).
@@ -48,6 +48,8 @@ User request: an installable build that receives updates from their own public r
 
 ## Progress
 - 2026-10-23: feature doc created; branch created from Beta_1.0 (e653b92f).
+- 2026-10-23: T1 done. Interim note: until T2 lands, the startup check still queries the upstream DIGI share.
+- Review boundary: ed8e0b32 (T1 declined by user; next assessment uses it as base).
 
 ## Next step
-T1.
+T2 + T3 (one delegated writer).
