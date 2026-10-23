@@ -45,7 +45,11 @@ User request: an installable build that receives updates from their own public r
   - Checks: `.venv/Scripts/python make_freeze.py` -> exit 0, `build/exe.win-amd64-3.13` (~565 MB); frozen FlatCAM.exe alive after 30-35 s, title "FlatCAM Evo Unstable BETA - 64bit - [3D] New Project - Not saved", no traceback; FlatCAMUpdater.exe prints usage. pytest tests/updater tests/test_make_freeze.py -> 139 passed. Venv is Python 3.13.
   - Not exercised: plugins, Gerber/Excellon open, G-code, ortools/rtree/ezdxf/svglib in the frozen app (smoke test before release).
   - RDD: high (process_boundary tests/test_make_freeze.py), granted, approved and acknowledged (lineage review-df8c07b8635836b2). Advisory: tests do not cover `config` inclusion or vispy in packages; silent icon fallback; `lib/` layout only proven by manual launch. `config/` holds only `configuration.txt` (portable flag), nothing sensitive.
-- [ ] T5 - Inno Setup script (per-user) and installer build; verify install, launch, uninstall. Route: delegated writer. Compiler: `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe` (installed by the user 2026-10-23, per-user, not on PATH).
+- [x] T5 - Inno Setup script (per-user) and installer build; verify install, launch, uninstall. Route: delegated writer. Compiler: `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe` (installed by the user 2026-10-23, per-user, not on PATH).
+  - Commits 89d1a73c (installer/flatcam-evo.iss, make_installer.py, tests; AppId {F817F45A-2C0C-489B-B9E0-3109ED524040}, never change), bc0ef109 (uninstall deletes only lib/share/updater/*.exe/*.dll/license then dirifempty; [InstallDelete] lib+share on upgrade; UsePreviousAppDir/DirExistsWarning/DisableDirPage=auto; version via ast from class App before freezing; absolute paths; single OutputBaseFilename source).
+  - Build: `.venv/Scripts/python make_installer.py [--skip-freeze]` -> `build/installer/FlatCAM-Evo-Setup-<version>.exe` (~147 MB). lzma2/max compile is slow (2.5-30 min).
+  - Checks: tests/test_make_installer.py + test_make_freeze.py -> 25 passed; silent per-user install (HKCU uninstall key, Start menu shortcut), installed app alive with title after 30 s, silent uninstall removes app, shortcut, key; foreign file in install dir survives; stale lib/share files removed on upgrade; %APPDATA%\FlatCAM-Evo kept. Git Bash gotcha: run Setup with `MSYS_NO_PATHCONV=1` or `/VERYSILENT` gets path-mangled.
+  - RDD: 89d1a73c high, granted, approved + acknowledged (lineage review-ef004e84ca7b9d74); its whole-{app} uninstall finding fixed in bc0ef109 (review granted, running).
 - [ ] T6 - Release flow doc; branch `release/1.0.0` (version 1.0.0, beta False), tag `v1.0.0`, build installer from it, publish GitHub Release v1.0.0 (confirm with user right before push/publish); verify the installed app reports "up to date". Route: inline.
 
 ## Acceptance criteria
@@ -61,4 +65,4 @@ User request: an installable build that receives updates from their own public r
 - 2026-10-23: c25b83c0 restored `Unstable`/beta on the dev branch; release versioning moved to `release/1.0.0` + tag `v1.0.0` (user decision).
 
 ## Next step
-T5 (delegated, running): Inno Setup installer + make_installer.py.
+T6: release/1.0.0 from this feature branch (user decision 2026-10-23), version 1.0.0/beta False, build installer + github assets, tag v1.0.0, confirm before push/publish.
