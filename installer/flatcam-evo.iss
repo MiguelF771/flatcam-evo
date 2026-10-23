@@ -1,0 +1,71 @@
+; Per-user Inno Setup script for FlatCAM Evo.
+; Build with: python make_installer.py   (defines are passed via ISCC /D switches)
+
+#ifndef AppVersion
+  #define AppVersion "Unstable"
+#endif
+#ifndef NumericVersion
+  #define NumericVersion "0.0.0"
+#endif
+#ifndef SourceDir
+  #define SourceDir "..\build\exe.win-amd64-3.13"
+#endif
+#ifndef OutputDir
+  #define OutputDir "..\build\installer"
+#endif
+
+#define AppName "FlatCAM Evo"
+#define AppExeName "FlatCAM.exe"
+#define AppURL "https://github.com/MiguelF771/flatcam-evo"
+
+[Setup]
+; AppId identifies the installation for upgrades and uninstall. NEVER change it.
+AppId={{F817F45A-2C0C-489B-B9E0-3109ED524040}
+AppName={#AppName}
+AppVersion={#AppVersion}
+AppVerName={#AppName} {#AppVersion}
+AppPublisher=FlatCAM Evo contributors
+AppPublisherURL={#AppURL}
+AppSupportURL={#AppURL}/issues
+AppUpdatesURL={#AppURL}/releases
+VersionInfoVersion={#NumericVersion}
+; The built-in updater rewrites files inside the install directory, so it must
+; stay user-writable: per-user install, no elevation.
+PrivilegesRequired=lowest
+DefaultDirName={localappdata}\Programs\FlatCAM Evo
+DisableProgramGroupPage=yes
+DefaultGroupName={#AppName}
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+SetupIconFile=..\assets\resources\flatcam_icon256.ico
+UninstallDisplayIcon={app}\{#AppExeName}
+UninstallDisplayName={#AppName}
+LicenseFile=..\LICENSE
+OutputDir={#OutputDir}
+OutputBaseFilename=FlatCAM-Evo-Setup-{#AppVersion}
+Compression=lzma2/max
+SolidCompression=yes
+WizardStyle=modern
+CloseApplications=yes
+RestartApplications=no
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+[Files]
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Icons]
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+
+[Run]
+Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+; Files the built-in updater may leave inside the install directory. The user
+; data folder (%APPDATA%\FlatCAM-Evo) lives outside {app} and is never touched.
+Type: filesandordirs; Name: "{app}"
