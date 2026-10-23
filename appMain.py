@@ -226,10 +226,10 @@ class App(QtCore.QObject):
                 pass
 
     # ################################### Version and VERSION DATE ##################################################
-    version = "Unstable"
-    # version = 1.0
-    version_date = "2026/5/01"
-    beta = True
+    # The updater only accepts dotted integer versions (services/updater/manifest.py parse_version)
+    version = "1.0.0"
+    version_date = "2026/10/23"
+    beta = False
 
     # current date now
     date = str(dt.today()).rpartition('.')[0]
@@ -771,7 +771,8 @@ class App(QtCore.QObject):
                     'AppData',
                     'Roaming'
                 )
-                self.data_path = os.path.join(base_appdata, 'FlatCAM')
+                # own folder so this fork does not share preferences with other FlatCAM installs
+                self.data_path = os.path.join(base_appdata, 'FlatCAM-Evo')
             else:
                 self.data_path = os.path.join(
                     os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
@@ -782,7 +783,7 @@ class App(QtCore.QObject):
         else:  # Linux/Unix/MacOS
             self.data_path = os.path.join(
                 os.path.expanduser('~'),
-                '.FlatCAM'
+                '.FlatCAM-Evo'
             )
             self.os = 'unix'
 
