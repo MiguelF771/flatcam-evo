@@ -40,8 +40,12 @@ User request: an installable build that receives updates from their own public r
   - Commits 4767de0e (transport + selection + default URL), 0073eb63 (`prepare_releases` any subset of channels, `asset_layout="github"` -> flat `<out>/github/` with `flatcam-windows.zip` + `manifest-windows.json`). appMain `_prepare_releases_worker` still uses the digi layout; T4/T6 must call it with `asset_layout="github"` and a windows-only root.
   - Checks: pytest tests/updater tests/test_make_freeze.py -> 138 passed (parent spot check reproduced); full suite -> 2995 passed, 6 skipped.
   - RDD: assessed high (process_boundary appMain.py), granted by user, 4-lens review approved and acknowledged (lineage review-c6aa303e2cf8dffe). Advisory follow-ups (non-blocking): `list_files` docstring / cross-channel manifest filtering, unvalidated asset `digest` format, base-class label still says Digi, default URL returns 404 until the first release exists, dev `Unstable` version cannot be compared by the updater (expected: only release builds update).
-- [ ] T4 - Working cx_Freeze build: install cx_Freeze, run `make_freeze.py`, fix missing includes/data/icon until the frozen exe starts. Route: delegated (iterative build work).
-- [ ] T5 - Inno Setup script (per-user) and installer build; verify install, launch, uninstall. Route: delegated writer.
+- [x] T4 - Working cx_Freeze build: install cx_Freeze, run `make_freeze.py`, fix missing includes/data/icon until the frozen exe starts. Route: delegated (iterative build work).
+  - Commits 43d09385 (`requirements-build.txt`: cx_Freeze==8.7.3), 0f0a846d (data dirs incl. `config` shipped under `lib/` because frozen modules resolve paths from `lib/library.zip`; `packages=("OpenGL","vispy")`; exe icons).
+  - Checks: `.venv/Scripts/python make_freeze.py` -> exit 0, `build/exe.win-amd64-3.13` (~565 MB); frozen FlatCAM.exe alive after 30-35 s, title "FlatCAM Evo Unstable BETA - 64bit - [3D] New Project - Not saved", no traceback; FlatCAMUpdater.exe prints usage. pytest tests/updater tests/test_make_freeze.py -> 139 passed. Venv is Python 3.13.
+  - Not exercised: plugins, Gerber/Excellon open, G-code, ortools/rtree/ezdxf/svglib in the frozen app (smoke test before release).
+  - RDD: high (process_boundary tests/test_make_freeze.py), granted, approved and acknowledged (lineage review-df8c07b8635836b2). Advisory: tests do not cover `config` inclusion or vispy in packages; silent icon fallback; `lib/` layout only proven by manual launch. `config/` holds only `configuration.txt` (portable flag), nothing sensitive.
+- [ ] T5 - Inno Setup script (per-user) and installer build; verify install, launch, uninstall. Route: delegated writer. Compiler: `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe` (installed by the user 2026-10-23, per-user, not on PATH).
 - [ ] T6 - Release flow doc; branch `release/1.0.0` (version 1.0.0, beta False), tag `v1.0.0`, build installer from it, publish GitHub Release v1.0.0 (confirm with user right before push/publish); verify the installed app reports "up to date". Route: inline.
 
 ## Acceptance criteria
@@ -52,9 +56,9 @@ User request: an installable build that receives updates from their own public r
 ## Progress
 - 2026-10-23: feature doc created; branch created from Beta_1.0 (e653b92f).
 - 2026-10-23: T1 done. Interim note: until T2 lands, the startup check still queries the upstream DIGI share.
-- Review boundary: 0073eb63 (T2+T3 approved).
+- Review boundary: 0f0a846d (T4 approved).
 
 - 2026-10-23: c25b83c0 restored `Unstable`/beta on the dev branch; release versioning moved to `release/1.0.0` + tag `v1.0.0` (user decision).
 
 ## Next step
-T4 (delegated: cx_Freeze build until the frozen exe starts).
+T5 (delegated, running): Inno Setup installer + make_installer.py.
