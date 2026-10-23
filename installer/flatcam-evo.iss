@@ -38,9 +38,9 @@ VersionInfoVersion={#NumericVersion}
 PrivilegesRequired=lowest
 DefaultDirName={localappdata}\Programs\FlatCAM Evo
 DisableProgramGroupPage=yes
-UsePreviousAppDir=yes
-DirExistsWarning=auto
-DisableDirPage=auto
+; Always install into the dedicated folder above: the install and uninstall
+; cleanup below assumes {app} holds nothing but this app.
+DisableDirPage=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile=..\assets\resources\flatcam_icon256.ico
@@ -79,13 +79,12 @@ Type: filesandordirs; Name: "{app}\share"
 
 [UninstallDelete]
 ; Remove only what this app owns (the frozen build layout plus files the
-; built-in updater may add), never the whole directory: the user may have
-; chosen a folder that holds other content. The user data folder
+; built-in updater may add), never the whole directory. The user data folder
 ; (%APPDATA%\FlatCAM-Evo) lives outside {app} and is never touched.
 Type: filesandordirs; Name: "{app}\lib"
 Type: filesandordirs; Name: "{app}\share"
 Type: filesandordirs; Name: "{app}\updater"
-Type: files; Name: "{app}\*.exe"
-Type: files; Name: "{app}\*.dll"
+Type: files; Name: "{app}\FlatCAM.exe"
+Type: files; Name: "{app}\python3*.dll"
 Type: files; Name: "{app}\frozen_application_license.txt"
 Type: dirifempty; Name: "{app}"

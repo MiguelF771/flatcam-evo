@@ -101,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         version = args.version or read_app_version()
-    except (RuntimeError, OSError, SyntaxError) as exc:
+    except (RuntimeError, OSError, SyntaxError, ValueError) as exc:
         print(f"error: cannot determine the app version: {exc}", file=sys.stderr)
         return 1
 
