@@ -19,7 +19,12 @@ UPDATER_EXE_NAME = "FlatCAMUpdater.exe"
 UPDATER_DIR_NAME = "updater"
 UPDATER_RECOVERY_MODULE = "services.updater.recovery"
 _UPDATER_RECOVERY_PATH = UPDATER_RECOVERY_MODULE.replace(".", "/")
-_MAIN_INCLUDE_DIRS = ("assets", "resources", "locale", "locales", "preprocessors")
+_MAIN_INCLUDE_DIRS = ("assets", "resources", "locale", "locales", "preprocessors", "config")
+# The application resolves its resources relative to the frozen "lib" folder (cx_Freeze layout).
+_MAIN_DATA_DIR = "lib"
+_ICON_RELATIVE_PATH = Path("assets") / "resources" / "flatcam_icon256.ico"
+# Packages imported dynamically (plugins, platform backends) that static analysis misses.
+_MAIN_PACKAGES = ("OpenGL", "vispy")
 
 # These remain unset until a build is requested. Tests can replace either
 # value without installing cx_Freeze.
@@ -52,13 +57,18 @@ def get_main_include_files(root: Path = ROOT) -> list[tuple[str, str]]:
     for directory_name in _MAIN_INCLUDE_DIRS:
         source = root / directory_name
         if source.is_dir():
-            include_files.append((str(source), directory_name))
+            include_files.append((str(source), f"{_MAIN_DATA_DIR}/{directory_name}"))
     return include_files
+
+
+def _icon_kwargs(root: Path) -> dict:
+    icon = Path(root) / _ICON_RELATIVE_PATH
+    return {"icon": str(icon)} if icon.is_file() else {}
 
 
 def make_main_executable(root: Path = ROOT):
     """Create the cx_Freeze definition for the GUI application."""
-    kwargs = {"target_name": MAIN_EXE_NAME}
+    kwargs = {"target_name": MAIN_EXE_NAME, **_icon_kwargs(root)}
     if sys.platform == "win32":
         kwargs["base"] = "gui"
     return _load_executable()(str(Path(root) / MAIN_SCRIPT.name), **kwargs)
@@ -66,7 +76,7 @@ def make_main_executable(root: Path = ROOT):
 
 def make_updater_executable(root: Path = ROOT):
     """Create the cx_Freeze definition for the standalone GUI updater."""
-    kwargs = {"target_name": UPDATER_EXE_NAME}
+    kwargs = {"target_name": UPDATER_EXE_NAME, **_icon_kwargs(root)}
     if sys.platform == "win32":
         kwargs["base"] = "gui"
     return _load_executable()(str(Path(root) / UPDATER_SCRIPT.name), **kwargs)
@@ -78,6 +88,7 @@ def create_main_freezer(target_dir: Path, root: Path = ROOT):
         executables=[make_main_executable(root)],
         target_dir=Path(target_dir),
         include_files=get_main_include_files(root),
+        packages=list(_MAIN_PACKAGES),
     )
 
 
