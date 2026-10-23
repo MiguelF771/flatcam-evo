@@ -18,7 +18,7 @@ from PyQt6 import QtWidgets
 
 from services.updater.manifest import ArchiveInfo, FileEntry, Manifest
 
-DEFAULT_UPDATE_URL = "https://s.go.ro/zihniipc"
+DEFAULT_UPDATE_URL = "https://github.com/MiguelF771/flatcam-evo"
 CONFIGURED_UPDATE_URL = "https://updates.example.invalid/flatcam"
 
 
@@ -226,7 +226,7 @@ def test_download_worker_uses_factory_url_when_option_and_default_are_missing(mo
             destination.write_bytes(b"factory archive")
             return destination
 
-    monkeypatch.setattr(transport_module, "DigiPublicShareTransport", ConfiguredTransport)
+    monkeypatch.setattr(transport_module, "GitHubReleasesTransport", ConfiguredTransport)
     app = _fake_app(tmp_path)
     app.options = {}
     app.defaults = {}

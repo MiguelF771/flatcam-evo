@@ -89,7 +89,7 @@ class AppDefaults:
         "global_shell_at_startup": False,  # Show the shell at startup.
         "global_project_at_startup": False,
         "global_version_check": True,
-        "global_update_url": "https://s.go.ro/zihniipc",
+        "global_update_url": "https://github.com/MiguelF771/flatcam-evo",
         "global_send_stats": True,
         "global_worker_number": min(4, max(2, int((os.cpu_count()) / 2))) if os.cpu_count() else 2,
         "global_process_number": int((os.cpu_count()) / 4) if os.cpu_count() > 4 else 1,

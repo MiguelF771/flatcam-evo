@@ -6,6 +6,7 @@ import logging
 import sys
 import traceback
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .manifest import (
     ManifestError,
@@ -102,12 +103,15 @@ class UpdateChecker:
         app = app or self.app
         if self.transport_factory is not None:
             return self.transport_factory(app)
-        from .transport import DigiPublicShareTransport
+        from . import transport as transport_module
 
         share_url = self.share_url if share_url is None else share_url
         if not share_url:
             raise ValueError("Update share URL is not configured.")
-        return DigiPublicShareTransport(short_url=share_url)
+        host = (urlsplit(share_url).hostname or "").lower()
+        if host in transport_module.GITHUB_HOSTS:
+            return transport_module.GitHubReleasesTransport(share_url)
+        return transport_module.DigiPublicShareTransport(short_url=share_url)
 
     def _transport(self, app=None, *, share_url=None):
         """Compatibility alias for older checker callers."""

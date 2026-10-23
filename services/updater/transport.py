@@ -1,4 +1,4 @@
-"""Anonymous Digi public-share transport."""
+"""Anonymous Digi public-share and GitHub Releases transports."""
 
 from __future__ import annotations
 
@@ -18,6 +18,9 @@ from .manifest import ManifestError, select_channel, validate_relative_path
 
 PUBLIC_HOST = "storage.rcs-rds.ro"
 _LINK_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,128}$")
+GITHUB_HOSTS = ("github.com", "www.github.com")
+GITHUB_API = "https://api.github.com"
+_GITHUB_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 
 
 class TransportError(RuntimeError):
@@ -348,6 +351,205 @@ class DigiPublicShareTransport(_HttpTransportBase):
         response = None
         try:
             response = self._open(self._content_url(channel, filename), referer=metadata.canonical_url)
+            self._stream_response(
+                response,
+                temporary,
+                expected_size,
+                expected_sha256,
+                progress_cb,
+                cancel_cb,
+            )
+            os.replace(temporary, destination)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
+        finally:
+            if response is not None:
+                self._close(response)
+        return destination
+
+
+def github_asset_name(channel: str, filename: str) -> str:
+    """Return the flat GitHub release asset name for one channel file.
+
+    Release assets share a single namespace, so the per-channel manifest is
+    published as ``manifest-<channel>.json``. Archives are already channel
+    specific (``flatcam-windows.zip``) and keep their name.
+    """
+    if filename == "manifest.json":
+        return f"manifest-{channel}.json"
+    return filename
+
+
+def parse_github_repo_url(url: str) -> tuple[str, str]:
+    """Return ``(owner, repo)`` from a github.com repository URL."""
+    parsed = urllib.parse.urlsplit((url or "").strip())
+    if parsed.scheme != "https" or (parsed.hostname or "").lower() not in GITHUB_HOSTS:
+        raise ValueError("GitHub transport requires an https://github.com/<owner>/<repo> URL.")
+    pieces = [piece for piece in parsed.path.split("/") if piece]
+    if len(pieces) < 2:
+        raise ValueError("GitHub URL must name an owner and a repository.")
+    if len(pieces) > 2 and pieces[2] != "releases":
+        raise ValueError("GitHub URL must point at a repository.")
+    owner, repo = pieces[0], pieces[1]
+    if repo.lower().endswith(".git"):
+        repo = repo[:-4]
+    if not _GITHUB_NAME_RE.fullmatch(owner) or not _GITHUB_NAME_RE.fullmatch(repo):
+        raise ValueError("GitHub URL has an invalid owner or repository name.")
+    return owner, repo
+
+
+class GitHubReleasesTransport(_HttpTransportBase):
+    """Read the latest public GitHub release without credentials."""
+
+    label = "GitHub"
+
+    def __init__(
+        self,
+        repo_url: str,
+        *,
+        opener=None,
+        timeout: float = 30.0,
+        chunk_size: int = 1024 * 1024,
+        api_base: str = GITHUB_API,
+    ) -> None:
+        self.repo_url = repo_url
+        self.owner, self.repo = parse_github_repo_url(repo_url)
+        self._opener = opener or urllib.request.urlopen
+        self.timeout = timeout
+        self.chunk_size = chunk_size
+        self.api_base = api_base.rstrip("/")
+        self._release: dict | None = None
+
+    def _open(self, url: str, accept: str):
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise TransportError("GitHub transport requires HTTPS URLs.")
+        headers = {"Accept": accept, "User-Agent": "FlatCAM-Evo-Updater"}
+        request = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            response = self._opener(request, timeout=self.timeout)
+        except urllib.error.HTTPError as exc:
+            raise TransportError(f"GitHub request returned HTTP {exc.code}.") from exc
+        except (urllib.error.URLError, OSError) as exc:
+            raise TransportError(f"GitHub request failed: {type(exc).__name__}.") from exc
+        if self._status(response) >= 400:
+            self._close(response)
+            raise TransportError(f"GitHub request returned HTTP {self._status(response)}.")
+        return response
+
+    def latest_release(self) -> dict:
+        """Return the cached latest published release JSON."""
+        if self._release is not None:
+            return self._release
+        url = f"{self.api_base}/repos/{self.owner}/{self.repo}/releases/latest"
+        response = self._open(url, "application/vnd.github+json")
+        try:
+            try:
+                data = json.loads(response.read())
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise TransportError("GitHub release response was not valid JSON.") from exc
+        finally:
+            self._close(response)
+        if not isinstance(data, dict) or not isinstance(data.get("assets"), list):
+            raise TransportError("GitHub release response has no asset list.")
+        self._release = data
+        return data
+
+    def _find_asset(self, channel: str, filename: str) -> dict | None:
+        name = github_asset_name(channel, validate_relative_path(filename))
+        for asset in self.latest_release()["assets"]:
+            if isinstance(asset, dict) and asset.get("name") == name:
+                return asset
+        return None
+
+    @staticmethod
+    def _remote_file(name: str, asset: dict) -> RemoteFile:
+        size = asset.get("size")
+        if size is not None:
+            try:
+                size = int(size)
+            except (TypeError, ValueError) as exc:
+                raise TransportError("GitHub asset has an invalid size.") from exc
+            if size < 0:
+                raise TransportError("GitHub asset has an invalid size.")
+        digest = asset.get("digest")
+        sha256 = digest[len("sha256:"):] if isinstance(digest, str) and digest.startswith("sha256:") else None
+        return RemoteFile(name=name, size=size, sha256=sha256)
+
+    def _asset_url(self, channel: str, filename: str) -> str:
+        asset = self._find_asset(channel, filename)
+        if asset is None:
+            raise TransportError(f"GitHub release has no asset for {filename!r}.")
+        url = asset.get("browser_download_url")
+        if not isinstance(url, str) or not url:
+            raise TransportError("GitHub asset has no download URL.")
+        return url
+
+    def list_files(self, channel: str) -> tuple[RemoteFile, ...]:
+        """List the latest release assets that belong to one channel."""
+        channel = select_channel(channel)
+        manifest_name = github_asset_name(channel, "manifest.json")
+        result = []
+        for asset in self.latest_release()["assets"]:
+            name = asset.get("name") if isinstance(asset, dict) else None
+            if not isinstance(name, str):
+                raise TransportError("GitHub release contained an invalid asset entry.")
+            if name == manifest_name:
+                result.append(self._remote_file("manifest.json", asset))
+            elif not (name.startswith("manifest-") and name.endswith(".json")):
+                result.append(self._remote_file(name, asset))
+        return tuple(result)
+
+    def check_file(self, channel: str, filename: str) -> RemoteFile | None:
+        """Return matching asset metadata, or None when the asset is absent."""
+        channel = select_channel(channel)
+        asset = self._find_asset(channel, filename)
+        if asset is None:
+            return None
+        return self._remote_file(filename, asset)
+
+    def download_bytes(
+        self,
+        channel: str,
+        filename: str,
+        *,
+        expected_size: int | None = None,
+        expected_sha256: str | None = None,
+        progress_cb=None,
+        cancel_cb=None,
+    ) -> bytes:
+        """Download one release asset into memory."""
+        channel = select_channel(channel)
+        response = self._open(self._asset_url(channel, filename), "application/octet-stream")
+        try:
+            data = self._read_response(response, expected_size, progress_cb, cancel_cb)
+        finally:
+            self._close(response)
+        self._verify(data, expected_size, expected_sha256)
+        return data
+
+    def download_archive(
+        self,
+        channel: str,
+        filename: str,
+        destination: Path,
+        *,
+        expected_size: int | None = None,
+        expected_sha256: str | None = None,
+        progress_cb=None,
+        cancel_cb=None,
+    ) -> Path:
+        """Stream a release asset to a temporary file and atomically replace destination."""
+        channel = select_channel(channel)
+        url = self._asset_url(channel, filename)
+        destination = Path(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = Path(f"{destination}.part")
+        temporary.unlink(missing_ok=True)
+        response = None
+        try:
+            response = self._open(url, "application/octet-stream")
             self._stream_response(
                 response,
                 temporary,
