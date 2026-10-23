@@ -10,6 +10,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from services.updater.checker import UpdateChecker
+from services.updater.manifest import ManifestError, parse_manifest
+from services.updater.release import prepare_releases
 from services.updater.transport import (
     DigiPublicShareTransport,
     DownloadCancelled,
@@ -243,6 +245,85 @@ class TestCheckerTransportSelection(unittest.TestCase):
         sentinel = object()
         checker = UpdateChecker(share_url=REPO_URL, transport_factory=lambda app: sentinel)
         self.assertIs(sentinel, checker.create_transport())
+
+
+class TestReleasePreparation(unittest.TestCase):
+    KWARGS = {"version": "1.0.0", "build_string": "build 1", "version_date": "2026-10-01"}
+
+    def _roots(self, directory):
+        windows = Path(directory) / "windows-root"
+        linux = Path(directory) / "linux-root"
+        for root in (windows, linux):
+            root.mkdir()
+            (root / "flatcam.py").write_text("print('hi')",encoding="utf-8")
+        return windows, linux
+
+    def test_windows_only_preparation_works(self):
+        with TemporaryDirectory() as directory:
+            windows, _ = self._roots(directory)
+            output = Path(directory) / "out"
+
+            result = prepare_releases({"windows": windows}, output, **self.KWARGS)
+
+            self.assertEqual({"windows"}, set(result.artifacts))
+            self.assertEqual(
+                [output / "windows" / "flatcam-windows.zip", output / "windows" / "manifest.json"],
+                list(result.upload_paths),
+            )
+            self.assertFalse((output / "linux").exists())
+
+    def test_empty_or_unknown_roots_are_rejected(self):
+        with TemporaryDirectory() as directory:
+            windows, _ = self._roots(directory)
+            for roots in ({}, {"macos": windows}, {"windows": windows, "macos": windows}):
+                with self.subTest(roots=sorted(roots)):
+                    with self.assertRaises(ManifestError):
+                        prepare_releases(roots, Path(directory) / "out", **self.KWARGS)
+
+    def test_github_layout_uses_flat_asset_names_the_transport_expects(self):
+        with TemporaryDirectory() as directory:
+            windows, _ = self._roots(directory)
+            output = Path(directory) / "out"
+
+            result = prepare_releases(
+                {"windows": windows}, output, asset_layout="github", **self.KWARGS
+            )
+
+            names = [path.name for path in result.upload_paths]
+            self.assertEqual(
+                [
+                    "flatcam-windows.zip",
+                    github_asset_name("windows", "manifest.json"),
+                ],
+                names,
+            )
+            self.assertEqual({output / "github"}, {path.parent for path in result.upload_paths})
+            manifest = parse_manifest(result.upload_paths[1].read_bytes())
+            self.assertEqual(names[0], manifest.archive.filename)
+
+    def test_github_layout_with_both_channels_has_unique_names(self):
+        with TemporaryDirectory() as directory:
+            windows, linux = self._roots(directory)
+
+            result = prepare_releases(
+                {"windows": windows, "linux": linux},
+                Path(directory) / "out",
+                asset_layout="github",
+                **self.KWARGS,
+            )
+
+            names = [path.name for path in result.upload_paths]
+            self.assertEqual(4, len(set(names)))
+            self.assertIn("manifest-linux.json", names)
+            self.assertIn("flatcam-source.zip", names)
+
+    def test_unknown_layout_is_rejected(self):
+        with TemporaryDirectory() as directory:
+            windows, _ = self._roots(directory)
+            with self.assertRaises(ManifestError):
+                prepare_releases(
+                    {"windows": windows}, Path(directory) / "out", asset_layout="s3", **self.KWARGS
+                )
 
 
 if __name__ == "__main__":
