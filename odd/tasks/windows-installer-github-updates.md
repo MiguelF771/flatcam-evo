@@ -24,6 +24,7 @@ User request: an installable build that receives updates from their own public r
 - Keep the Digi transport working (upstream compatibility).
 - Publishing a GitHub release (tag + assets) is outward-facing: confirm with the user before doing it.
 - Keep `Beta_1.0` clean for `git pull upstream Beta_1.0`; work on `feat/windows-installer-github-updates`.
+- Fork line: `main` (created 2026-10-29 from `Beta_1.0`) is the fork's default branch; features merge into `main`, upstream changes flow `upstream/Beta_1.0` -> `Beta_1.0` -> `main` (user decision).
 
 ## TDD / checks
 - TDD: off (no project or session configuration; not chosen by the user). Ordinary functional checks.
@@ -68,7 +69,8 @@ User request: an installable build that receives updates from their own public r
 - 2026-10-23: T1 done. Interim note: until T2 lands, the startup check still queries the upstream DIGI share.
 - Review boundary: ba7bf2f8 (approved); release commit a3ae0993 self-reviewed at user request.
 
+- 2026-10-29: `main` created from `Beta_1.0` and set as GitHub default; feature merged into `main` via PR.
 - 2026-10-23: c25b83c0 restored `Unstable`/beta on the dev branch; release versioning moved to `release/1.0.0` + tag `v1.0.0` (user decision).
 
 ## Next step
-Feature complete. Open: merge feat/windows-installer-github-updates into main (user decision); deeper smoke test of the frozen app (plugins, file opens, G-code); advisory review follow-ups listed under T2/T4.
+Feature complete; merged into `main` via PR (2026-10-29). Open: deeper smoke test of the frozen app (plugins, file opens, G-code); advisory review follow-ups listed under T2/T4.
