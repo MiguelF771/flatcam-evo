@@ -74,13 +74,14 @@ def load_languages():
 
 
 def languages_dir():
-    # in a cx_Freeze build this module lives inside lib/library.zip, so the locale folder is one level up
+    # frozen builds keep the locale folder outside the module archive
     if getattr(sys, 'frozen', False):
         return languages_dir_cx_freeze()
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'locale')
 
 
 def languages_dir_cx_freeze():
+    # in a cx_Freeze build this module lives inside lib/library.zip, so the locale folder is one level up
     return os.path.join(Path(__file__).parents[1], 'locale')
 
 
