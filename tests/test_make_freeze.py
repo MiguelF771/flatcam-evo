@@ -71,6 +71,21 @@ class TestMakeFreeze(unittest.TestCase):
         self.assertEqual("FlatCAMUpdater.exe", updater.kwargs["target_name"])
         self.assertEqual("gui", updater.kwargs["base"])
 
+    def test_executables_use_application_icon_when_present(self):
+        root = Path(self._tempdir.name) / "source"
+        icon = root / "assets" / "resources" / "flatcam_icon256.ico"
+        icon.parent.mkdir(parents=True)
+        icon.write_bytes(b"ico")
+
+        with patch.object(make_freeze, "Executable", FakeExecutable):
+            main = make_freeze.make_main_executable(root)
+            updater = make_freeze.make_updater_executable(root)
+            bare = make_freeze.make_main_executable(Path(self._tempdir.name) / "empty")
+
+        self.assertEqual(str(icon), main.kwargs["icon"])
+        self.assertEqual(str(icon), updater.kwargs["icon"])
+        self.assertNotIn("icon", bare.kwargs)
+
     def test_main_include_files_only_contains_existing_payload_directories(self):
         root = Path(self._tempdir.name) / "source"
         for relative in ("assets", "locale", "preprocessors"):
@@ -80,8 +95,8 @@ class TestMakeFreeze(unittest.TestCase):
         include_files = make_freeze.get_main_include_files(root)
 
         destinations = {Path(destination).as_posix() for _, destination in include_files}
-        self.assertEqual({"assets", "locale", "preprocessors"}, destinations)
-        self.assertNotIn("docs", destinations)
+        self.assertEqual({"lib/assets", "lib/locale", "lib/preprocessors"}, destinations)
+        self.assertNotIn("lib/docs", destinations)
 
     def test_freezers_keep_main_and_updater_stages_independent(self):
         calls = []
@@ -100,6 +115,7 @@ class TestMakeFreeze(unittest.TestCase):
         self.assertEqual(main_stage, calls[0].target_dir)
         self.assertEqual(updater_stage, calls[1].target_dir)
         self.assertEqual(["services.updater.recovery"], calls[1].kwargs["includes"])
+        self.assertIn("OpenGL", calls[0].kwargs["packages"])
         self.assertTrue((main_stage / "FlatCAM.exe").is_file())
         self.assertTrue((updater_stage / "FlatCAMUpdater.exe").is_file())
 
