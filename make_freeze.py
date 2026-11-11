@@ -24,7 +24,9 @@ _MAIN_INCLUDE_DIRS = ("assets", "resources", "locale", "locales", "preprocessors
 _MAIN_DATA_DIR = "lib"
 _ICON_RELATIVE_PATH = Path("assets") / "resources" / "flatcam_icon256.ico"
 # Packages imported dynamically (plugins, platform backends) that static analysis misses.
-_MAIN_PACKAGES = ("OpenGL", "vispy")
+# "ortools.constraint_solver": its native extension imports the routing *_pb2 modules from C++,
+# so cx_Freeze never sees them (e.g. routing_parameters_pb2 for the OR-Tools drill optimizer).
+_MAIN_PACKAGES = ("OpenGL", "vispy", "ortools.constraint_solver")
 
 # These remain unset until a build is requested. Tests can replace either
 # value without installing cx_Freeze.

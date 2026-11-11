@@ -116,6 +116,7 @@ class TestMakeFreeze(unittest.TestCase):
         self.assertEqual(updater_stage, calls[1].target_dir)
         self.assertEqual(["services.updater.recovery"], calls[1].kwargs["includes"])
         self.assertIn("OpenGL", calls[0].kwargs["packages"])
+        self.assertIn("ortools.constraint_solver", calls[0].kwargs["packages"])
         self.assertTrue((main_stage / "FlatCAM.exe").is_file())
         self.assertTrue((updater_stage / "FlatCAMUpdater.exe").is_file())
 
