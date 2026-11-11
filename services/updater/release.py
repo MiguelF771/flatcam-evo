@@ -19,6 +19,7 @@ from .manifest import (
     sha256_file,
     validate_relative_path,
 )
+from .transport import github_asset_name
 
 
 _EXCLUDED_NAMES = frozenset(
@@ -59,6 +60,8 @@ _EXCLUDED_FILES = frozenset(
 )
 _EXCLUDED_SUFFIXES = (".flatconfig", ".flatprj")
 _PROTECTED_ROOT_NAMES = frozenset({"config", "updater"})
+_CHANNELS = ("windows", "linux")
+_ASSET_LAYOUTS = ("digi", "github")
 
 
 @dataclass(frozen=True)
@@ -192,12 +195,22 @@ def prepare_releases(
     deletions=(),
     policy=DEFAULT_EXCLUSION_POLICY,
     progress_cb=None,
+    asset_layout: str = "digi",
 ) -> ReleasePreparation:
-    """Build the Windows and Linux full ZIP/manifest pairs for manual upload."""
-    if set(roots) != {"windows", "linux"}:
-        raise ManifestError("Release roots must contain exactly 'windows' and 'linux'.")
+    """Build full ZIP/manifest pairs for the given channels for manual upload.
+
+    ``roots`` may hold any non-empty subset of the Windows and Linux channels.
+    The ``digi`` layout writes ``<channel>/manifest.json`` per channel folder;
+    the ``github`` layout writes every file flat into ``<output>/github`` with
+    the asset names GitHubReleasesTransport expects (``manifest-<channel>.json``).
+    """
+    channels = tuple(channel for channel in _CHANNELS if channel in roots)
+    if not channels or set(roots) - set(_CHANNELS):
+        raise ManifestError("Release roots must be a non-empty subset of 'windows' and 'linux'.")
+    if asset_layout not in _ASSET_LAYOUTS:
+        raise ManifestError("Unknown release asset layout %r." % (asset_layout,))
     resolved_output = _resolved_path(output_dir)
-    for channel in ("windows", "linux"):
+    for channel in channels:
         resolved_root = _resolved_path(roots[channel])
         if _paths_overlap(resolved_output, resolved_root):
             raise ManifestError(
@@ -210,13 +223,17 @@ def prepare_releases(
         "windows": "flatcam-windows.zip",
         "linux": "flatcam-source.zip",
     }
+    if asset_layout == "github":
+        manifest_names = {channel: github_asset_name(channel, "manifest.json") for channel in channels}
+    else:
+        manifest_names = {channel: "manifest.json" for channel in channels}
     staging_dir = Path(tempfile.mkdtemp(prefix=".release-", dir=output_dir))
     staged_artifacts = {}
     try:
-        for index, channel in enumerate(("windows", "linux"), start=1):
+        for index, channel in enumerate(channels, start=1):
             channel_dir = staging_dir / channel
             archive_path = channel_dir / archive_names[channel]
-            manifest_path = channel_dir / "manifest.json"
+            manifest_path = channel_dir / manifest_names[channel]
             build_deterministic_zip(roots[channel], archive_path, policy)
             archive = ArchiveInfo(
                 filename=archive_path.name,
@@ -238,7 +255,7 @@ def prepare_releases(
             manifest_path.write_text(manifest_to_json(manifest), encoding="utf-8", newline="")
             staged_artifacts[channel] = (archive_path, manifest_path, manifest)
             if progress_cb:
-                progress_cb(index * 50, "Prepared %s release files." % channel)
+                progress_cb(index * 100 // len(channels), "Prepared %s release files." % channel)
 
         backups = []
         replaced = []
@@ -246,13 +263,13 @@ def prepare_releases(
             artifacts = {}
             upload_paths = []
             backup_dir = staging_dir / ".backup"
-            for channel in ("windows", "linux"):
-                final_channel_dir = output_dir / channel
+            for channel in channels:
+                final_channel_dir = output_dir / ("github" if asset_layout == "github" else channel)
                 final_channel_dir.mkdir(parents=True, exist_ok=True)
                 staged_archive, staged_manifest, manifest = staged_artifacts[channel]
                 for staged_path, final_path in (
                     (staged_archive, final_channel_dir / archive_names[channel]),
-                    (staged_manifest, final_channel_dir / "manifest.json"),
+                    (staged_manifest, final_channel_dir / manifest_names[channel]),
                 ):
                     backup_path = backup_dir / channel / final_path.name
                     if final_path.exists():
@@ -264,7 +281,7 @@ def prepare_releases(
                 artifact = ReleaseArtifact(
                     channel,
                     final_channel_dir / archive_names[channel],
-                    final_channel_dir / "manifest.json",
+                    final_channel_dir / manifest_names[channel],
                     manifest,
                 )
                 artifacts[channel] = artifact

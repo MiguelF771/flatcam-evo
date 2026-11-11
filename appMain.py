@@ -771,7 +771,8 @@ class App(QtCore.QObject):
                     'AppData',
                     'Roaming'
                 )
-                self.data_path = os.path.join(base_appdata, 'FlatCAM')
+                # own folder so this fork does not share preferences with other FlatCAM installs
+                self.data_path = os.path.join(base_appdata, 'FlatCAM-Evo')
             else:
                 self.data_path = os.path.join(
                     os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
@@ -782,7 +783,7 @@ class App(QtCore.QObject):
         else:  # Linux/Unix/MacOS
             self.data_path = os.path.join(
                 os.path.expanduser('~'),
-                '.FlatCAM'
+                '.FlatCAM-Evo'
             )
             self.os = 'unix'
 

@@ -1,0 +1,3 @@
+# Build-only tools for make_freeze.py (Windows installer build).
+# Usage: pip install -r requirements.txt -r requirements-build.txt
+cx_Freeze==8.7.3
